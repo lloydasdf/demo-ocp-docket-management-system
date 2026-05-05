@@ -8,7 +8,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, Upload } from 'lucide-react';
+import { ExtractionMode } from '@/components/extraction-mode';
 
 interface PersonEntry {
   id: string;
@@ -39,6 +40,7 @@ interface ViolationEntry {
 }
 
 export default function NewDocket() {
+  const [entryMode, setEntryMode] = useState<'manual' | 'scan'>('manual');
   const [activeTab, setActiveTab] = useState('case-info');
   const [caseNumber, setCaseNumber] = useState('');
   const [dateOfIncident, setDateOfIncident] = useState('');
@@ -139,6 +141,57 @@ export default function NewDocket() {
         </div>
       )}
 
+      {/* Entry Mode Selector */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card
+          className={`cursor-pointer transition-all border-2 ${
+            entryMode === 'manual' ? 'border-primary bg-primary/5' : 'border-border'
+          }`}
+          onClick={() => setEntryMode('manual')}
+        >
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Manual Entry</CardTitle>
+            <CardDescription>Manually fill out docket information</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Enter all information directly into the form. Full control over every field.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card
+          className={`cursor-pointer transition-all border-2 ${
+            entryMode === 'scan' ? 'border-primary bg-primary/5' : 'border-border'
+          }`}
+          onClick={() => setEntryMode('scan')}
+        >
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Upload className="w-5 h-5" />
+              Scan / Upload
+            </CardTitle>
+            <CardDescription>AI-assisted form extraction</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Upload a form image or PDF to extract data automatically.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Render Selected Mode */}
+      {entryMode === 'scan' ? (
+        <div className="space-y-6">
+          <ExtractionMode onConfirmExtraction={(result) => {
+            console.log('[v0] Extraction confirmed:', result);
+            setFormMessage('Docket entry created from extracted data!');
+            setEntryMode('manual');
+          }} />
+        </div>
+      ) : (
+        <>
       {/* Form Card */}
       <Card>
         <CardHeader>
@@ -529,6 +582,8 @@ export default function NewDocket() {
           </Tabs>
         </CardContent>
       </Card>
+        </>
+      )}
     </div>
   );
 }
