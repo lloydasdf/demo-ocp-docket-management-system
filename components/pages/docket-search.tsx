@@ -161,9 +161,9 @@ export default function DocketSearch() {
                         <StatusBadge status={docket.status} size="sm" />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" asChild>
-                          <a href={`/case-details?docketId=${docket.id}&caseId=${docket.cases[0].id}`}>
-                            View
+                        <Button size="sm" asChild>
+                          <a href={`/case-details?docketId=${docket.id}`}>
+                            View Cases ({docket.cases.length})
                           </a>
                         </Button>
                       </TableCell>

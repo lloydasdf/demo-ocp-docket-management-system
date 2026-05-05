@@ -6,24 +6,24 @@ import { Badge } from '@/components/ui/badge';
 import { StatusBadge } from '@/components/status-badge';
 import { getCaseById, getCaseWithAttachments, dockets } from '@/lib/dummy-data';
 import { Button } from '@/components/ui/button';
-import { Download, Mail } from 'lucide-react';
+import { Download, Mail, ArrowRight } from 'lucide-react';
 
 interface CaseDetailsProps {
-  caseId: string;
+  caseId?: string;
   docketId: string;
 }
 
 export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
-  const caseDetail = getCaseById(caseId);
-  const caseWithAttachments = getCaseWithAttachments(caseId);
   const docket = dockets.find((d) => d.id === docketId);
+  const caseDetail = caseId ? getCaseById(caseId) : null;
+  const caseWithAttachments = caseId ? getCaseWithAttachments(caseId) : null;
 
-  if (!caseDetail || !docket) {
+  if (!docket) {
     return (
       <div className="p-8">
         <Card>
           <CardContent className="pt-8">
-            <p className="text-center text-muted-foreground">Case not found</p>
+            <p className="text-center text-muted-foreground">Docket not found</p>
           </CardContent>
         </Card>
       </div>
@@ -32,47 +32,141 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
 
   return (
     <div className="p-8 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">{caseDetail.caseNumber}</h1>
-          <p className="text-muted-foreground mt-1">Docket: {docket.docketNumber}</p>
+      {/* Docket Header */}
+      <div className="space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">DOCKET</span>
+              <Badge variant="outline" className="text-xs">{docket.docketNumber}</Badge>
+            </div>
+            <h1 className="text-3xl font-bold text-foreground">{docket.description || `Docket ${docket.docketNumber}`}</h1>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-muted-foreground mb-1">DOCKET STATUS</p>
+            <StatusBadge status={docket.status} size="lg" />
+          </div>
         </div>
-        <StatusBadge status={caseDetail.status} size="lg" />
+
+        {/* Docket Overview Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="p-4 border border-border rounded-lg bg-card/50">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Created</p>
+            <p className="font-semibold">{new Date(docket.createdDate).toLocaleDateString()}</p>
+          </div>
+          <div className="p-4 border border-border rounded-lg bg-card/50">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Total Cases</p>
+            <p className="font-semibold">{docket.cases.length} case{docket.cases.length !== 1 ? 's' : ''}</p>
+          </div>
+          <div className="p-4 border border-border rounded-lg bg-card/50">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Status Breakdown</p>
+            <div className="flex gap-2 mt-1">
+              {['Pending', 'Filed', 'Resolved'].map((status) => {
+                const count = docket.cases.filter((c) => c.status === status).length;
+                return count > 0 ? (
+                  <span key={status} className="text-xs font-medium">
+                    <StatusBadge status={status as any} size="sm" />
+                  </span>
+                ) : null;
+              })}
+            </div>
+          </div>
+          <div className="p-4 border border-border rounded-lg bg-card/50">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Prosecutors</p>
+            <p className="font-semibold">{new Set(docket.cases.filter(c => c.prosecutor).map(c => c.prosecutor)).size}</p>
+          </div>
+        </div>
       </div>
 
-      {/* Case Overview Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Case Overview</CardTitle>
+      {/* Cases Section */}
+      <Card className="border-2 border-primary/20">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg">Cases Under This Docket</CardTitle>
+              <CardDescription>Individual case status and details</CardDescription>
+            </div>
+            <Badge variant="secondary" className="text-sm">{docket.cases.length} total</Badge>
+          </div>
         </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div>
-            <p className="text-sm text-muted-foreground">Date of Incident</p>
-            <p className="text-lg font-semibold">
-              {new Date(caseDetail.dateOfIncident).toLocaleDateString()}
-            </p>
-          </div>
-          <div>
-            <p className="text-sm text-muted-foreground">Assigned Prosecutor</p>
-            <p className="text-lg font-semibold">{caseDetail.prosecutor || 'Unassigned'}</p>
-          </div>
-          <div>
-            <p className="text-sm text-muted-foreground">Violations</p>
-            <p className="text-lg font-semibold">{caseDetail.violations.length}</p>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-3">
+            {docket.cases.map((caseItem, index) => (
+              <div
+                key={caseItem.id}
+                className={`p-4 border-2 rounded-lg cursor-pointer transition-colors ${
+                  caseDetail?.id === caseItem.id
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/50'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="font-mono text-sm font-semibold text-primary">{caseItem.caseNumber}</span>
+                      <StatusBadge status={caseItem.status} size="sm" />
+                    </div>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      Incident: {new Date(caseItem.dateOfIncident).toLocaleDateString()}
+                    </p>
+                    <div className="flex items-center gap-4 text-xs">
+                      <span>
+                        <span className="text-muted-foreground">Violations:</span> {caseItem.violations.length}
+                      </span>
+                      <span>
+                        <span className="text-muted-foreground">Prosecutor:</span> {caseItem.prosecutor || 'Unassigned'}
+                      </span>
+                    </div>
+                  </div>
+                  <ArrowRight className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-1" />
+                </div>
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>
 
-      {/* Tabs */}
+      {/* Selected Case Details */}
+      {caseDetail && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle>Case Details</CardTitle>
+                <CardDescription className="mt-1">Case {caseDetail.caseNumber} information</CardDescription>
+              </div>
+              <StatusBadge status={caseDetail.status} size="lg" />
+            </div>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div>
+              <p className="text-sm text-muted-foreground">Date of Incident</p>
+              <p className="text-lg font-semibold">
+                {new Date(caseDetail.dateOfIncident).toLocaleDateString()}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Assigned Prosecutor</p>
+              <p className="text-lg font-semibold">{caseDetail.prosecutor || 'Unassigned'}</p>
+            </div>
+            <div>
+              <p className="text-sm text-muted-foreground">Violations</p>
+              <p className="text-lg font-semibold">{caseDetail.violations.length}</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Tabs - Only show when a case is selected */}
+      {caseDetail && (
       <Tabs defaultValue="overview" className="w-full">
         <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="parties">Parties</TabsTrigger>
-          <TabsTrigger value="cases">Cases</TabsTrigger>
           <TabsTrigger value="violations">Violations</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="attachments">Attachments</TabsTrigger>
+          <TabsTrigger value="summary">Summary</TabsTrigger>
         </TabsList>
 
         {/* Overview Tab */}
@@ -224,36 +318,7 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
           </Card>
         </TabsContent>
 
-        {/* Cases Tab */}
-        <TabsContent value="cases">
-          <Card>
-            <CardHeader>
-              <CardTitle>Case Information</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Docket Number:</span>
-                  <span className="font-medium">{docket.docketNumber}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Case Number:</span>
-                  <span className="font-medium">{caseDetail.caseNumber}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Date Created:</span>
-                  <span className="font-medium">
-                    {new Date(docket.createdDate).toLocaleDateString()}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Current Status:</span>
-                  <StatusBadge status={caseDetail.status} size="sm" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+
 
         {/* Violations Tab */}
         <TabsContent value="violations">
@@ -370,7 +435,53 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* Summary Tab */}
+        <TabsContent value="summary">
+          <div className="space-y-4">
+            <Card className="border-primary/20">
+              <CardHeader>
+                <CardTitle>Complete Case Summary</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Case Status</p>
+                      <StatusBadge status={caseDetail.status} size="lg" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Case Number</p>
+                      <p className="font-mono font-semibold">{caseDetail.caseNumber}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Date of Incident</p>
+                      <p className="font-semibold">{new Date(caseDetail.dateOfIncident).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Assigned Prosecutor</p>
+                      <p className="font-semibold text-lg">{caseDetail.prosecutor || '—'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Violations Count</p>
+                      <p className="font-semibold text-lg">{caseDetail.violations.length}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Parties Involved</p>
+                      <p className="text-sm">
+                        {caseDetail.complainants.length} Complainant{caseDetail.complainants.length !== 1 ? 's' : ''} • {caseDetail.respondents.length} Respondent{caseDetail.respondents.length !== 1 ? 's' : ''} • {caseDetail.witnesses.length} Witness{caseDetail.witnesses.length !== 1 ? 'es' : ''}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
       </Tabs>
+      )}
     </div>
   );
 }
