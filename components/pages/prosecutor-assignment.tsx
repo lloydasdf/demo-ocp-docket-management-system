@@ -1,267 +1,174 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Spinner } from '@/components/ui/spinner';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { getDockets, getProsecutors, getProsecutorAssignments } from '@/lib/supabase-queries';
 import { Badge } from '@/components/ui/badge';
-import { dockets, prosecutors } from '@/lib/dummy-data';
-import { Search as SearchIcon, CheckCircle } from 'lucide-react';
-
-interface Assignment {
-  id: string;
-  caseNumber: string;
-  prosecutorId: string;
-  assignmentDate: string;
-  status: 'Active' | 'Reassigned' | 'Completed';
-}
+import { User, Scale, AlertTriangle } from 'lucide-react';
 
 export default function ProsecutorAssignment() {
-  const [selectedCaseNumber, setSelectedCaseNumber] = useState('');
-  const [selectedProsecutorId, setSelectedProsecutorId] = useState('');
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [dockets, setDockets] = useState<any[]>([]);
+  const [prosecutors, setProsecutors] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Get all cases from dockets
-  const allCases = useMemo(() => {
-    return dockets.flatMap((d) =>
-      d.cases.map((c) => ({
-        ...c,
-        docketNumber: d.docketNumber,
-      }))
-    );
-  }, []);
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
 
-  // Filter cases for assignment
-  const availableCases = useMemo(() => {
-    return allCases
-      .filter(
-        (c) =>
-          !assignments.some((a) => a.caseNumber === c.caseNumber) &&
-          c.prosecutor === undefined
-      )
-      .filter(
-        (c) =>
-          searchQuery === '' ||
-          c.caseNumber.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-  }, [allCases, assignments, searchQuery]);
+        const [docketsData, prosecutorsData] = await Promise.all([
+          getDockets(),
+          getProsecutors(),
+        ]);
 
-  const handleAssign = () => {
-    if (!selectedCaseNumber || !selectedProsecutorId) {
-      return;
-    }
-
-    const prosecutor = prosecutors.find((p) => p.id === selectedProsecutorId);
-    if (!prosecutor) return;
-
-    const newAssignment: Assignment = {
-      id: `assign-${Date.now()}`,
-      caseNumber: selectedCaseNumber,
-      prosecutorId: selectedProsecutorId,
-      assignmentDate: new Date().toISOString().split('T')[0],
-      status: 'Active',
+        setDockets(docketsData);
+        setProsecutors(prosecutorsData);
+      } catch (err) {
+        console.error('[v0] Error loading assignment data:', err);
+        setError('Failed to load assignment data');
+      } finally {
+        setLoading(false);
+      }
     };
 
-    setAssignments([...assignments, newAssignment]);
-    setSelectedCaseNumber('');
-    setSelectedProsecutorId('');
-    setSuccessMessage('Prosecutor assigned successfully!');
-    setTimeout(() => setSuccessMessage(''), 3000);
-  };
+    loadData();
+  }, []);
 
-  const handleRemoveAssignment = (id: string) => {
-    setAssignments(assignments.filter((a) => a.id !== id));
-  };
+  const filteredDockets = dockets.filter(
+    (d) =>
+      d.docket_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      d.description?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <Spinner className="w-12 h-12 mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading assignments...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-8">
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold text-foreground">Prosecutor Assignment</h1>
-        <p className="text-muted-foreground mt-1">Assign prosecutors to cases</p>
+        <h1 className="text-3xl font-bold text-foreground">Prosecutor Assignments</h1>
+        <p className="text-muted-foreground mt-1">View docket assignments to prosecutors</p>
       </div>
 
-      {/* Success Message */}
-      {successMessage && (
-        <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded flex items-center gap-2">
-          <CheckCircle className="w-5 h-5" />
-          {successMessage}
-        </div>
-      )}
-
-      {/* Assignment Form */}
+      {/* Prosecutors Overview */}
       <Card>
         <CardHeader>
-          <CardTitle>New Assignment</CardTitle>
-          <CardDescription>Assign a prosecutor to a case</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <Label htmlFor="case-search">Select Case</Label>
-              <div className="relative mt-1">
-                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  id="case-search"
-                  placeholder="Search case number..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-              {searchQuery && availableCases.length > 0 && (
-                <div className="absolute z-10 w-full mt-1 bg-background border border-border rounded-md shadow-lg max-h-48 overflow-y-auto">
-                  {availableCases.slice(0, 5).map((c) => (
-                    <button
-                      key={c.caseNumber}
-                      onClick={() => {
-                        setSelectedCaseNumber(c.caseNumber);
-                        setSearchQuery('');
-                      }}
-                      className="w-full text-left px-3 py-2 hover:bg-muted"
-                    >
-                      <p className="font-medium">{c.caseNumber}</p>
-                      <p className="text-xs text-muted-foreground">{c.docketNumber}</p>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div>
-              <Label htmlFor="prosecutor">Prosecutor</Label>
-              <Select value={selectedProsecutorId} onValueChange={setSelectedProsecutorId}>
-                <SelectTrigger id="prosecutor" className="mt-1">
-                  <SelectValue placeholder="Select prosecutor..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {prosecutors.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      <div>
-                        <p className="font-medium">{p.name}</p>
-                        <p className="text-xs text-muted-foreground">{p.officeLocation}</p>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex items-end">
-              <Button
-                onClick={handleAssign}
-                disabled={!selectedCaseNumber || !selectedProsecutorId}
-                className="w-full"
-              >
-                Assign
-              </Button>
-            </div>
-          </div>
-
-          {selectedCaseNumber && (
-            <div className="p-3 bg-muted rounded">
-              <p className="text-sm">
-                <span className="text-muted-foreground">Selected Case:</span>{' '}
-                <span className="font-medium">{selectedCaseNumber}</span>
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Assignments Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Active Assignments</CardTitle>
-          <CardDescription>
-            {assignments.length === 0
-              ? 'No assignments yet'
-              : `${assignments.length} assignment${assignments.length === 1 ? '' : 's'}`}
-          </CardDescription>
+          <CardTitle>Active Prosecutors</CardTitle>
+          <CardDescription>{prosecutors.length} prosecutor{prosecutors.length !== 1 ? 's' : ''} in system</CardDescription>
         </CardHeader>
         <CardContent>
-          {assignments.length === 0 ? (
-            <div className="text-center py-8">
-              <p className="text-muted-foreground">No assignments created yet</p>
-            </div>
-          ) : (
-            <div className="rounded-lg border border-border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-muted/50">
-                    <TableHead>Case Number</TableHead>
-                    <TableHead>Prosecutor</TableHead>
-                    <TableHead>Assignment Date</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {assignments.map((assignment) => {
-                    const prosecutor = prosecutors.find((p) => p.id === assignment.prosecutorId);
-                    return (
-                      <TableRow key={assignment.id} className="hover:bg-muted/50">
-                        <TableCell className="font-medium text-primary">{assignment.caseNumber}</TableCell>
-                        <TableCell>{prosecutor?.name || '—'}</TableCell>
-                        <TableCell className="text-sm">
-                          {new Date(assignment.assignmentDate).toLocaleDateString()}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            className={
-                              assignment.status === 'Active'
-                                ? 'bg-green-100 text-green-800'
-                                : assignment.status === 'Reassigned'
-                                  ? 'bg-yellow-100 text-yellow-800'
-                                  : 'bg-gray-100 text-gray-800'
-                            }
-                          >
-                            {assignment.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleRemoveAssignment(assignment.id)}
-                            className="text-destructive"
-                          >
-                            Remove
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Prosecutors Info */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Available Prosecutors</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {prosecutors.map((prosecutor) => (
-              <div key={prosecutor.id} className="p-4 border border-border rounded-lg">
-                <h4 className="font-semibold">{prosecutor.name}</h4>
-                <p className="text-sm text-muted-foreground mt-1">{prosecutor.officeLocation}</p>
-                <p className="text-sm text-muted-foreground">{prosecutor.contactNumber}</p>
-                <p className="text-xs text-muted-foreground mt-2 break-all">{prosecutor.email}</p>
-              </div>
+              <Card key={prosecutor.id} className="bg-muted/50">
+                <CardContent className="pt-6">
+                  <div className="flex items-start gap-3">
+                    <User className="w-5 h-5 text-muted-foreground mt-1 flex-shrink-0" />
+                    <div>
+                      <p className="font-semibold">{prosecutor.full_name}</p>
+                      <p className="text-xs text-muted-foreground mt-1">{prosecutor.email}</p>
+                      <Badge variant="outline" className="mt-2 text-xs">
+                        {prosecutor.role}
+                      </Badge>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             ))}
           </div>
         </CardContent>
       </Card>
+
+      {/* Docket Assignments */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Docket Assignments by Prosecutor</CardTitle>
+          <CardDescription>All active assignments</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Search */}
+          <div>
+            <label className="text-sm font-medium">Search Dockets</label>
+            <Input
+              placeholder="Search by docket number or description..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="mt-2"
+            />
+          </div>
+
+          {/* Assignments Grid */}
+          <div className="space-y-4 pt-4">
+            {filteredDockets.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">No dockets found matching your search.</p>
+            ) : (
+              filteredDockets.map((docket) => (
+                <Card key={docket.id} className="bg-background border">
+                  <CardContent className="pt-6">
+                    <div className="space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className="font-mono font-semibold text-sm">{docket.docket_number}</p>
+                          <p className="text-sm text-muted-foreground mt-1">{docket.description}</p>
+                        </div>
+                        <Badge>{docket.case_count || 0} case{(docket.case_count || 0) !== 1 ? 's' : ''}</Badge>
+                      </div>
+
+                      {/* Prosecutor Info */}
+                      <div className="pt-3 border-t">
+                        <p className="text-xs font-semibold text-muted-foreground mb-2">ASSIGNED PROSECUTOR</p>
+                        {docket.prosecutor_name ? (
+                          <div className="flex items-center gap-2">
+                            <Scale className="w-4 h-4 text-primary" />
+                            <span className="font-medium text-sm">{docket.prosecutor_name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              Since {new Date(docket.prosecutor_assigned_at).toLocaleDateString()}
+                            </span>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground italic">Not yet assigned</p>
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Read-Only Notice */}
+      <Alert>
+        <AlertDescription>
+          Prosecutor assignments are managed during the New Docket Entry workflow. This view is read-only.
+        </AlertDescription>
+      </Alert>
     </div>
   );
 }

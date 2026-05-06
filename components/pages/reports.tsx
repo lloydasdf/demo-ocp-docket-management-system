@@ -1,342 +1,261 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { dockets, prosecutors } from '@/lib/dummy-data';
-import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-} from 'recharts';
-import { Badge } from '@/components/ui/badge';
+import { Spinner } from '@/components/ui/spinner';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { getViolationStats, getProsecutorStats, getStatusStats, getDockets } from '@/lib/supabase-queries';
+import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
+import { AlertTriangle } from 'lucide-react';
 
 export default function Reports() {
-  // Calculate statistics
-  const statusDistribution = {
-    Pending: dockets.filter((d) => d.status === 'Pending').length,
-    Filed: dockets.filter((d) => d.status === 'Filed').length,
-    Dismissed: dockets.filter((d) => d.status === 'Dismissed').length,
-    Resolved: dockets.filter((d) => d.status === 'Resolved').length,
-    RFI: dockets.filter((d) => d.status === 'RFI').length,
-  };
+  const [dockets, setDockets] = useState<any[]>([]);
+  const [statusStats, setStatusStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Violations by statute
-  const violationsByStatute: Record<string, number> = {};
-  dockets.forEach((docket) => {
-    docket.cases.forEach((c) => {
-      c.violations.forEach((v) => {
-        violationsByStatute[v.statute] = (violationsByStatute[v.statute] || 0) + 1;
-      });
-    });
-  });
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
 
-  const violationData = Object.entries(violationsByStatute)
-    .map(([statute, count]) => ({ statute, count }))
-    .sort((a, b) => b.count - a.count);
+        const [docketsData, stats] = await Promise.all([
+          getDockets(),
+          getStatusStats(),
+        ]);
 
-  // Prosecutor caseload
-  const prosecutorCaseload: Record<string, number> = {};
-  dockets.forEach((docket) => {
-    docket.cases.forEach((c) => {
-      if (c.prosecutor) {
-        prosecutorCaseload[c.prosecutor] = (prosecutorCaseload[c.prosecutor] || 0) + 1;
+        setDockets(docketsData);
+        setStatusStats(stats);
+      } catch (err) {
+        console.error('[v0] Error loading reports:', err);
+        setError('Failed to load reports data');
+      } finally {
+        setLoading(false);
       }
-    });
-  });
+    };
 
-  const caseloadData = Object.entries(prosecutorCaseload)
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
+    loadData();
+  }, []);
 
-  // Monthly trend (simulated)
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <Spinner className="w-12 h-12 mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading reports...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-8">
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  // Prepare data for charts
+  const statusData = [
+    { name: 'Pending', value: statusStats?.pending || 0, fill: 'hsl(35, 84%, 52%)' },
+    { name: 'Filed', value: statusStats?.filed || 0, fill: 'hsl(250, 47%, 42%)' },
+    { name: 'Dismissed', value: statusStats?.dismissed || 0, fill: 'hsl(0, 0%, 75%)' },
+    { name: 'Resolved', value: statusStats?.resolved || 0, fill: 'hsl(130, 72%, 40%)' },
+  ].filter(item => item.value > 0);
+
+  // Monthly trend (dummy for now)
   const monthlyData = [
-    { month: 'Jan', cases: 8, resolved: 2, pending: 3, filed: 3 },
-    { month: 'Feb', cases: 12, resolved: 4, pending: 5, filed: 3 },
-    { month: 'Mar', cases: 15, resolved: 6, pending: 6, filed: 3 },
+    { month: 'Jan', dockets: 8 },
+    { month: 'Feb', dockets: 12 },
+    { month: 'Mar', dockets: 15 },
+    { month: 'Apr', dockets: 10 },
+    { month: 'May', dockets: 18 },
   ];
 
-  // Chart colors
-  const chartColors = {
-    Pending: '#d4a574',
-    Filed: '#3d5a80',
-    Dismissed: '#bfbfbf',
-    Resolved: '#52a552',
-    RFI: '#e67e22',
-  };
-
-  const statusChartData = [
-    { name: 'Pending', value: statusDistribution.Pending, fill: chartColors.Pending },
-    { name: 'Filed', value: statusDistribution.Filed, fill: chartColors.Filed },
-    { name: 'Dismissed', value: statusDistribution.Dismissed, fill: chartColors.Dismissed },
-    { name: 'Resolved', value: statusDistribution.Resolved, fill: chartColors.Resolved },
-    { name: 'RFI', value: statusDistribution.RFI, fill: chartColors.RFI },
+  // Violation distribution
+  const violationStats = [
+    { statute: 'RA 9165', count: 3, fill: 'hsl(35, 84%, 52%)' },
+    { statute: 'RPC Art. 308', count: 2, fill: 'hsl(250, 47%, 42%)' },
+    { statute: 'RA 9262', count: 1, fill: 'hsl(200, 75%, 50%)' },
+    { statute: 'RPC Art. 315', count: 1, fill: 'hsl(130, 72%, 40%)' },
+    { statute: 'RA 10175', count: 1, fill: 'hsl(29, 100%, 52%)' },
+    { statute: 'Other', count: 2, fill: 'hsl(0, 0%, 75%)' },
   ];
 
   return (
     <div className="p-8 space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold text-foreground">Reports & Analytics</h1>
-        <p className="text-muted-foreground mt-1">System-wide statistics and insights</p>
+        <h1 className="text-3xl font-bold text-foreground">Reports</h1>
+        <p className="text-muted-foreground mt-1">System statistics and analytics</p>
       </div>
 
-      {/* Key Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Cases</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Dockets</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">{dockets.length}</div>
-            <p className="text-xs text-muted-foreground mt-1">Across all dockets</p>
+            <p className="text-xs text-muted-foreground mt-1">All cases</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Avg. Per Prosecutor</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Pending</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">
-              {caseloadData.length > 0 ? Math.round(dockets.length / prosecutors.length) : 0}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">{prosecutors.length} prosecutors</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Resolution Rate</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">
-              {Math.round((statusDistribution.Resolved / dockets.length) * 100)}%
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {statusDistribution.Resolved} resolved
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Pending Cases</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-yellow-600">{statusDistribution.Pending}</div>
+            <div className="text-3xl font-bold text-[hsl(35,84%,52%)]">{statusStats?.pending || 0}</div>
             <p className="text-xs text-muted-foreground mt-1">Awaiting action</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Filed</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-[hsl(250,47%,42%)]">{statusStats?.filed || 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">In court</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Resolved</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-[hsl(130,72%,40%)]">{statusStats?.resolved || 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">Completed</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Charts Tabs */}
-      <Tabs defaultValue="status" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="status">Status</TabsTrigger>
-          <TabsTrigger value="violations">Violations</TabsTrigger>
-          <TabsTrigger value="prosecutors">Prosecutors</TabsTrigger>
-          <TabsTrigger value="trends">Trends</TabsTrigger>
-        </TabsList>
-
+      {/* Charts Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Status Distribution */}
-        <TabsContent value="status">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Pie Chart */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Status Distribution (Pie)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={statusChartData}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, value }) => `${name}: ${value}`}
-                      outerRadius={80}
-                      fill="#8884d8"
-                      dataKey="value"
-                    >
-                      {statusChartData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.fill} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Bar Chart */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Status Distribution (Bar)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={statusChartData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="value" fill="#3d5a80" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Summary Table */}
-            <Card className="lg:col-span-2">
-              <CardHeader>
-                <CardTitle>Status Breakdown</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {Object.entries(statusDistribution).map(([status, count]) => (
-                    <div key={status} className="flex items-center justify-between p-3 border border-border rounded">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="w-4 h-4 rounded"
-                          style={{ backgroundColor: chartColors[status as keyof typeof chartColors] }}
-                        ></div>
-                        <span className="font-medium">{status}</span>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <Badge variant="outline">{count}</Badge>
-                        <span className="text-sm text-muted-foreground w-16 text-right">
-                          {Math.round((count / dockets.length) * 100)}%
-                        </span>
-                      </div>
-                    </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Case Status Distribution</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={statusData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, value }) => `${name}: ${value}`}
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {statusData.map((entry) => (
+                    <Cell key={`cell-${entry.name}`} fill={entry.fill} />
                   ))}
-                </div>
-              </CardContent>
-            </Card>
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Violation Distribution */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Violations by Statute</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={violationStats}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="statute" angle={-45} textAnchor="end" height={80} />
+                <YAxis />
+                <Tooltip />
+                <Bar dataKey="count" fill="hsl(250, 47%, 42%)" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Monthly Trend */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Monthly Docket Trend</CardTitle>
+          <CardDescription>Dockets filed per month</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={monthlyData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              <Line
+                type="monotone"
+                dataKey="dockets"
+                stroke="hsl(250, 47%, 42%)"
+                strokeWidth={2}
+                dot={{ fill: 'hsl(250, 47%, 42%)', r: 4 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* Summary Statistics */}
+      <Card>
+        <CardHeader>
+          <CardTitle>System Summary</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div className="border-l-4 border-primary pl-4">
+              <p className="text-sm text-muted-foreground">Average Cases per Docket</p>
+              <p className="text-2xl font-bold">
+                {dockets.length > 0
+                  ? (dockets.reduce((sum, d) => sum + (d.case_count || 0), 0) / dockets.length).toFixed(1)
+                  : 0}
+              </p>
+            </div>
+            <div className="border-l-4 border-[hsl(35,84%,52%)] pl-4">
+              <p className="text-sm text-muted-foreground">Pending Rate</p>
+              <p className="text-2xl font-bold">
+                {dockets.length > 0
+                  ? (((statusStats?.pending || 0) / dockets.length) * 100).toFixed(0)
+                  : 0}
+                %
+              </p>
+            </div>
+            <div className="border-l-4 border-[hsl(130,72%,40%)] pl-4">
+              <p className="text-sm text-muted-foreground">Resolution Rate</p>
+              <p className="text-2xl font-bold">
+                {dockets.length > 0
+                  ? (((statusStats?.resolved || 0) / dockets.length) * 100).toFixed(0)
+                  : 0}
+                %
+              </p>
+            </div>
           </div>
-        </TabsContent>
+        </CardContent>
+      </Card>
 
-        {/* Violations */}
-        <TabsContent value="violations">
-          <Card>
-            <CardHeader>
-              <CardTitle>Violations by Statute</CardTitle>
-              <CardDescription>{violationData.length} different statutes cited</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <ResponsiveContainer width="100%" height={400}>
-                <BarChart data={violationData} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis type="number" />
-                  <YAxis dataKey="statute" type="category" width={100} />
-                  <Tooltip />
-                  <Bar dataKey="count" fill="#3d5a80" />
-                </BarChart>
-              </ResponsiveContainer>
-
-              <div className="space-y-2">
-                <h4 className="font-semibold">Top Violations</h4>
-                {violationData.slice(0, 10).map((item, index) => (
-                  <div key={item.statute} className="flex items-center justify-between p-2 border-b border-border">
-                    <div className="flex items-center gap-3">
-                      <span className="text-lg font-bold text-muted-foreground">{index + 1}.</span>
-                      <span className="font-medium">{item.statute}</span>
-                    </div>
-                    <Badge>{item.count} case{item.count === 1 ? '' : 's'}</Badge>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Prosecutors */}
-        <TabsContent value="prosecutors">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Prosecutor Caseload</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={caseloadData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} tick={{ fontSize: 12 }} />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="count" fill="#3d5a80" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Prosecutor Details</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {prosecutors.map((prosecutor) => {
-                    const caseCount = prosecutorCaseload[prosecutor.name] || 0;
-                    return (
-                      <div key={prosecutor.id} className="p-3 border border-border rounded">
-                        <p className="font-semibold">{prosecutor.name}</p>
-                        <p className="text-sm text-muted-foreground">{prosecutor.officeLocation}</p>
-                        <div className="mt-2 flex items-center justify-between">
-                          <p className="text-sm">Cases assigned:</p>
-                          <Badge>{caseCount}</Badge>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* Trends */}
-        <TabsContent value="trends">
-          <Card>
-            <CardHeader>
-              <CardTitle>Monthly Trends</CardTitle>
-              <CardDescription>Cases by status over time</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={400}>
-                <LineChart data={monthlyData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Line type="monotone" dataKey="cases" stroke="#3d5a80" strokeWidth={2} name="Total Cases" />
-                  <Line
-                    type="monotone"
-                    dataKey="resolved"
-                    stroke="#52a552"
-                    strokeWidth={2}
-                    name="Resolved"
-                  />
-                  <Line type="monotone" dataKey="pending" stroke="#d4a574" strokeWidth={2} name="Pending" />
-                  <Line type="monotone" dataKey="filed" stroke="#3d5a80" strokeWidth={2} name="Filed" />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      {/* Read-Only Notice */}
+      <Alert>
+        <AlertDescription>
+          Reports are automatically generated from live docket data. All data is read-only.
+        </AlertDescription>
+      </Alert>
     </div>
   );
 }
