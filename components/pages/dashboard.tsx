@@ -86,6 +86,14 @@ export default function Dashboard() {
     { month: 'Mar', cases: 15 },
   ];
 
+  // Violation distribution (dummy for now)
+  const violationData = [
+    { statute: 'RA 9165', count: 3 },
+    { statute: 'RPC Art. 308', count: 2 },
+    { statute: 'RA 9262', count: 1 },
+    { statute: 'RPC Art. 315', count: 1 },
+  ];
+
   return (
     <div className="p-8 space-y-8">
       {/* Header */}
