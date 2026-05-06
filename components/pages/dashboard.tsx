@@ -2,18 +2,18 @@
 
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { StatusBadge } from '@/components/status-badge';
 import { Spinner } from '@/components/ui/spinner';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { getDockets, getRecentDockets, getStatusStats } from '@/lib/supabase-queries';
+import { getAllCases, getRecentCases, getDashboardStats, getCaseStatuses } from '@/lib/supabase-queries';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import Link from 'next/link';
 import { ArrowRight, AlertTriangle } from 'lucide-react';
 
 export default function Dashboard() {
-  const [dockets, setDockets] = useState<any[]>([]);
-  const [recentDockets, setRecentDockets] = useState<any[]>([]);
+  const [cases, setCases] = useState<any[]>([]);
+  const [recentCases, setRecentCases] = useState<any[]>([]);
   const [stats, setStats] = useState<any>(null);
+  const [statuses, setStatuses] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,15 +23,17 @@ export default function Dashboard() {
         setLoading(true);
         setError(null);
         
-        const [dockets, recent, statusStats] = await Promise.all([
-          getDockets(),
-          getRecentDockets(5),
-          getStatusStats(),
+        const [allCases, dashStats, recent, statusList] = await Promise.all([
+          getAllCases(),
+          getDashboardStats(),
+          getRecentCases(5),
+          getCaseStatuses(),
         ]);
 
-        setDockets(dockets);
-        setRecentDockets(recent);
-        setStats(statusStats);
+        setCases(allCases);
+        setRecentCases(recent);
+        setStats(dashStats);
+        setStatuses(statusList);
       } catch (err) {
         console.error('[v0] Dashboard load error:', err);
         setError('Failed to load dashboard data');
@@ -65,19 +67,31 @@ export default function Dashboard() {
     );
   }
 
-  // Calculate KPIs
-  const totalDockets = dockets.length;
-  const pendingCount = stats?.pending || 0;
-  const filedCount = stats?.filed || 0;
-  const resolvedCount = stats?.resolved || 0;
+  // Build status color map
+  const colorMap: Record<number, string> = {
+    1: 'hsl(130, 72%, 40%)',    // Resolved - Green
+    2: 'hsl(250, 47%, 42%)',    // Filed - Purple
+    3: 'hsl(35, 84%, 52%)',     // Pending - Orange
+    4: 'hsl(29, 100%, 52%)',    // Archived - Red-Orange
+    5: 'hsl(0, 84%, 60%)',      // Dismissed - Red
+    6: 'hsl(200, 75%, 50%)',    // In Progress - Blue
+    7: 'hsl(280, 75%, 50%)',    // On Hold - Purple
+    8: 'hsl(50, 100%, 50%)',    // For Review - Yellow
+    9: 'hsl(160, 75%, 50%)',    // Remanded - Teal
+    10: 'hsl(300, 75%, 50%)',   // Appealed - Magenta
+  };
 
   // Status distribution data
-  const statusData = [
-    { name: 'Pending', value: pendingCount, fill: 'hsl(35, 84%, 52%)' },
-    { name: 'Filed', value: filedCount, fill: 'hsl(250, 47%, 42%)' },
-    { name: 'Dismissed', value: stats?.dismissed || 0, fill: 'hsl(0, 0%, 75%)' },
-    { name: 'Resolved', value: resolvedCount, fill: 'hsl(130, 72%, 40%)' },
-  ].filter(item => item.value > 0);
+  const statusData = statuses
+    .filter(s => stats?.byStatus?.[s.id] > 0)
+    .map(s => ({
+      name: s.status_name,
+      value: stats.byStatus[s.id] || 0,
+      fill: colorMap[s.id] || 'hsl(0, 0%, 50%)',
+    }));
+
+  // Total cases
+  const totalCases = stats?.total || 0;
 
   // Monthly trend (dummy for now)
   const monthlyData = [
@@ -106,75 +120,59 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Dockets</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Cases</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">{totalDockets}</div>
-            <p className="text-xs text-muted-foreground mt-1">All cases in system</p>
+            <div className="text-3xl font-bold">{totalCases}</div>
+            <p className="text-xs text-muted-foreground mt-1">All dockets in system</p>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Pending</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-[hsl(35,84%,52%)]">{pendingCount}</div>
-            <p className="text-xs text-muted-foreground mt-1">Awaiting action</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Filed</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-[hsl(250,47%,42%)]">{filedCount}</div>
-            <p className="text-xs text-muted-foreground mt-1">In court</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Resolved</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-[hsl(130,72%,40%)]">{resolvedCount}</div>
-            <p className="text-xs text-muted-foreground mt-1">Completed cases</p>
-          </CardContent>
-        </Card>
+        {statuses.slice(0, 3).map(status => (
+          <Card key={status.id}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">{status.status_name}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold">{stats?.byStatus?.[status.id] || 0}</div>
+              <p className="text-xs text-muted-foreground mt-1">Current status</p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Status Distribution */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Case Status Distribution</CardTitle>
-            <CardDescription>Current breakdown by status</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={statusData}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, value }) => `${name}: ${value}`}
-                  outerRadius={80}
-                  fill="#8884d8"
-                  dataKey="value"
-                >
-                  {statusData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.fill} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+        {statusData.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Case Status Distribution</CardTitle>
+              <CardDescription>Current breakdown by status</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={statusData}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    label={({ name, value }) => `${name}: ${value}`}
+                    outerRadius={80}
+                    fill="#8884d8"
+                    dataKey="value"
+                  >
+                    {statusData.map((entry, i) => (
+                      <Cell key={`cell-${i}`} fill={entry.fill} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Violation Types */}
         <Card>
@@ -225,28 +223,30 @@ export default function Dashboard() {
           </Link>
         </div>
 
-        {recentDockets.length === 0 ? (
+        {recentCases.length === 0 ? (
           <Card>
             <CardContent className="pt-8 text-center">
-              <p className="text-muted-foreground">No recent dockets found</p>
+              <p className="text-muted-foreground">No recent cases found</p>
             </CardContent>
           </Card>
         ) : (
           <div className="space-y-2">
-            {recentDockets.map((docket) => (
+            {recentCases.map((caseItem) => (
               <Link
-                key={docket.id}
-                href={`/case-details?docketId=${docket.id}`}
+                key={caseItem.id}
+                href={`/case-details?caseId=${caseItem.id}`}
                 className="block p-4 border border-border rounded-lg hover:bg-muted/50 transition-colors"
               >
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-semibold">{docket.docket_number}</p>
-                    <p className="text-sm text-muted-foreground">{docket.case_count || 0} case{(docket.case_count || 0) !== 1 ? 's' : ''}</p>
+                    <p className="font-semibold">{caseItem.docket_display_number || caseItem.docket_number}</p>
+                    <p className="text-sm text-muted-foreground">Type: {caseItem.docket_types?.code}</p>
                   </div>
                   <div className="flex items-center gap-3">
-                    <StatusBadge status={docket.status} size="sm" />
-                    <span className="text-xs text-muted-foreground">{new Date(docket.date_received).toLocaleDateString()}</span>
+                    <span className="px-2 py-1 rounded text-xs bg-primary/10 text-primary font-medium">
+                      {caseItem.case_statuses?.status_name || 'Unknown'}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{new Date(caseItem.created_at).toLocaleDateString()}</span>
                   </div>
                 </div>
               </Link>

@@ -1,60 +1,17 @@
 import { supabase } from './supabase-client';
 
-// DOCKET QUERIES
+// CASES QUERIES - Using actual cases table with docket info embedded
 
-export async function getDockets() {
+export async function getAllCases() {
   const { data, error } = await supabase
-    .from('docket_list_view')
-    .select('*')
-    .order('date_received', { ascending: false });
-
-  if (error) {
-    console.error('[v0] Error fetching dockets:', error);
-    return [];
-  }
-  return data || [];
-}
-
-export async function getDocketById(id: string) {
-  const { data, error } = await supabase
-    .from('dockets')
+    .from('cases')
     .select(`
       *,
-      cases(*),
-      prosecutor_assignments(*),
-      case_status_updates(*)
+      docket_types(id, code, description),
+      case_statuses(id, status_code, status_name),
+      persons!current_prosecutor_id(id, first_name, last_name, middle_name)
     `)
-    .eq('id', id)
-    .single();
-
-  if (error) {
-    console.error('[v0] Error fetching docket:', error);
-    return null;
-  }
-  return data;
-}
-
-export async function searchDockets(query: string) {
-  const { data, error } = await supabase
-    .from('docket_list_view')
-    .select('*')
-    .or(`docket_number.ilike.%${query}%,description.ilike.%${query}%`)
-    .order('date_received', { ascending: false });
-
-  if (error) {
-    console.error('[v0] Error searching dockets:', error);
-    return [];
-  }
-  return data || [];
-}
-
-// CASE QUERIES
-
-export async function getCases() {
-  const { data, error } = await supabase
-    .from('case_list_view')
-    .select('*')
-    .order('date_received', { ascending: false });
+    .order('id', { ascending: false });
 
   if (error) {
     console.error('[v0] Error fetching cases:', error);
@@ -68,10 +25,11 @@ export async function getCaseById(id: string) {
     .from('cases')
     .select(`
       *,
-      case_participants(*, persons(*)),
-      case_violations(*, violations(*)),
-      case_status_updates(*),
-      attachments(*)
+      docket_types(id, code, description),
+      case_statuses(id, status_code, status_name),
+      persons!current_prosecutor_id(id, first_name, last_name, middle_name, email),
+      case_participants(*),
+      case_status_history(*)
     `)
     .eq('id', id)
     .single();
@@ -83,26 +41,63 @@ export async function getCaseById(id: string) {
   return data;
 }
 
-export async function getCasesByDocketId(docketId: string) {
+export async function searchCases(query: string) {
   const { data, error } = await supabase
     .from('cases')
     .select(`
       *,
-      case_participants(*, persons(*)),
-      case_violations(*, violations(*)),
-      case_status_updates(*)
+      docket_types(code),
+      case_statuses(status_name),
+      persons!current_prosecutor_id(first_name, last_name)
     `)
-    .eq('docket_id', docketId)
-    .order('date_received', { ascending: false });
+    .or(`docket_display_number.ilike.%${query}%,docket_number.ilike.%${query}%`)
+    .order('id', { ascending: false });
 
   if (error) {
-    console.error('[v0] Error fetching cases by docket:', error);
+    console.error('[v0] Error searching cases:', error);
     return [];
   }
   return data || [];
 }
 
-// PERSON QUERIES
+export async function getCasesByYear(year: number) {
+  const { data, error } = await supabase
+    .from('cases')
+    .select(`
+      *,
+      docket_types(code),
+      case_statuses(status_name)
+    `)
+    .eq('docket_year', year)
+    .order('docket_number', { ascending: false });
+
+  if (error) {
+    console.error('[v0] Error fetching cases by year:', error);
+    return [];
+  }
+  return data || [];
+}
+
+export async function getCasesByStatus(statusId: number) {
+  const { data, error } = await supabase
+    .from('cases')
+    .select(`
+      *,
+      docket_types(code),
+      case_statuses(status_name),
+      persons!current_prosecutor_id(first_name, last_name)
+    `)
+    .eq('current_status', statusId)
+    .order('id', { ascending: false });
+
+  if (error) {
+    console.error('[v0] Error fetching cases by status:', error);
+    return [];
+  }
+  return data || [];
+}
+
+// PERSONS QUERIES
 
 export async function searchPersons(query: string) {
   const { data, error } = await supabase
@@ -132,8 +127,7 @@ export async function getPersonById(id: string) {
     .select(`
       *,
       person_aliases(*),
-      person_addresses(*),
-      case_participants(*)
+      person_addresses(*)
     `)
     .eq('id', id)
     .single();
@@ -145,84 +139,37 @@ export async function getPersonById(id: string) {
   return data;
 }
 
-// CLEARANCE SEARCH QUERIES
+// CASE PARTICIPANTS QUERIES
 
-export async function searchClearance(personName: string) {
-  const { data: persons, error: searchError } = await supabase
-    .from('persons')
+export async function getCaseParticipants(caseId: string) {
+  const { data, error } = await supabase
+    .from('case_participants')
     .select(`
       *,
-      person_aliases(*),
-      case_participants(count)
+      persons(id, first_name, last_name, middle_name),
+      participant_roles(id, role_name)
     `)
-    .or(
-      `first_name.ilike.%${personName}%,` +
-      `last_name.ilike.%${personName}%`
-    )
-    .limit(10);
-
-  if (searchError) {
-    console.error('[v0] Error searching clearance:', searchError);
-    return { persons: [], searches: [] };
-  }
-
-  // Check for existing clearance search record
-  const { data: searches } = await supabase
-    .from('clearance_searches')
-    .select('*')
-    .ilike('search_name', `%${personName}%`)
-    .limit(3);
-
-  return { persons: persons || [], searches: searches || [] };
-}
-
-// DASHBOARD STATISTICS
-
-export async function getDashboardStats() {
-  const { data: dockets, error: docketError } = await supabase
-    .from('dockets')
-    .select('id, status');
-
-  if (docketError) {
-    console.error('[v0] Error fetching docket stats:', docketError);
-    return null;
-  }
-
-  const stats = {
-    totalDockets: dockets?.length || 0,
-    pending: dockets?.filter((d: any) => d.status === 'Pending').length || 0,
-    filed: dockets?.filter((d: any) => d.status === 'Filed').length || 0,
-    resolved: dockets?.filter((d: any) => d.status === 'Resolved').length || 0,
-  };
-
-  return stats;
-}
-
-export async function getRecentDockets(limit: number = 5) {
-  const { data, error } = await supabase
-    .from('docket_list_view')
-    .select('*')
-    .order('date_received', { ascending: false })
-    .limit(limit);
+    .eq('case_id', caseId);
 
   if (error) {
-    console.error('[v0] Error fetching recent dockets:', error);
+    console.error('[v0] Error fetching participants:', error);
     return [];
   }
   return data || [];
 }
 
-// STATUS HISTORY
+// CASE STATUS HISTORY
 
 export async function getCaseStatusHistory(caseId: string) {
   const { data, error } = await supabase
-    .from('case_status_updates')
+    .from('case_status_history')
     .select(`
       *,
-      app_users(full_name)
+      case_statuses(status_name),
+      persons(id, first_name, last_name)
     `)
     .eq('case_id', caseId)
-    .order('updated_at', { ascending: false });
+    .order('created_at', { ascending: false });
 
   if (error) {
     console.error('[v0] Error fetching status history:', error);
@@ -231,31 +178,85 @@ export async function getCaseStatusHistory(caseId: string) {
   return data || [];
 }
 
-// PROSECUTOR ASSIGNMENT
+// DASHBOARD STATISTICS
 
-export async function getProsecutorAssignments(docketId: string) {
+export async function getDashboardStats() {
   const { data, error } = await supabase
-    .from('prosecutor_assignments')
-    .select(`
-      *,
-      app_users(full_name, email)
-    `)
-    .eq('docket_id', docketId)
-    .order('assigned_at', { ascending: false });
+    .from('cases')
+    .select('id, current_status');
 
   if (error) {
-    console.error('[v0] Error fetching assignments:', error);
+    console.error('[v0] Error fetching dashboard stats:', error);
+    return null;
+  }
+
+  // Count by status
+  const stats: Record<number, number> = {};
+  (data || []).forEach((c: any) => {
+    stats[c.current_status] = (stats[c.current_status] || 0) + 1;
+  });
+
+  return {
+    total: data?.length || 0,
+    byStatus: stats,
+  };
+}
+
+export async function getRecentCases(limit: number = 5) {
+  const { data, error } = await supabase
+    .from('cases')
+    .select(`
+      *,
+      docket_types(code),
+      case_statuses(status_name)
+    `)
+    .order('id', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error('[v0] Error fetching recent cases:', error);
     return [];
   }
   return data || [];
 }
 
+// DOCKET TYPES
+
+export async function getDocketTypes() {
+  const { data, error } = await supabase
+    .from('docket_types')
+    .select('*')
+    .order('code');
+
+  if (error) {
+    console.error('[v0] Error fetching docket types:', error);
+    return [];
+  }
+  return data || [];
+}
+
+// CASE STATUSES
+
+export async function getCaseStatuses() {
+  const { data, error } = await supabase
+    .from('case_statuses')
+    .select('*')
+    .order('status_code');
+
+  if (error) {
+    console.error('[v0] Error fetching case statuses:', error);
+    return [];
+  }
+  return data || [];
+}
+
+// PROSECUTORS
+
 export async function getProsecutors() {
   const { data, error } = await supabase
-    .from('app_users')
+    .from('persons')
     .select('*')
-    .eq('role', 'Prosecutor')
-    .order('full_name');
+    .order('last_name, first_name');
 
   if (error) {
     console.error('[v0] Error fetching prosecutors:', error);
@@ -264,46 +265,57 @@ export async function getProsecutors() {
   return data || [];
 }
 
-// ATTACHMENTS
+// CASE ASSIGNMENTS
 
-export async function getAttachmentsByCaseId(caseId: string) {
+export async function getCaseAssignments(caseId: string) {
   const { data, error } = await supabase
-    .from('attachments')
-    .select('*')
+    .from('case_assignments')
+    .select(`
+      *,
+      persons(id, first_name, last_name, email)
+    `)
     .eq('case_id', caseId)
-    .order('uploaded_at', { ascending: false });
+    .order('assigned_date', { ascending: false });
 
   if (error) {
-    console.error('[v0] Error fetching attachments:', error);
+    console.error('[v0] Error fetching assignments:', error);
     return [];
   }
   return data || [];
 }
 
-export async function getAttachmentsByDocketId(docketId: string) {
+// ADDRESSES
+
+export async function getAddresses(personId: string) {
   const { data, error } = await supabase
-    .from('attachments')
-    .select('*')
-    .eq('docket_id', docketId)
-    .order('uploaded_at', { ascending: false });
+    .from('person_addresses')
+    .select(`
+      *,
+      address_types(id, address_type)
+    `)
+    .eq('person_id', personId);
 
   if (error) {
-    console.error('[v0] Error fetching docket attachments:', error);
+    console.error('[v0] Error fetching addresses:', error);
     return [];
   }
   return data || [];
 }
 
-// VIOLATIONS
+// AUDIT LOGS
 
-export async function getViolations() {
+export async function getAuditLogs(limit: number = 20) {
   const { data, error } = await supabase
-    .from('violations')
-    .select('*')
-    .order('statute_code');
+    .from('audit_logs')
+    .select(`
+      *,
+      persons(first_name, last_name)
+    `)
+    .order('created_at', { ascending: false })
+    .limit(limit);
 
   if (error) {
-    console.error('[v0] Error fetching violations:', error);
+    console.error('[v0] Error fetching audit logs:', error);
     return [];
   }
   return data || [];
@@ -318,7 +330,7 @@ export async function checkPersonDuplicates(
 ) {
   const { data, error } = await supabase
     .from('persons')
-    .select(`*,person_aliases(*)`)
+    .select('*,person_aliases(*)')
     .or(
       `first_name.ilike.${firstName},` +
       `last_name.ilike.${lastName}`
@@ -332,65 +344,84 @@ export async function checkPersonDuplicates(
   return data || [];
 }
 
-// REPORTS DATA
+// VIOLATIONS / CHARGES
 
-export async function getViolationStats() {
+export async function getCaseCharges(caseId: string) {
   const { data, error } = await supabase
-    .from('cases')
-    .select('case_violations(violations(statute_code))');
-
-  if (error) {
-    console.error('[v0] Error fetching violation stats:', error);
-    return [];
-  }
-  return data || [];
-}
-
-export async function getProsecutorStats() {
-  const { data, error } = await supabase
-    .from('prosecutor_assignments')
-    .select(`
-      app_users(full_name),
-      cases(count)
-    `);
-
-  if (error) {
-    console.error('[v0] Error fetching prosecutor stats:', error);
-    return [];
-  }
-  return data || [];
-}
-
-export async function getStatusStats() {
-  const { data, error } = await supabase
-    .from('cases')
-    .select('status');
-
-  if (error) {
-    console.error('[v0] Error fetching status stats:', error);
-    return [];
-  }
-
-  const stats = {
-    pending: data?.filter((c: any) => c.status === 'Pending').length || 0,
-    filed: data?.filter((c: any) => c.status === 'Filed').length || 0,
-    resolved: data?.filter((c: any) => c.status === 'Resolved').length || 0,
-    dismissed: data?.filter((c: any) => c.status === 'Dismissed').length || 0,
-  };
-
-  return stats;
-}
-
-export async function getCasesByStatus(status: string) {
-  const { data, error } = await supabase
-    .from('cases')
+    .from('case_charges')
     .select('*')
-    .eq('status', status)
-    .order('date_received', { ascending: false });
+    .eq('case_id', caseId);
 
   if (error) {
-    console.error('[v0] Error fetching cases by status:', error);
+    console.error('[v0] Error fetching charges:', error);
     return [];
   }
   return data || [];
+}
+
+// REPORTS
+
+export async function getCasesByType() {
+  const { data, error } = await supabase
+    .from('cases')
+    .select(`
+      docket_type_id,
+      docket_types(code, description)
+    `)
+    .order('docket_type_id');
+
+  if (error) {
+    console.error('[v0] Error fetching cases by type:', error);
+    return [];
+  }
+
+  // Group by type
+  const grouped: Record<string, any> = {};
+  (data || []).forEach((c: any) => {
+    const type = c.docket_types?.code || 'Unknown';
+    grouped[type] = (grouped[type] || 0) + 1;
+  });
+
+  return Object.entries(grouped).map(([type, count]) => ({
+    type,
+    count,
+  }));
+}
+
+export async function getCasesByYearReport() {
+  const { data, error } = await supabase
+    .from('cases')
+    .select('docket_year, id');
+
+  if (error) {
+    console.error('[v0] Error fetching cases by year:', error);
+    return [];
+  }
+
+  // Group by year
+  const grouped: Record<number, number> = {};
+  (data || []).forEach((c: any) => {
+    const year = c.docket_year || 2026;
+    grouped[year] = (grouped[year] || 0) + 1;
+  });
+
+  return Object.entries(grouped)
+    .map(([year, count]) => ({
+      year: parseInt(year),
+      count,
+    }))
+    .sort((a, b) => b.year - a.year);
+}
+
+export async function getProsecutorCaseCount(prosecutorId: string) {
+  const { data, error } = await supabase
+    .from('cases')
+    .select('id')
+    .eq('current_prosecutor_id', prosecutorId);
+
+  if (error) {
+    console.error('[v0] Error fetching prosecutor cases:', error);
+    return 0;
+  }
+  return data?.length || 0;
 }
