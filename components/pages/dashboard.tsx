@@ -246,17 +246,6 @@ export default function Dashboard() {
           </div>
         )}
       </div>
-                <div className="flex items-center gap-4">
-                  <StatusBadge status={docket.status} size="sm" />
-                  <Link href={`/docket-search?id=${docket.id}`} className="text-primary hover:text-primary/80">
-                    <ArrowRight className="w-4 h-4" />
-                  </Link>
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }
