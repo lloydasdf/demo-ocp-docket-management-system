@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Sidebar } from '@/components/sidebar';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -98,8 +98,6 @@ export default function CasesPage() {
   const [isUsingFallback, setIsUsingFallback] = useState(false);
   const [selectedCaseKey, setSelectedCaseKey] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(() => getInitialColumnWidths());
-  const tableScrollRef = useRef<HTMLDivElement>(null);
-  const horizontalScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -156,16 +154,6 @@ export default function CasesPage() {
     () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0),
     [columnWidths],
   );
-
-  function syncTableScroll(scrollLeft: number) {
-    if (tableScrollRef.current && tableScrollRef.current.scrollLeft !== scrollLeft) {
-      tableScrollRef.current.scrollLeft = scrollLeft;
-    }
-
-    if (horizontalScrollRef.current && horizontalScrollRef.current.scrollLeft !== scrollLeft) {
-      horizontalScrollRef.current.scrollLeft = scrollLeft;
-    }
-  }
 
   function handleColumnResize(columnKey: CaseTableColumnKey, startX: number) {
     const column = CASE_TABLE_COLUMNS.find((candidate) => candidate.key === columnKey);
@@ -270,93 +258,82 @@ export default function CasesPage() {
               ) : cases.length === 0 ? (
                 <div className="py-8 text-center text-sm text-muted-foreground">No cases found.</div>
               ) : (
-                <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border">
-                  <div
-                    ref={tableScrollRef}
-                    className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
-                    onScroll={(event) => syncTableScroll(event.currentTarget.scrollLeft)}
-                  >
-                    <Table className="table-fixed" style={{ width: tableWidth, minWidth: '100%' }}>
-                      <colgroup>
+                <div
+                  className="h-full min-h-0 overflow-auto rounded-lg border border-border"
+                  aria-label="Cases table with horizontal scrollbar"
+                >
+                  <Table className="table-fixed" style={{ width: tableWidth, minWidth: '100%' }}>
+                    <colgroup>
+                      {CASE_TABLE_COLUMNS.map((column) => (
+                        <col key={column.key} style={{ width: columnWidths[column.key] }} />
+                      ))}
+                    </colgroup>
+                    <TableHeader className="sticky top-0 z-20 bg-muted shadow-sm">
+                      <TableRow className="bg-muted hover:bg-muted">
                         {CASE_TABLE_COLUMNS.map((column) => (
-                          <col key={column.key} style={{ width: columnWidths[column.key] }} />
+                          <TableHead key={column.key} className="relative select-none whitespace-nowrap pr-4 uppercase">
+                            {column.label}
+                            <button
+                              type="button"
+                              className="absolute right-0 top-0 h-full w-2 cursor-col-resize touch-none border-r border-transparent hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              aria-label={`Resize ${column.label} column`}
+                              onPointerDown={(event) => {
+                                event.preventDefault();
+                                handleColumnResize(column.key, event.clientX);
+                              }}
+                            />
+                          </TableHead>
                         ))}
-                      </colgroup>
-                      <TableHeader className="sticky top-0 z-20 bg-muted shadow-sm">
-                        <TableRow className="bg-muted hover:bg-muted">
-                          {CASE_TABLE_COLUMNS.map((column) => (
-                            <TableHead key={column.key} className="relative select-none whitespace-nowrap pr-4 uppercase">
-                              {column.label}
-                              <button
-                                type="button"
-                                className="absolute right-0 top-0 h-full w-2 cursor-col-resize touch-none border-r border-transparent hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                                aria-label={`Resize ${column.label} column`}
-                                onPointerDown={(event) => {
-                                  event.preventDefault();
-                                  handleColumnResize(column.key, event.clientX);
-                                }}
-                              />
-                            </TableHead>
-                          ))}
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {sortedCases.map((caseDetail) => {
-                          const caseKey = getCaseKey(caseDetail);
-                          const isSelected = selectedCaseKey === caseKey;
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {sortedCases.map((caseDetail) => {
+                        const caseKey = getCaseKey(caseDetail);
+                        const isSelected = selectedCaseKey === caseKey;
 
-                          return (
-                            <TableRow
-                              key={caseKey}
-                              aria-selected={isSelected}
-                              className={`cursor-pointer ${isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-muted/50'}`}
-                              tabIndex={caseDetail.case_id ? 0 : -1}
-                              onClick={() => setSelectedCaseKey(caseKey)}
-                              onDoubleClick={() => {
-                                if (caseDetail.case_id) {
-                                  router.push(`/cases/${caseDetail.case_id}`);
-                                }
-                              }}
-                              onKeyDown={(event) => {
-                                if (!caseDetail.case_id) {
-                                  return;
-                                }
+                        return (
+                          <TableRow
+                            key={caseKey}
+                            aria-selected={isSelected}
+                            className={`cursor-pointer ${isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-muted/50'}`}
+                            tabIndex={caseDetail.case_id ? 0 : -1}
+                            onClick={() => setSelectedCaseKey(caseKey)}
+                            onDoubleClick={() => {
+                              if (caseDetail.case_id) {
+                                router.push(`/cases/${caseDetail.case_id}`);
+                              }
+                            }}
+                            onKeyDown={(event) => {
+                              if (!caseDetail.case_id) {
+                                return;
+                              }
 
-                                if (event.key === 'Enter') {
-                                  event.preventDefault();
-                                  router.push(`/cases/${caseDetail.case_id}`);
-                                }
+                              if (event.key === 'Enter') {
+                                event.preventDefault();
+                                router.push(`/cases/${caseDetail.case_id}`);
+                              }
 
-                                if (event.key === ' ') {
-                                  event.preventDefault();
-                                  setSelectedCaseKey(caseKey);
-                                }
-                              }}
-                            >
-                              <TableCell className="truncate font-medium text-primary">
-                                {formatDisplayDocketNumber(caseDetail.docket_number)}
-                              </TableCell>
-                              <TableCell className="truncate text-sm">{caseDetail.complainant ?? '—'}</TableCell>
-                              <TableCell className="truncate text-sm">{caseDetail.respondent ?? '—'}</TableCell>
-                              <TableCell className="truncate text-sm">{caseDetail.violations ?? '—'}</TableCell>
-                              <TableCell className="truncate text-sm">{caseDetail.assigned_prosecutor ?? '—'}</TableCell>
-                              <TableCell>
-                                <Badge variant="outline">{caseDetail.current_status ?? '—'}</Badge>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-                  <div
-                    ref={horizontalScrollRef}
-                    className="h-4 shrink-0 overflow-x-auto overflow-y-hidden border-t border-border bg-background"
-                    onScroll={(event) => syncTableScroll(event.currentTarget.scrollLeft)}
-                    aria-label="Cases table horizontal scrollbar"
-                  >
-                    <div style={{ width: tableWidth, height: 1 }} />
-                  </div>
+                              if (event.key === ' ') {
+                                event.preventDefault();
+                                setSelectedCaseKey(caseKey);
+                              }
+                            }}
+                          >
+                            <TableCell className="truncate font-medium text-primary">
+                              {formatDisplayDocketNumber(caseDetail.docket_number)}
+                            </TableCell>
+                            <TableCell className="truncate text-sm">{caseDetail.complainant ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{caseDetail.respondent ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{caseDetail.violations ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{caseDetail.assigned_prosecutor ?? '—'}</TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{caseDetail.current_status ?? '—'}</Badge>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
                 </div>
               )}
             </CardContent>

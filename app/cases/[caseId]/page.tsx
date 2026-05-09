@@ -244,17 +244,16 @@ export default function CaseDetailsPage() {
 
               <Card>
                 <CardHeader className="gap-4">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div>
-                      <CardTitle className="text-3xl">{data.compact.docket_number ?? data.details.docket_display_number}</CardTitle>
-                      <CardDescription className="mt-2 flex flex-wrap gap-2">
-                        <Badge variant="secondary">{data.compact.docket_type ?? data.details.docket_types?.prefix ?? '—'}</Badge>
-                        <Badge variant="outline">{data.compact.docket_year ?? data.details.docket_year}</Badge>
-                        <Badge variant="outline">{data.compact.current_status ?? data.details.case_statuses?.display_label ?? '—'}</Badge>
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <CardTitle className="whitespace-nowrap text-3xl">
+                        {data.compact.docket_number ?? data.details.docket_display_number}
+                      </CardTitle>
+                      <CardDescription className="mt-3 text-base text-foreground">
+                        {data.compact.violations ?? data.details.violations?.title ?? 'No violation recorded'}
                       </CardDescription>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[440px]">
-                      <DetailItem label="Assigned prosecutor" value={data.compact.assigned_prosecutor ?? data.details.prosecutors?.full_name ?? '—'} />
+                    <div className="shrink-0 sm:text-right">
                       <DetailItem label="Date received" value={formatDate(data.compact.date_received ?? data.details.date_received)} />
                     </div>
                   </div>
