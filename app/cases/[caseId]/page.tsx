@@ -196,10 +196,10 @@ export default function CaseDetailsPage() {
   );
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
-      <main className="min-w-0 flex-1 overflow-auto p-4 md:p-8">
-        <div className="mx-auto flex max-w-7xl flex-col gap-6">
+      <main className="min-w-0 flex-1 overflow-y-auto p-4 md:p-8">
+        <div className="flex w-full max-w-[824px] flex-col gap-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <Button variant="outline" size="sm" asChild className="w-fit">
               <Link href="/cases">

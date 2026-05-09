@@ -1,16 +1,13 @@
 'use client';
 
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sidebar } from '@/components/sidebar';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowRight } from 'lucide-react';
 import { dockets } from '@/lib/dummy-data';
 import { getCasesCompact } from '@/lib/supabase/queries';
 import type { ViewRow } from '@/lib/supabase/types';
@@ -21,6 +18,35 @@ type DocketYearFilter = 'All' | '2022';
 
 const DOCKET_TYPE_FILTERS: DocketTypeFilter[] = ['All', 'INV', 'INQ', 'PE', 'DC20'];
 const DOCKET_YEAR_FILTERS: DocketYearFilter[] = ['2022', 'All'];
+
+const docketNumberCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+const CASE_TABLE_COLUMNS = [
+  { key: 'docketNumber', label: 'Docket number', initialWidth: 220, minWidth: 160 },
+  { key: 'complainant', label: 'Complainant', initialWidth: 300, minWidth: 200 },
+  { key: 'respondent', label: 'Respondent', initialWidth: 300, minWidth: 200 },
+  { key: 'violation', label: 'Violation', initialWidth: 260, minWidth: 180 },
+  { key: 'assignedProsecutor', label: 'Assigned Prosecutor', initialWidth: 240, minWidth: 180 },
+  { key: 'currentStatus', label: 'Current Status', initialWidth: 180, minWidth: 150 },
+] as const;
+
+type CaseTableColumnKey = (typeof CASE_TABLE_COLUMNS)[number]['key'];
+type ColumnWidths = Record<CaseTableColumnKey, number>;
+
+function getInitialColumnWidths(): ColumnWidths {
+  return CASE_TABLE_COLUMNS.reduce((widths, column) => {
+    widths[column.key] = column.initialWidth;
+    return widths;
+  }, {} as ColumnWidths);
+}
+
+function formatDisplayDocketNumber(docketNumber: string | null) {
+  return docketNumber?.replace(/^IV-31-/i, '') ?? '—';
+}
+
+function getCaseKey(caseDetail: CompactCase) {
+  return `${caseDetail.case_id ?? 'case'}-${caseDetail.docket_number ?? 'docket'}`;
+}
 
 function getFallbackCases(): CompactCase[] {
   return dockets.flatMap((docket) =>
@@ -61,20 +87,6 @@ function getFallbackCases(): CompactCase[] {
   );
 }
 
-function formatDate(date: string | null) {
-  if (!date) {
-    return '—';
-  }
-
-  const parsedDate = new Date(date);
-
-  if (Number.isNaN(parsedDate.getTime())) {
-    return date;
-  }
-
-  return parsedDate.toLocaleDateString();
-}
-
 export default function CasesPage() {
   const router = useRouter();
   const fallbackCases = useMemo(getFallbackCases, []);
@@ -84,6 +96,10 @@ export default function CasesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isUsingFallback, setIsUsingFallback] = useState(false);
+  const [selectedCaseKey, setSelectedCaseKey] = useState<string | null>(null);
+  const [columnWidths, setColumnWidths] = useState<ColumnWidths>(() => getInitialColumnWidths());
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const horizontalScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -125,6 +141,54 @@ export default function CasesPage() {
     };
   }, [fallbackCases, selectedDocketType, selectedDocketYear]);
 
+  const sortedCases = useMemo(
+    () =>
+      [...cases].sort((left, right) =>
+        docketNumberCollator.compare(
+          formatDisplayDocketNumber(left.docket_number),
+          formatDisplayDocketNumber(right.docket_number),
+        ),
+      ),
+    [cases],
+  );
+
+  const tableWidth = useMemo(
+    () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0),
+    [columnWidths],
+  );
+
+  function syncTableScroll(scrollLeft: number) {
+    if (tableScrollRef.current && tableScrollRef.current.scrollLeft !== scrollLeft) {
+      tableScrollRef.current.scrollLeft = scrollLeft;
+    }
+
+    if (horizontalScrollRef.current && horizontalScrollRef.current.scrollLeft !== scrollLeft) {
+      horizontalScrollRef.current.scrollLeft = scrollLeft;
+    }
+  }
+
+  function handleColumnResize(columnKey: CaseTableColumnKey, startX: number) {
+    const column = CASE_TABLE_COLUMNS.find((candidate) => candidate.key === columnKey);
+    const startWidth = columnWidths[columnKey];
+
+    function handlePointerMove(event: PointerEvent) {
+      const nextWidth = Math.max(column?.minWidth ?? 120, startWidth + event.clientX - startX);
+      setColumnWidths((currentWidths) => ({ ...currentWidths, [columnKey]: nextWidth }));
+    }
+
+    function handlePointerUp() {
+      document.removeEventListener('pointermove', handlePointerMove);
+      document.removeEventListener('pointerup', handlePointerUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('pointermove', handlePointerMove);
+    document.addEventListener('pointerup', handlePointerUp);
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
@@ -157,24 +221,24 @@ export default function CasesPage() {
 
               <div className="grid gap-4 sm:max-w-xl sm:grid-cols-2">
                 <div className="flex flex-col gap-2">
-                <label className="text-sm font-medium text-foreground" htmlFor="docket-type-filter">
-                  Docket Type
-                </label>
-                <Select
-                  value={selectedDocketType}
-                  onValueChange={(value) => setSelectedDocketType(value as DocketTypeFilter)}
-                >
-                  <SelectTrigger id="docket-type-filter" className="w-full">
-                    <SelectValue placeholder="Filter by docket type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {DOCKET_TYPE_FILTERS.map((docketType) => (
-                      <SelectItem key={docketType} value={docketType}>
-                        {docketType}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <label className="text-sm font-medium text-foreground" htmlFor="docket-type-filter">
+                    Docket Type
+                  </label>
+                  <Select
+                    value={selectedDocketType}
+                    onValueChange={(value) => setSelectedDocketType(value as DocketTypeFilter)}
+                  >
+                    <SelectTrigger id="docket-type-filter" className="w-full">
+                      <SelectValue placeholder="Filter by docket type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DOCKET_TYPE_FILTERS.map((docketType) => (
+                        <SelectItem key={docketType} value={docketType}>
+                          {docketType}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div className="flex flex-col gap-2">
@@ -206,63 +270,93 @@ export default function CasesPage() {
               ) : cases.length === 0 ? (
                 <div className="py-8 text-center text-sm text-muted-foreground">No cases found.</div>
               ) : (
-                <div className="h-full overflow-auto rounded-lg border border-border">
-                  <Table className="min-w-[980px]">
-                    <TableHeader className="sticky top-0 z-10 bg-muted">
-                      <TableRow className="bg-muted hover:bg-muted">
-                        <TableHead>Docket #</TableHead>
-                        <TableHead>Docket Type</TableHead>
-                        <TableHead>Date Received</TableHead>
-                        <TableHead>Complainant</TableHead>
-                        <TableHead>Respondent</TableHead>
-                        <TableHead>Violations</TableHead>
-                        <TableHead>Assigned Prosecutor</TableHead>
-                        <TableHead>Current Status</TableHead>
-                        <TableHead className="text-right">Action</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {cases.map((caseDetail) => (
-                        <TableRow
-                          key={`${caseDetail.case_id ?? 'case'}-${caseDetail.docket_number ?? 'docket'}`}
-                          className="cursor-pointer hover:bg-muted/50"
-                          tabIndex={caseDetail.case_id ? 0 : -1}
-                          onClick={() => {
-                            if (caseDetail.case_id) {
-                              router.push(`/cases/${caseDetail.case_id}`);
-                            }
-                          }}
-                          onKeyDown={(event) => {
-                            if (caseDetail.case_id && (event.key === 'Enter' || event.key === ' ')) {
-                              event.preventDefault();
-                              router.push(`/cases/${caseDetail.case_id}`);
-                            }
-                          }}
-                        >
-                          <TableCell className="font-medium text-primary">{caseDetail.docket_number ?? '—'}</TableCell>
-                          <TableCell className="text-sm">{caseDetail.docket_type ?? '—'}</TableCell>
-                          <TableCell className="text-sm">{formatDate(caseDetail.date_received)}</TableCell>
-                          <TableCell className="text-sm">{caseDetail.complainant ?? '—'}</TableCell>
-                          <TableCell className="text-sm">{caseDetail.respondent ?? '—'}</TableCell>
-                          <TableCell className="text-sm max-w-xs truncate">{caseDetail.violations ?? '—'}</TableCell>
-                          <TableCell className="text-sm">{caseDetail.assigned_prosecutor ?? '—'}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{caseDetail.current_status ?? '—'}</Badge>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <Button variant="ghost" size="sm" asChild onClick={(event) => event.stopPropagation()}>
-                              <Link
-                                href={caseDetail.case_id ? `/cases/${caseDetail.case_id}` : '/cases'}
-                                aria-label={`View ${caseDetail.docket_number ?? 'case'}`}
-                              >
-                                <ArrowRight className="w-4 h-4" />
-                              </Link>
-                            </Button>
-                          </TableCell>
+                <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border">
+                  <div
+                    ref={tableScrollRef}
+                    className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto"
+                    onScroll={(event) => syncTableScroll(event.currentTarget.scrollLeft)}
+                  >
+                    <Table className="table-fixed" style={{ width: tableWidth, minWidth: '100%' }}>
+                      <colgroup>
+                        {CASE_TABLE_COLUMNS.map((column) => (
+                          <col key={column.key} style={{ width: columnWidths[column.key] }} />
+                        ))}
+                      </colgroup>
+                      <TableHeader className="sticky top-0 z-20 bg-muted shadow-sm">
+                        <TableRow className="bg-muted hover:bg-muted">
+                          {CASE_TABLE_COLUMNS.map((column) => (
+                            <TableHead key={column.key} className="relative select-none whitespace-nowrap pr-4 uppercase">
+                              {column.label}
+                              <button
+                                type="button"
+                                className="absolute right-0 top-0 h-full w-2 cursor-col-resize touch-none border-r border-transparent hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                aria-label={`Resize ${column.label} column`}
+                                onPointerDown={(event) => {
+                                  event.preventDefault();
+                                  handleColumnResize(column.key, event.clientX);
+                                }}
+                              />
+                            </TableHead>
+                          ))}
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {sortedCases.map((caseDetail) => {
+                          const caseKey = getCaseKey(caseDetail);
+                          const isSelected = selectedCaseKey === caseKey;
+
+                          return (
+                            <TableRow
+                              key={caseKey}
+                              aria-selected={isSelected}
+                              className={`cursor-pointer ${isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-muted/50'}`}
+                              tabIndex={caseDetail.case_id ? 0 : -1}
+                              onClick={() => setSelectedCaseKey(caseKey)}
+                              onDoubleClick={() => {
+                                if (caseDetail.case_id) {
+                                  router.push(`/cases/${caseDetail.case_id}`);
+                                }
+                              }}
+                              onKeyDown={(event) => {
+                                if (!caseDetail.case_id) {
+                                  return;
+                                }
+
+                                if (event.key === 'Enter') {
+                                  event.preventDefault();
+                                  router.push(`/cases/${caseDetail.case_id}`);
+                                }
+
+                                if (event.key === ' ') {
+                                  event.preventDefault();
+                                  setSelectedCaseKey(caseKey);
+                                }
+                              }}
+                            >
+                              <TableCell className="truncate font-medium text-primary">
+                                {formatDisplayDocketNumber(caseDetail.docket_number)}
+                              </TableCell>
+                              <TableCell className="truncate text-sm">{caseDetail.complainant ?? '—'}</TableCell>
+                              <TableCell className="truncate text-sm">{caseDetail.respondent ?? '—'}</TableCell>
+                              <TableCell className="truncate text-sm">{caseDetail.violations ?? '—'}</TableCell>
+                              <TableCell className="truncate text-sm">{caseDetail.assigned_prosecutor ?? '—'}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline">{caseDetail.current_status ?? '—'}</Badge>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div
+                    ref={horizontalScrollRef}
+                    className="h-4 shrink-0 overflow-x-auto overflow-y-hidden border-t border-border bg-background"
+                    onScroll={(event) => syncTableScroll(event.currentTarget.scrollLeft)}
+                    aria-label="Cases table horizontal scrollbar"
+                  >
+                    <div style={{ width: tableWidth, height: 1 }} />
+                  </div>
                 </div>
               )}
             </CardContent>
