@@ -198,8 +198,8 @@ export default function CaseDetailsPage() {
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
-      <main className="min-w-0 flex-1 overflow-y-auto p-4 md:p-8">
-        <div className="flex w-full max-w-[824px] flex-col gap-6">
+      <main className="min-w-0 flex-1 overflow-y-auto p-3 pt-16 md:p-8">
+        <div className="flex w-full max-w-[824px] flex-col gap-4 md:gap-6">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <Button variant="outline" size="sm" asChild className="w-fit">
               <Link href="/cases">
@@ -243,13 +243,13 @@ export default function CaseDetailsPage() {
               ) : null}
 
               <Card>
-                <CardHeader className="gap-5">
+                <CardHeader className="gap-5 p-4 sm:p-6">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0 flex-1">
-                      <CardTitle className="whitespace-nowrap text-3xl">
+                      <CardTitle className="whitespace-nowrap text-2xl sm:text-3xl">
                         {data.compact.docket_number ?? data.details.docket_display_number}
                       </CardTitle>
-                      <CardDescription className="mt-3 text-base text-foreground">
+                      <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
                         {data.compact.violations ?? data.details.violations?.title ?? 'No violation recorded'}
                       </CardDescription>
                     </div>
@@ -258,7 +258,7 @@ export default function CaseDetailsPage() {
                     </div>
                   </div>
 
-                  <div className="grid gap-4 border-t pt-4 sm:grid-cols-2">
+                  <div className="grid gap-3 border-t pt-4 sm:grid-cols-2">
                     <DetailItem
                       label="Current status"
                       value={<Badge variant="outline">{data.compact.current_status ?? data.details.case_statuses?.display_label ?? '—'}</Badge>}
@@ -274,11 +274,11 @@ export default function CaseDetailsPage() {
               <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
                 <div className="space-y-6">
                   <Card>
-                    <CardHeader>
+                    <CardHeader className="p-4 sm:p-6">
                       <CardTitle>Parties</CardTitle>
                       <CardDescription>Complainants, respondents, and any other schema-backed participant roles.</CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-4">
+                    <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">
                       {partiesByRole.length === 0 ? (
                         <SectionEmpty />
                       ) : (
