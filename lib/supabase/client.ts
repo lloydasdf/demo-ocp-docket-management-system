@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from '@/lib/database.types';
 
@@ -21,11 +21,6 @@ export async function createSupabaseBrowserClient(): Promise<SupabaseBrowserClie
       'Missing Supabase environment variables. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.',
     );
   }
-
-  const importSupabase = new Function('specifier', 'return import(specifier)') as (
-    specifier: string,
-  ) => Promise<typeof import('@supabase/supabase-js')>;
-  const { createClient } = await importSupabase('@supabase/supabase-js');
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
