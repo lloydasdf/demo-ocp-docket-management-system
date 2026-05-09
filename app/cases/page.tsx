@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { Sidebar } from '@/components/sidebar';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,8 +17,10 @@ import type { ViewRow } from '@/lib/supabase/types';
 
 type CompactCase = ViewRow<'v_cases_table_compact'>;
 type DocketTypeFilter = 'All' | 'INV' | 'INQ' | 'PE' | 'DC20';
+type DocketYearFilter = 'All' | '2022';
 
 const DOCKET_TYPE_FILTERS: DocketTypeFilter[] = ['All', 'INV', 'INQ', 'PE', 'DC20'];
+const DOCKET_YEAR_FILTERS: DocketYearFilter[] = ['2022', 'All'];
 
 function getFallbackCases(): CompactCase[] {
   return dockets.flatMap((docket) =>
@@ -72,9 +76,11 @@ function formatDate(date: string | null) {
 }
 
 export default function CasesPage() {
+  const router = useRouter();
   const fallbackCases = useMemo(getFallbackCases, []);
   const [cases, setCases] = useState<CompactCase[]>([]);
   const [selectedDocketType, setSelectedDocketType] = useState<DocketTypeFilter>('All');
+  const [selectedDocketYear, setSelectedDocketYear] = useState<DocketYearFilter>('2022');
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isUsingFallback, setIsUsingFallback] = useState(false);
@@ -86,6 +92,7 @@ export default function CasesPage() {
       setIsLoading(true);
       const result = await getCasesCompact({
         docketType: selectedDocketType === 'All' ? undefined : selectedDocketType,
+        docketYear: selectedDocketYear === 'All' ? undefined : Number(selectedDocketYear),
       });
 
       if (!isMounted) {
@@ -95,9 +102,11 @@ export default function CasesPage() {
       if (result.error) {
         setErrorMessage(result.error.message);
         setCases(
-          selectedDocketType === 'All'
-            ? fallbackCases
-            : fallbackCases.filter((caseDetail) => caseDetail.docket_type === selectedDocketType),
+          fallbackCases.filter((caseDetail) => {
+            const matchesType = selectedDocketType === 'All' || caseDetail.docket_type === selectedDocketType;
+            const matchesYear = selectedDocketYear === 'All' || caseDetail.docket_year === Number(selectedDocketYear);
+            return matchesType && matchesYear;
+          }),
         );
         setIsUsingFallback(true);
       } else {
@@ -114,7 +123,7 @@ export default function CasesPage() {
     return () => {
       isMounted = false;
     };
-  }, [fallbackCases, selectedDocketType]);
+  }, [fallbackCases, selectedDocketType, selectedDocketYear]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -146,7 +155,8 @@ export default function CasesPage() {
                 </CardDescription>
               </div>
 
-              <div className="flex flex-col gap-2 sm:max-w-xs">
+              <div className="grid gap-4 sm:max-w-xl sm:grid-cols-2">
+                <div className="flex flex-col gap-2">
                 <label className="text-sm font-medium text-foreground" htmlFor="docket-type-filter">
                   Docket Type
                 </label>
@@ -165,6 +175,28 @@ export default function CasesPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <label className="text-sm font-medium text-foreground" htmlFor="docket-year-filter">
+                    Docket Year
+                  </label>
+                  <Select
+                    value={selectedDocketYear}
+                    onValueChange={(value) => setSelectedDocketYear(value as DocketYearFilter)}
+                  >
+                    <SelectTrigger id="docket-year-filter" className="w-full">
+                      <SelectValue placeholder="Filter by docket year" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DOCKET_YEAR_FILTERS.map((docketYear) => (
+                        <SelectItem key={docketYear} value={docketYear}>
+                          {docketYear === 'All' ? 'All years' : docketYear}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </CardHeader>
 
@@ -193,7 +225,19 @@ export default function CasesPage() {
                       {cases.map((caseDetail) => (
                         <TableRow
                           key={`${caseDetail.case_id ?? 'case'}-${caseDetail.docket_number ?? 'docket'}`}
-                          className="hover:bg-muted/50"
+                          className="cursor-pointer hover:bg-muted/50"
+                          tabIndex={caseDetail.case_id ? 0 : -1}
+                          onClick={() => {
+                            if (caseDetail.case_id) {
+                              router.push(`/cases/${caseDetail.case_id}`);
+                            }
+                          }}
+                          onKeyDown={(event) => {
+                            if (caseDetail.case_id && (event.key === 'Enter' || event.key === ' ')) {
+                              event.preventDefault();
+                              router.push(`/cases/${caseDetail.case_id}`);
+                            }
+                          }}
                         >
                           <TableCell className="font-medium text-primary">{caseDetail.docket_number ?? '—'}</TableCell>
                           <TableCell className="text-sm">{caseDetail.docket_type ?? '—'}</TableCell>
@@ -206,13 +250,13 @@ export default function CasesPage() {
                             <Badge variant="outline">{caseDetail.current_status ?? '—'}</Badge>
                           </TableCell>
                           <TableCell className="text-right">
-                            <Button variant="ghost" size="sm" asChild>
-                              <a
-                                href={`/case-details?caseId=${caseDetail.case_id ?? ''}`}
+                            <Button variant="ghost" size="sm" asChild onClick={(event) => event.stopPropagation()}>
+                              <Link
+                                href={caseDetail.case_id ? `/cases/${caseDetail.case_id}` : '/cases'}
                                 aria-label={`View ${caseDetail.docket_number ?? 'case'}`}
                               >
                                 <ArrowRight className="w-4 h-4" />
-                              </a>
+                              </Link>
                             </Button>
                           </TableCell>
                         </TableRow>

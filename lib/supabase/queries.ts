@@ -96,6 +96,7 @@ function escapeIlikeTerm(term: string) {
 
 export type CasesCompactQueryParams = {
   docketType?: string;
+  docketYear?: number;
   search?: string;
   limit?: number;
 };
@@ -166,7 +167,7 @@ export async function getCases(limit?: number): Promise<SupabaseQueryResult<Tabl
 export async function getCasesCompact(
   params: CasesCompactQueryParams = {},
 ): Promise<SupabaseQueryResult<ViewRow<'v_cases_table_compact'>[]>> {
-  const { docketType, limit } = params;
+  const { docketType, docketYear, limit } = params;
 
   return runSupabaseQuery('getCasesCompact', 'v_cases_table_compact', async () => {
     const supabase = await getSupabaseBrowserClient();
@@ -177,6 +178,10 @@ export async function getCasesCompact(
 
     if (docketType && docketType !== 'All') {
       query = query.eq('docket_type', docketType);
+    }
+
+    if (docketYear !== undefined) {
+      query = query.eq('docket_year', docketYear);
     }
 
     if (limit !== undefined) {
@@ -195,6 +200,61 @@ export async function getCompactCases(
   }
 
   return getCasesCompact(params);
+}
+
+
+export type CaseDetailsRecord = TableRow<'cases'> & {
+  case_statuses: Pick<TableRow<'case_statuses'>, 'code' | 'display_label'> | null;
+  courts: Pick<TableRow<'courts'>, 'code' | 'court_type' | 'name'> | null;
+  docket_types: Pick<TableRow<'docket_types'>, 'name' | 'prefix'> | null;
+  prosecutors: Pick<TableRow<'prosecutors'>, 'full_name' | 'short_name'> | null;
+  violations: Pick<TableRow<'violations'>, 'description' | 'law_reference' | 'reference_code' | 'short_label' | 'title'> | null;
+};
+
+export type CaseParticipantRecord = TableRow<'case_participants'> & {
+  participant_roles: Pick<TableRow<'participant_roles'>, 'code' | 'display_label'> | null;
+  persons: Pick<TableRow<'persons'>, 'birth_date' | 'first_name' | 'full_name' | 'gender' | 'last_name' | 'middle_name' | 'suffix'> | null;
+};
+
+export type CaseAssignmentRecord = TableRow<'case_assignments'> & {
+  prosecutors: Pick<TableRow<'prosecutors'>, 'full_name' | 'short_name'> | null;
+  staff: Pick<TableRow<'staff'>, 'full_name' | 'short_name'> | null;
+};
+
+export type CaseStatusHistoryRecord = TableRow<'case_status_history'> & {
+  from_status: Pick<TableRow<'case_statuses'>, 'code' | 'display_label'> | null;
+  to_status: Pick<TableRow<'case_statuses'>, 'code' | 'display_label'> | null;
+};
+
+export async function getCaseCompactById(
+  caseId: number,
+): Promise<SupabaseQueryResult<ViewRow<'v_cases_table_compact'> | null>> {
+  return runSupabaseQuery('getCaseCompactById', 'v_cases_table_compact', async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return supabase.from('v_cases_table_compact').select('*').eq('case_id', caseId).maybeSingle();
+  }, null);
+}
+
+export async function getCaseDetailsById(
+  caseId: number,
+): Promise<SupabaseQueryResult<CaseDetailsRecord | null>> {
+  return runSupabaseQuery('getCaseDetailsById', 'cases', async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const query = supabase
+      .from('cases')
+      .select(`
+        *,
+        case_statuses:case_statuses!cases_current_status_id_fkey (code, display_label),
+        courts:courts!cases_court_id_fkey (code, court_type, name),
+        docket_types:docket_types!cases_docket_type_id_fkey (name, prefix),
+        prosecutors:prosecutors!cases_current_prosecutor_id_fkey (full_name, short_name),
+        violations:violations!cases_violation_id_fkey (description, law_reference, reference_code, short_label, title)
+      `)
+      .eq('id', caseId)
+      .maybeSingle();
+
+    return query as unknown as Promise<{ data: CaseDetailsRecord | null; error: unknown }>;
+  }, null);
 }
 
 export async function getCaseById(
@@ -279,38 +339,94 @@ export async function getProsecutors(
 
 export async function getCaseParticipants(
   caseId: number,
-): Promise<SupabaseQueryResult<TableRow<'case_participants'>[]>> {
+): Promise<SupabaseQueryResult<CaseParticipantRecord[]>> {
   return runSupabaseQuery('getCaseParticipants', 'case_participants', async () => {
     const supabase = await getSupabaseBrowserClient();
-    return supabase.from('case_participants').select('*').eq('case_id', caseId).order('id');
+    const query = supabase
+      .from('case_participants')
+      .select('*, participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label), persons:persons!case_participants_person_id_fkey (birth_date, first_name, full_name, gender, last_name, middle_name, suffix)')
+      .eq('case_id', caseId)
+      .order('participant_order', { ascending: true, nullsFirst: false })
+      .order('id', { ascending: true });
+
+    return query as unknown as Promise<{ data: CaseParticipantRecord[] | null; error: unknown }>;
   }, []);
 }
 
 export async function getCaseAssignments(
   caseId: number,
-): Promise<SupabaseQueryResult<TableRow<'case_assignments'>[]>> {
+): Promise<SupabaseQueryResult<CaseAssignmentRecord[]>> {
   return runSupabaseQuery('getCaseAssignments', 'case_assignments', async () => {
     const supabase = await getSupabaseBrowserClient();
-    return supabase
+    const query = supabase
       .from('case_assignments')
-      .select('*')
+      .select('*, prosecutors:prosecutors!case_assignments_prosecutor_id_fkey (full_name, short_name), staff:staff!case_assignments_staff_id_fkey (full_name, short_name)')
       .eq('case_id', caseId)
       .order('assigned_at', { ascending: false });
+
+    return query as unknown as Promise<{ data: CaseAssignmentRecord[] | null; error: unknown }>;
   }, []);
 }
 
 export async function getCaseStatusHistory(
   caseId: number,
-): Promise<SupabaseQueryResult<TableRow<'case_status_history'>[]>> {
+): Promise<SupabaseQueryResult<CaseStatusHistoryRecord[]>> {
   return runSupabaseQuery('getCaseStatusHistory', 'case_status_history', async () => {
     const supabase = await getSupabaseBrowserClient();
-    return supabase
+    const query = supabase
       .from('case_status_history')
+      .select('*, from_status:case_statuses!case_status_history_from_status_id_fkey (code, display_label), to_status:case_statuses!case_status_history_to_status_id_fkey (code, display_label)')
+      .eq('case_id', caseId)
+      .order('changed_at', { ascending: false });
+
+    return query as unknown as Promise<{ data: CaseStatusHistoryRecord[] | null; error: unknown }>;
+  }, []);
+}
+
+export async function getCaseCourtDetails(
+  caseId: number,
+): Promise<SupabaseQueryResult<Pick<CaseDetailsRecord, 'court_branch' | 'court_id' | 'court_remarks' | 'court_status' | 'criminal_case_number' | 'date_filed_in_court' | 'information_count' | 'courts'> | null>> {
+  const result = await getCaseDetailsById(caseId);
+
+  if (result.error) {
+    return fail(result.error);
+  }
+
+  if (!result.data) {
+    return ok(null);
+  }
+
+  const { court_branch, court_id, court_remarks, court_status, criminal_case_number, date_filed_in_court, information_count, courts } = result.data;
+  return ok({ court_branch, court_id, court_remarks, court_status, criminal_case_number, date_filed_in_court, information_count, courts });
+}
+
+export async function getCaseMotions(
+  caseId: number,
+): Promise<SupabaseQueryResult<TableRow<'case_motions'>[]>> {
+  return runSupabaseQuery('getCaseMotions', 'case_motions', async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return supabase
+      .from('case_motions')
       .select('*')
       .eq('case_id', caseId)
+      .order('date_received', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false });
   }, []);
 }
+
+export async function getCaseAttachmentsIndex(
+  caseId: number,
+): Promise<SupabaseQueryResult<TableRow<'case_attachment_index'>[]>> {
+  return runSupabaseQuery('getCaseAttachmentsIndex', 'case_attachment_index', async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return supabase
+      .from('case_attachment_index')
+      .select('*')
+      .eq('case_id', caseId)
+      .order('last_seen_at', { ascending: false });
+  }, []);
+}
+
 
 export async function getViolations(
   limit?: number,
