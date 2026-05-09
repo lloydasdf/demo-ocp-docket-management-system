@@ -9,41 +9,54 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { dockets } from '@/lib/dummy-data';
-import { getCaseStatuses, getCasesList, type CasesListItem } from '@/lib/supabase/queries';
+import { getCaseStatuses, getCompactCases } from '@/lib/supabase/queries';
+import type { ViewRow } from '@/lib/supabase/types';
 import { Search as SearchIcon } from 'lucide-react';
 
-function getFallbackCases(): CasesListItem[] {
+type CompactCase = ViewRow<'v_cases_table_compact'>;
+
+function getFallbackCases(): CompactCase[] {
   return dockets.flatMap((docket) =>
     docket.cases.map((caseDetail) => ({
-      id: Number.parseInt(caseDetail.id.replace(/\D/g, ''), 10) || 0,
-      docketNumber: docket.docketNumber,
+      assigned_prosecutor: caseDetail.prosecutor ?? null,
+      case_id: Number.parseInt(caseDetail.id.replace(/\D/g, ''), 10) || null,
       complainant:
         caseDetail.complainants.length > 0
           ? `${caseDetail.complainants[0].firstName} ${caseDetail.complainants[0].lastName}${
               caseDetail.complainants.length > 1 ? ' et al.' : ''
             }`
-          : '—',
+          : null,
+      created_at: docket.createdDate,
+      current_status: caseDetail.status,
+      date_received: caseDetail.dateOfIncident,
+      docket_month_code: null,
+      docket_number: docket.docketNumber,
+      docket_sequence_number: null,
+      docket_type: docket.docketNumber.split('-')[0] ?? null,
+      docket_year: Number.parseInt(docket.docketNumber.match(/\d{4}/)?.[0] ?? '', 10) || null,
       respondent:
         caseDetail.respondents.length > 0
           ? `${caseDetail.respondents[0].firstName} ${caseDetail.respondents[0].lastName}${
               caseDetail.respondents.length > 1 ? ' et al.' : ''
             }`
-          : '—',
+          : null,
+      status_background_hex: null,
+      status_border_hex: null,
+      status_code: caseDetail.status,
+      status_color_key: null,
+      status_text_hex: null,
+      updated_at: null,
       violations:
         caseDetail.violations.length > 0
           ? caseDetail.violations.map((violation) => violation.statute).join(', ')
-          : '—',
-      assignedProsecutor: caseDetail.prosecutor || '—',
-      currentStatus: caseDetail.status,
-      dateReceived: caseDetail.dateOfIncident,
-      createdAt: docket.createdDate,
+          : null,
     })),
   );
 }
 
 export default function DocketSearch() {
   const fallbackCases = useMemo(getFallbackCases, []);
-  const [cases, setCases] = useState<CasesListItem[]>(fallbackCases);
+  const [cases, setCases] = useState<CompactCase[]>(fallbackCases);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('All');
   const [sortBy, setSortBy] = useState<'date' | 'number'>('date');
@@ -57,7 +70,7 @@ export default function DocketSearch() {
 
     async function loadCases() {
       setIsLoading(true);
-      const [casesResult, statusesResult] = await Promise.all([getCasesList(), getCaseStatuses()]);
+      const [casesResult, statusesResult] = await Promise.all([getCompactCases(), getCaseStatuses()]);
 
       if (!isMounted) {
         return;
@@ -92,25 +105,26 @@ export default function DocketSearch() {
 
     return [...cases]
       .filter((caseDetail) => {
-        const matchesStatus = selectedStatus === 'All' || caseDetail.currentStatus === selectedStatus;
+        const currentStatus = caseDetail.current_status ?? '';
+        const matchesStatus = selectedStatus === 'All' || currentStatus === selectedStatus;
         const matchesSearch =
           normalizedQuery.length === 0 ||
-          caseDetail.docketNumber.toLowerCase().includes(normalizedQuery) ||
-          caseDetail.complainant.toLowerCase().includes(normalizedQuery) ||
-          caseDetail.respondent.toLowerCase().includes(normalizedQuery) ||
-          caseDetail.violations.toLowerCase().includes(normalizedQuery);
+          (caseDetail.docket_number ?? '').toLowerCase().includes(normalizedQuery) ||
+          (caseDetail.complainant ?? '').toLowerCase().includes(normalizedQuery) ||
+          (caseDetail.respondent ?? '').toLowerCase().includes(normalizedQuery) ||
+          (caseDetail.violations ?? '').toLowerCase().includes(normalizedQuery);
 
         return matchesStatus && matchesSearch;
       })
       .sort((firstCase, secondCase) => {
         if (sortBy === 'date') {
           return (
-            new Date(secondCase.createdAt ?? secondCase.dateReceived ?? '').getTime() -
-            new Date(firstCase.createdAt ?? firstCase.dateReceived ?? '').getTime()
+            new Date(secondCase.created_at ?? secondCase.date_received ?? '').getTime() -
+            new Date(firstCase.created_at ?? firstCase.date_received ?? '').getTime()
           );
         }
 
-        return firstCase.docketNumber.localeCompare(secondCase.docketNumber);
+        return (firstCase.docket_number ?? '').localeCompare(secondCase.docket_number ?? '');
       });
   }, [cases, searchQuery, selectedStatus, sortBy]);
 
@@ -225,18 +239,18 @@ export default function DocketSearch() {
                 </TableHeader>
                 <TableBody>
                   {filteredCases.map((caseDetail) => (
-                    <TableRow key={caseDetail.id} className="hover:bg-muted/50">
-                      <TableCell className="font-medium text-primary">{caseDetail.docketNumber}</TableCell>
-                      <TableCell className="text-sm">{caseDetail.complainant}</TableCell>
-                      <TableCell className="text-sm">{caseDetail.respondent}</TableCell>
-                      <TableCell className="text-sm max-w-xs truncate">{caseDetail.violations}</TableCell>
-                      <TableCell className="text-sm">{caseDetail.assignedProsecutor}</TableCell>
+                    <TableRow key={`${caseDetail.case_id ?? 'case'}-${caseDetail.docket_number ?? 'docket'}`} className="hover:bg-muted/50">
+                      <TableCell className="font-medium text-primary">{caseDetail.docket_number ?? '—'}</TableCell>
+                      <TableCell className="text-sm">{caseDetail.complainant ?? '—'}</TableCell>
+                      <TableCell className="text-sm">{caseDetail.respondent ?? '—'}</TableCell>
+                      <TableCell className="text-sm max-w-xs truncate">{caseDetail.violations ?? '—'}</TableCell>
+                      <TableCell className="text-sm">{caseDetail.assigned_prosecutor ?? '—'}</TableCell>
                       <TableCell>
-                        <Badge variant="outline">{caseDetail.currentStatus}</Badge>
+                        <Badge variant="outline">{caseDetail.current_status ?? '—'}</Badge>
                       </TableCell>
                       <TableCell className="text-right">
                         <Button variant="ghost" size="sm" asChild>
-                          <a href={`/case-details?caseId=${caseDetail.id}`}>View</a>
+                          <a href={`/case-details?caseId=${caseDetail.case_id ?? ''}`}>View</a>
                         </Button>
                       </TableCell>
                     </TableRow>
