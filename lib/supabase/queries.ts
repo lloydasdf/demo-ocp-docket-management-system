@@ -93,6 +93,136 @@ function escapeIlikeTerm(term: string) {
   return term.replace(/[%,]/g, '').trim();
 }
 
+
+type CasesListNestedPerson = Pick<TableRow<'persons'>, 'full_name'> | null;
+type CasesListNestedRole = Pick<TableRow<'participant_roles'>, 'code' | 'display_label'> | null;
+type CasesListNestedParticipant = Pick<
+  TableRow<'case_participants'>,
+  'id' | 'is_primary' | 'participant_order' | 'raw_name_text'
+> & {
+  persons: CasesListNestedPerson;
+  participant_roles: CasesListNestedRole;
+};
+type CasesListNestedViolation = Pick<
+  TableRow<'violations'>,
+  'title' | 'short_label' | 'reference_code' | 'law_reference'
+> | null;
+type CasesListNestedProsecutor = Pick<TableRow<'prosecutors'>, 'full_name' | 'short_name'> | null;
+type CasesListNestedAssignment = Pick<
+  TableRow<'case_assignments'>,
+  'assigned_at' | 'unassigned_at'
+> & {
+  prosecutors: CasesListNestedProsecutor;
+};
+type CasesListNestedStatus = Pick<TableRow<'case_statuses'>, 'code' | 'display_label'> | null;
+type CasesListNestedDocketType = Pick<TableRow<'docket_types'>, 'name' | 'prefix'> | null;
+
+type CasesListNestedRow = Pick<
+  TableRow<'cases'>,
+  'id' | 'created_at' | 'date_received' | 'docket_display_number'
+> & {
+  docket_types: CasesListNestedDocketType;
+  case_statuses: CasesListNestedStatus;
+  violations: CasesListNestedViolation;
+  prosecutors: CasesListNestedProsecutor;
+  case_assignments: CasesListNestedAssignment[];
+  case_participants: CasesListNestedParticipant[];
+};
+
+export type CasesListItem = {
+  id: number;
+  docketNumber: string;
+  complainant: string;
+  respondent: string;
+  violations: string;
+  assignedProsecutor: string;
+  currentStatus: string;
+  dateReceived: string | null;
+  createdAt: string | null;
+};
+
+function sortParticipants(
+  firstParticipant: CasesListNestedParticipant,
+  secondParticipant: CasesListNestedParticipant,
+) {
+  if (firstParticipant.is_primary !== secondParticipant.is_primary) {
+    return firstParticipant.is_primary ? -1 : 1;
+  }
+
+  return (
+    (firstParticipant.participant_order ?? Number.MAX_SAFE_INTEGER) -
+      (secondParticipant.participant_order ?? Number.MAX_SAFE_INTEGER) ||
+    firstParticipant.id - secondParticipant.id
+  );
+}
+
+function getParticipantName(participant: CasesListNestedParticipant) {
+  return participant.persons?.full_name ?? participant.raw_name_text ?? 'Name unavailable';
+}
+
+function formatParticipantDisplay(participants: CasesListNestedParticipant[]) {
+  if (participants.length === 0) {
+    return '—';
+  }
+
+  const [firstParticipant] = [...participants].sort(sortParticipants);
+  const suffix = participants.length > 1 ? ' et al.' : '';
+
+  return `${getParticipantName(firstParticipant)}${suffix}`;
+}
+
+function roleMatches(role: CasesListNestedRole, roleName: 'complainant' | 'respondent') {
+  return (
+    role?.code.toLowerCase() === roleName ||
+    role?.display_label.toLowerCase() === roleName
+  );
+}
+
+// TODO: Expand this formatter if the schema adds a typed case-to-many-violations relation;
+// the current cases row exposes one violation_id relationship.
+function getViolationDisplay(violation: CasesListNestedViolation) {
+  if (!violation) {
+    return '—';
+  }
+
+  return violation.short_label ?? violation.reference_code ?? violation.title ?? '—';
+}
+
+function getProsecutorDisplay(prosecutor: CasesListNestedProsecutor) {
+  return prosecutor?.short_name ?? prosecutor?.full_name ?? null;
+}
+
+function getAssignedProsecutorDisplay(row: CasesListNestedRow) {
+  const activeAssignment = [...row.case_assignments]
+    .filter((assignment) => assignment.unassigned_at === null)
+    .sort((firstAssignment, secondAssignment) => (
+      new Date(secondAssignment.assigned_at).getTime() - new Date(firstAssignment.assigned_at).getTime()
+    ))[0];
+
+  return getProsecutorDisplay(activeAssignment?.prosecutors ?? null) ?? getProsecutorDisplay(row.prosecutors) ?? '—';
+}
+
+function toCasesListItem(row: CasesListNestedRow): CasesListItem {
+  const complainants = row.case_participants.filter((participant) =>
+    roleMatches(participant.participant_roles, 'complainant'),
+  );
+  const respondents = row.case_participants.filter((participant) =>
+    roleMatches(participant.participant_roles, 'respondent'),
+  );
+
+  return {
+    id: row.id,
+    docketNumber: row.docket_display_number,
+    complainant: formatParticipantDisplay(complainants),
+    respondent: formatParticipantDisplay(respondents),
+    violations: getViolationDisplay(row.violations),
+    assignedProsecutor: getAssignedProsecutorDisplay(row),
+    currentStatus: row.case_statuses?.display_label ?? row.case_statuses?.code ?? '—',
+    dateReceived: row.date_received,
+    createdAt: row.created_at,
+  };
+}
+
 export async function verifySupabaseConnection(): Promise<
   SupabaseQueryResult<{
     checkedTable: 'docket_types';
@@ -139,6 +269,48 @@ export async function getCaseStatuses(): Promise<SupabaseQueryResult<TableRow<'c
   return runSupabaseQuery('getCaseStatuses', 'case_statuses', async () => {
     const supabase = await getSupabaseBrowserClient();
     return supabase.from('case_statuses').select('*').order('sort_order', { ascending: true });
+  }, []);
+}
+
+
+export async function getCasesList(limit?: number): Promise<SupabaseQueryResult<CasesListItem[]>> {
+  const safeLimit = normalizeLimit(limit, 50, 250);
+
+  return runSupabaseQuery('getCasesList', 'cases', async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase
+      .from('cases')
+      .select(`
+        id,
+        created_at,
+        date_received,
+        docket_display_number,
+        docket_types!cases_docket_type_id_fkey(name, prefix),
+        case_statuses!cases_current_status_id_fkey(code, display_label),
+        violations!cases_violation_id_fkey(title, short_label, reference_code, law_reference),
+        prosecutors!cases_current_prosecutor_id_fkey(full_name, short_name),
+        case_assignments(
+          assigned_at,
+          unassigned_at,
+          prosecutors!case_assignments_prosecutor_id_fkey(full_name, short_name)
+        ),
+        case_participants(
+          id,
+          is_primary,
+          participant_order,
+          raw_name_text,
+          persons!case_participants_person_id_fkey(full_name),
+          participant_roles!case_participants_role_id_fkey(code, display_label)
+        )
+      `)
+      .eq('is_archived', false)
+      .order('created_at', { ascending: false })
+      .limit(safeLimit);
+
+    return {
+      data: data ? (data as unknown as CasesListNestedRow[]).map(toCasesListItem) : null,
+      error,
+    };
   }, []);
 }
 
