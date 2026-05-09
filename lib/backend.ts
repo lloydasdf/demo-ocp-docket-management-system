@@ -21,7 +21,7 @@
  * - GET    /api/system/status        - System status (local, sync, etc)
  */
 
-import { Docket, CaseDetails, Person } from './types';
+import { Docket, CaseDetails, CaseStatus, Person } from './types';
 import { dockets, getCaseById } from './dummy-data';
 
 // ============================================================================
@@ -32,7 +32,7 @@ export interface DocketCreateRequest {
   docketNumber: string;
   createdDate: string;
   caseIds: string[];
-  status: string;
+  status: CaseStatus;
   description?: string;
   // TODO: Add audit fields when backend ready
   // createdBy: string;
@@ -94,7 +94,7 @@ export async function getDocket(docketId: string): Promise<DocketResponse | null
  * BACKEND: GET /api/dockets?status=pending&page=1
  */
 export async function listDockets(filters?: {
-  status?: string;
+  status?: CaseStatus;
   search?: string;
   prosecutor?: string;
   limit?: number;
@@ -116,7 +116,7 @@ export async function listDockets(filters?: {
     const s = filters.search.toLowerCase();
     result = result.filter(d => 
       d.docketNumber.toLowerCase().includes(s) ||
-      d.description.toLowerCase().includes(s)
+      (d.description ?? '').toLowerCase().includes(s)
     );
   }
   return result;

@@ -2,6 +2,7 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatusBadge } from '@/components/status-badge';
+import { SupabaseConnectionCheck } from '@/components/supabase-connection-check';
 import { dockets } from '@/lib/dummy-data';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import Link from 'next/link';
@@ -54,6 +55,8 @@ export default function Dashboard() {
         <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
         <p className="text-muted-foreground mt-1">Welcome to the OCP Docket Management System</p>
       </div>
+
+      <SupabaseConnectionCheck />
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
