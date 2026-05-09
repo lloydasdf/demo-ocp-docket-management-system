@@ -243,7 +243,7 @@ export default function CaseDetailsPage() {
               ) : null}
 
               <Card>
-                <CardHeader className="gap-4">
+                <CardHeader className="gap-5">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0 flex-1">
                       <CardTitle className="whitespace-nowrap text-3xl">
@@ -256,6 +256,17 @@ export default function CaseDetailsPage() {
                     <div className="shrink-0 sm:text-right">
                       <DetailItem label="Date received" value={formatDate(data.compact.date_received ?? data.details.date_received)} />
                     </div>
+                  </div>
+
+                  <div className="grid gap-4 border-t pt-4 sm:grid-cols-2">
+                    <DetailItem
+                      label="Current status"
+                      value={<Badge variant="outline">{data.compact.current_status ?? data.details.case_statuses?.display_label ?? '—'}</Badge>}
+                    />
+                    <DetailItem
+                      label="Assigned prosecutor"
+                      value={data.compact.assigned_prosecutor ?? data.details.prosecutors?.full_name ?? '—'}
+                    />
                   </div>
                 </CardHeader>
               </Card>
