@@ -253,7 +253,7 @@ export default function CaseDetailsPage() {
                     </CardDescription>
                   </div>
 
-                  <div className="grid gap-3 border-t pt-4 sm:grid-cols-3">
+                  <div className="grid gap-3 border-t pt-4 sm:grid-cols-[12rem_15rem_12rem] sm:gap-x-10 md:gap-x-16">
                     <DetailItem label="Date received" value={formatDate(data.compact.date_received ?? data.details.date_received)} />
                     <DetailItem
                       label="Assigned prosecutor"
