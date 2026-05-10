@@ -244,28 +244,24 @@ export default function CaseDetailsPage() {
 
               <Card>
                 <CardHeader className="gap-5 p-4 sm:p-6">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <CardTitle className="whitespace-nowrap text-2xl sm:text-3xl">
-                        {data.compact.docket_number ?? data.details.docket_display_number}
-                      </CardTitle>
-                      <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
-                        {data.compact.violations ?? data.details.violations?.title ?? 'No violation recorded'}
-                      </CardDescription>
-                    </div>
-                    <div className="shrink-0 sm:text-right">
-                      <DetailItem label="Date received" value={formatDate(data.compact.date_received ?? data.details.date_received)} />
-                    </div>
+                  <div className="min-w-0">
+                    <CardTitle className="whitespace-nowrap text-2xl sm:text-3xl">
+                      {data.compact.docket_number ?? data.details.docket_display_number}
+                    </CardTitle>
+                    <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
+                      {data.compact.violations ?? data.details.violations?.title ?? 'No violation recorded'}
+                    </CardDescription>
                   </div>
 
-                  <div className="grid gap-3 border-t pt-4 sm:grid-cols-2">
-                    <DetailItem
-                      label="Current status"
-                      value={<Badge variant="outline">{data.compact.current_status ?? data.details.case_statuses?.display_label ?? '—'}</Badge>}
-                    />
+                  <div className="grid gap-3 border-t pt-4 sm:grid-cols-3">
+                    <DetailItem label="Date received" value={formatDate(data.compact.date_received ?? data.details.date_received)} />
                     <DetailItem
                       label="Assigned prosecutor"
                       value={data.compact.assigned_prosecutor ?? data.details.prosecutors?.full_name ?? '—'}
+                    />
+                    <DetailItem
+                      label="Current status"
+                      value={<Badge variant="outline">{data.compact.current_status ?? data.details.case_statuses?.display_label ?? '—'}</Badge>}
                     />
                   </div>
                 </CardHeader>
