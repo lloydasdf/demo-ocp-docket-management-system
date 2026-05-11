@@ -316,9 +316,9 @@ export default function ClearanceSearch() {
               />
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Exact full-name matches rank highest. Prefix, alias, fuzzy, and
-              phonetic matches are included, but single-token surname or
-              phonetic matches stay in review confidence ranges.
+              Exact full-name matches rank highest. Prefix, alias, fuzzy,
+              phonetic, and B/V sound-alike matches are included, but
+              single-token surname or phonetic matches stay in review ranges.
             </p>
           </div>
 

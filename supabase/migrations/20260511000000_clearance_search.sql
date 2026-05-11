@@ -82,6 +82,7 @@ as $$
                 select 1
                 from unnest(coalesce(alias_tokens.tokens, array[]::text[])) as alias_token(value)
                 where alias_token.value like query_token.value || '%'
+                  or replace(alias_token.value, 'v', 'b') like replace(query_token.value, 'v', 'b') || '%'
               )
           ) as all_query_tokens_prefix,
         coalesce((
@@ -92,11 +93,17 @@ as $$
               select 1
               from unnest(coalesce(alias_tokens.tokens, array[]::text[])) as alias_token(value)
               where length(alias_token.value) >= 4
-                and dmetaphone(alias_token.value) = dmetaphone(query_token.value)
+                and (
+                  dmetaphone(alias_token.value) = dmetaphone(query_token.value)
+                  or dmetaphone(replace(alias_token.value, 'v', 'b')) = dmetaphone(replace(query_token.value, 'v', 'b'))
+                )
             )
         ), 0) as phonetic_token_matches,
         coalesce((
-          select max(similarity(alias_token.value, query_token.value))
+          select max(greatest(
+            similarity(alias_token.value, query_token.value),
+            similarity(replace(alias_token.value, 'v', 'b'), replace(query_token.value, 'v', 'b'))
+          ))
           from unnest(normalized.q_tokens) as query_token(value)
           cross join unnest(coalesce(alias_tokens.tokens, array[]::text[])) as alias_token(value)
         ), 0) as best_token_similarity
@@ -194,6 +201,7 @@ as $$
                 select 1
                 from unnest(coalesce(name_tokens.tokens, array[]::text[])) as name_token(value)
                 where name_token.value like query_token.value || '%'
+                  or replace(name_token.value, 'v', 'b') like replace(query_token.value, 'v', 'b') || '%'
               )
           ) as all_query_tokens_prefix,
         coalesce((
@@ -204,7 +212,10 @@ as $$
               select 1
               from unnest(coalesce(name_tokens.tokens, array[]::text[])) as name_token(value)
               where length(name_token.value) >= 4
-                and dmetaphone(name_token.value) = dmetaphone(query_token.value)
+                and (
+                  dmetaphone(name_token.value) = dmetaphone(query_token.value)
+                  or dmetaphone(replace(name_token.value, 'v', 'b')) = dmetaphone(replace(query_token.value, 'v', 'b'))
+                )
             )
         ), 0) as phonetic_token_matches,
         (
@@ -212,11 +223,15 @@ as $$
           from unnest(base.q_tokens) as query_token(value)
           join unnest(coalesce(name_tokens.tokens, array[]::text[])) as name_token(value)
             on name_token.value like query_token.value || '%'
+              or replace(name_token.value, 'v', 'b') like replace(query_token.value, 'v', 'b') || '%'
           order by length(name_token.value), name_token.value
           limit 1
         ) as best_prefix_token,
         coalesce((
-          select max(similarity(name_token.value, query_token.value))
+          select max(greatest(
+            similarity(name_token.value, query_token.value),
+            similarity(replace(name_token.value, 'v', 'b'), replace(query_token.value, 'v', 'b'))
+          ))
           from unnest(base.q_tokens) as query_token(value)
           cross join unnest(coalesce(name_tokens.tokens, array[]::text[])) as name_token(value)
         ), 0) as best_token_similarity
