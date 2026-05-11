@@ -30,13 +30,13 @@ import {
 
 const confidenceGroups = {
   High: {
-    min: 80,
+    min: 90,
     cardClass: "border-green-200 bg-green-50/50",
     itemClass: "border-green-200 hover:bg-green-50/30",
     badgeClass: "bg-green-600",
   },
   Medium: {
-    min: 60,
+    min: 70,
     cardClass: "border-yellow-200 bg-yellow-50/50",
     itemClass: "border-yellow-200 hover:bg-yellow-50/30",
     badgeClass: "bg-yellow-600",
@@ -316,8 +316,9 @@ export default function ClearanceSearch() {
               />
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              The database ranks exact, alias, trigram-similar, and phonetic
-              matches. Confidence score indicates match quality.
+              Exact full-name matches rank highest. Prefix, alias, fuzzy, and
+              phonetic matches are included, but single-token surname or
+              phonetic matches stay in review confidence ranges.
             </p>
           </div>
 

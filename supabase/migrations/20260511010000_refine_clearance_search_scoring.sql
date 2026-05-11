@@ -1,8 +1,4 @@
--- Live clearance search backed by PostgreSQL fuzzy matching.
--- Run this in Supabase before using the Clearance Search page.
-
-create extension if not exists pg_trgm;
-create extension if not exists fuzzystrmatch;
+-- Refine clearance search scoring so exact reordered names rank highest, partial surname matches are not overconfident, and prefix searches like jopet match JOPETTE.
 
 create or replace function public.search_clearance_records(
   p_query text,
@@ -266,9 +262,3 @@ as $$
   order by raw_score desc, last_updated desc, full_name
   limit (select safe_limit from normalized);
 $$;
-
-create index if not exists idx_persons_full_name_trgm
-  on public.persons using gin (full_name gin_trgm_ops);
-
-create index if not exists idx_person_aliases_alias_name_trgm
-  on public.person_aliases using gin (alias_name gin_trgm_ops);
