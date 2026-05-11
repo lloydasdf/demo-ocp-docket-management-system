@@ -94,6 +94,68 @@ function escapeIlikeTerm(term: string) {
 }
 
 
+export type ClearanceSearchType = 'name' | 'alias' | 'all';
+
+export interface ClearanceSearchParams {
+  query: string;
+  searchType?: ClearanceSearchType;
+  limit?: number;
+}
+
+export interface ClearanceSearchResult {
+  id: string;
+  personId: number;
+  caseId: number;
+  docketNumber: string;
+  caseNumber: string;
+  respondentName: string;
+  respondentAliases: string[];
+  status: string;
+  lastUpdated: string;
+  confidenceScore: number;
+  matchDetails: string;
+  matchType: 'exact' | 'alias' | 'fuzzy' | 'phonetic';
+  roleLabel: string;
+}
+
+type ClearanceRpcRow = {
+  person_id: number;
+  case_id: number;
+  docket_number: string | null;
+  case_number: string | null;
+  full_name: string | null;
+  aliases: string[] | null;
+  status: string | null;
+  last_updated: string | null;
+  confidence_score: number | null;
+  match_details: string | null;
+  match_type: ClearanceSearchResult['matchType'] | null;
+  role_label: string | null;
+};
+
+function normalizeClearanceSearchRow(row: ClearanceRpcRow): ClearanceSearchResult {
+  const confidence = Math.round(Number(row.confidence_score ?? 0));
+  const docketNumber = row.docket_number ?? `Case #${row.case_id}`;
+  const caseNumber = row.case_number ?? docketNumber;
+
+  return {
+    id: `${row.case_id}-${row.person_id}`,
+    personId: row.person_id,
+    caseId: row.case_id,
+    docketNumber,
+    caseNumber,
+    respondentName: row.full_name ?? 'Unknown person',
+    respondentAliases: row.aliases ?? [],
+    status: row.status ?? 'Pending',
+    lastUpdated: row.last_updated ?? new Date(0).toISOString(),
+    confidenceScore: Math.min(Math.max(confidence, 0), 100),
+    matchDetails: row.match_details ?? 'Database fuzzy match',
+    matchType: row.match_type ?? 'fuzzy',
+    roleLabel: row.role_label ?? 'Participant',
+  };
+}
+
+
 export type CasesCompactQueryParams = {
   docketType?: string;
   docketYear?: number;
@@ -482,4 +544,30 @@ export async function getDashboardStats(): Promise<
     totalCases: 0,
     byStatusId: {},
   });
+}
+
+export async function searchClearanceRecords(
+  params: ClearanceSearchParams,
+): Promise<SupabaseQueryResult<ClearanceSearchResult[]>> {
+  const safeQuery = params.query.trim();
+  const searchType = params.searchType ?? 'all';
+  const safeLimit = normalizeLimit(params.limit, 50, 100);
+
+  if (!safeQuery) {
+    return ok([]);
+  }
+
+  return runSupabaseQuery('searchClearanceRecords', 'case_participants', async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc('search_clearance_records' as never, {
+      p_query: safeQuery,
+      p_search_type: searchType,
+      p_limit: safeLimit,
+    } as never);
+
+    return {
+      data: Array.isArray(data) ? (data as ClearanceRpcRow[]).map(normalizeClearanceSearchRow) : [],
+      error,
+    };
+  }, []);
 }
