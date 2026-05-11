@@ -12,12 +12,36 @@ function isSupabaseErrorLike(error: unknown): error is SupabaseErrorLike {
   return typeof error === 'object' && error !== null && 'message' in error;
 }
 
+function isMissingClearanceSearchFunction(error: SupabaseErrorLike, operation: string) {
+  const message = error.message ?? '';
+  const details = error.details ?? '';
+
+  return (
+    operation === 'searchClearanceRecords' &&
+    (error.code === 'PGRST202' ||
+      message.includes('search_clearance_records') ||
+      details.includes('search_clearance_records'))
+  );
+}
+
 function toQueryError(
   error: unknown,
   operation: string,
   table?: RelationName,
 ): SupabaseQueryError {
   if (isSupabaseErrorLike(error)) {
+    if (isMissingClearanceSearchFunction(error, operation)) {
+      return {
+        message:
+          'Database setup required: the live clearance search SQL function is not installed in Supabase yet. Run the clearance search migration, then refresh this page.',
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        table,
+        operation,
+      };
+    }
+
     return {
       message: error.message ?? 'Supabase query failed.',
       code: error.code,

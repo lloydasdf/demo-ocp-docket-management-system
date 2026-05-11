@@ -345,8 +345,11 @@ export default function ClearanceSearch() {
           <AlertDescription className="space-y-2">
             <p>{searchError}</p>
             <p>
-              Ensure Supabase is configured and run the clearance SQL migration.
-              The SQL enables pg_trgm and fuzzystrmatch.
+              This means the app reached Supabase, but Supabase does not yet
+              have the <code>search_clearance_records</code> RPC that powers
+              the live fuzzy search. Apply
+              <code> supabase/migrations/20260511000000_clearance_search.sql</code>,
+              which enables pg_trgm/fuzzystrmatch and creates that function.
             </p>
           </AlertDescription>
         </Alert>
