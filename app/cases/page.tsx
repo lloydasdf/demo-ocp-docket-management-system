@@ -12,7 +12,7 @@ import { dockets } from '@/lib/dummy-data';
 import { getCasesCompact } from '@/lib/supabase/queries';
 import type { ViewRow } from '@/lib/supabase/types';
 
-type CompactCase = ViewRow<'v_cases_table_compact'>;
+type CompactCase = ViewRow<'v_cases_display'>;
 type DocketTypeFilter = 'All' | 'INV' | 'INQ' | 'PE' | 'DC20';
 type DocketYearFilter = 'All' | '2022';
 
@@ -45,45 +45,37 @@ function formatDisplayDocketNumber(docketNumber: string | null) {
 }
 
 function getCaseKey(caseDetail: CompactCase) {
-  return `${caseDetail.case_id ?? 'case'}-${caseDetail.docket_number ?? 'docket'}`;
+  return `${caseDetail.id ?? 'case'}-${caseDetail.docket_display_number ?? 'docket'}`;
 }
 
 function getFallbackCases(): CompactCase[] {
   return dockets.flatMap((docket) =>
     docket.cases.map((caseDetail) => ({
-      assigned_prosecutor: caseDetail.prosecutor ?? null,
-      case_id: Number.parseInt(caseDetail.id.replace(/\D/g, ''), 10) || null,
-      complainant:
+      prosecutor_full_name: caseDetail.prosecutor ?? null,
+      prosecutor_short_name: caseDetail.prosecutor ?? null,
+      id: Number.parseInt(caseDetail.id.replace(/\D/g, ''), 10) || null,
+      summary_text:
         caseDetail.complainants.length > 0
-          ? `${caseDetail.complainants[0].firstName} ${caseDetail.complainants[0].lastName}${
+          ? `Complainant: ${caseDetail.complainants[0].firstName} ${caseDetail.complainants[0].lastName}${
               caseDetail.complainants.length > 1 ? ' et al.' : ''
             }`
           : null,
       created_at: docket.createdDate,
-      current_status: caseDetail.status,
+      current_status_label: caseDetail.status,
+      current_status_code: caseDetail.status,
       date_received: caseDetail.dateOfIncident,
       docket_month_code: null,
-      docket_number: docket.docketNumber,
-      docket_sequence_number: null,
-      docket_type: docket.docketNumber.split('-')[0] ?? null,
+      docket_display_number: docket.docketNumber,
+      docket_number: Number.parseInt(docket.docketNumber.match(/\d+$/)?.[0] ?? '', 10) || null,
+      docket_type_prefix: docket.docketNumber.split('-')[0] ?? null,
+      docket_type_name: docket.docketNumber.split('-')[0] ?? null,
       docket_year: Number.parseInt(docket.docketNumber.match(/\d{4}/)?.[0] ?? '', 10) || null,
-      respondent:
-        caseDetail.respondents.length > 0
-          ? `${caseDetail.respondents[0].firstName} ${caseDetail.respondents[0].lastName}${
-              caseDetail.respondents.length > 1 ? ' et al.' : ''
-            }`
-          : null,
-      status_background_hex: null,
-      status_border_hex: null,
-      status_code: caseDetail.status,
-      status_color_key: null,
-      status_text_hex: null,
       updated_at: null,
       violations:
         caseDetail.violations.length > 0
           ? caseDetail.violations.map((violation) => violation.statute).join(', ')
           : null,
-    })),
+    })) as CompactCase[],
   );
 }
 
@@ -117,7 +109,7 @@ export default function CasesPage() {
         setErrorMessage(result.error.message);
         setCases(
           fallbackCases.filter((caseDetail) => {
-            const matchesType = selectedDocketType === 'All' || caseDetail.docket_type === selectedDocketType;
+            const matchesType = selectedDocketType === 'All' || caseDetail.docket_type_prefix === selectedDocketType;
             const matchesYear = selectedDocketYear === 'All' || caseDetail.docket_year === Number(selectedDocketYear);
             return matchesType && matchesYear;
           }),
@@ -143,8 +135,8 @@ export default function CasesPage() {
     () =>
       [...cases].sort((left, right) =>
         docketNumberCollator.compare(
-          formatDisplayDocketNumber(left.docket_number),
-          formatDisplayDocketNumber(right.docket_number),
+          formatDisplayDocketNumber(left.docket_display_number),
+          formatDisplayDocketNumber(right.docket_display_number),
         ),
       ),
     [cases],
@@ -296,21 +288,21 @@ export default function CasesPage() {
                             key={caseKey}
                             aria-selected={isSelected}
                             className={`cursor-pointer ${isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-muted/50'}`}
-                            tabIndex={caseDetail.case_id ? 0 : -1}
+                            tabIndex={caseDetail.id ? 0 : -1}
                             onClick={() => setSelectedCaseKey(caseKey)}
                             onDoubleClick={() => {
-                              if (caseDetail.case_id) {
-                                router.push(`/cases/${caseDetail.case_id}`);
+                              if (caseDetail.id) {
+                                router.push(`/cases/${caseDetail.id}`);
                               }
                             }}
                             onKeyDown={(event) => {
-                              if (!caseDetail.case_id) {
+                              if (!caseDetail.id) {
                                 return;
                               }
 
                               if (event.key === 'Enter') {
                                 event.preventDefault();
-                                router.push(`/cases/${caseDetail.case_id}`);
+                                router.push(`/cases/${caseDetail.id}`);
                               }
 
                               if (event.key === ' ') {
@@ -320,14 +312,14 @@ export default function CasesPage() {
                             }}
                           >
                             <TableCell className="truncate font-medium text-primary">
-                              {formatDisplayDocketNumber(caseDetail.docket_number)}
+                              {formatDisplayDocketNumber(caseDetail.docket_display_number)}
                             </TableCell>
-                            <TableCell className="truncate text-sm">{caseDetail.complainant ?? '—'}</TableCell>
-                            <TableCell className="truncate text-sm">{caseDetail.respondent ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{caseDetail.summary_text ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{caseDetail.summary_text ?? '—'}</TableCell>
                             <TableCell className="truncate text-sm">{caseDetail.violations ?? '—'}</TableCell>
-                            <TableCell className="truncate text-sm">{caseDetail.assigned_prosecutor ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{caseDetail.prosecutor_full_name ?? caseDetail.prosecutor_short_name ?? '—'}</TableCell>
                             <TableCell>
-                              <Badge variant="outline">{caseDetail.current_status ?? '—'}</Badge>
+                              <Badge variant="outline">{caseDetail.current_status_label ?? '—'}</Badge>
                             </TableCell>
                           </TableRow>
                         );

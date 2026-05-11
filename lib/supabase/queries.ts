@@ -166,18 +166,18 @@ export async function getCases(limit?: number): Promise<SupabaseQueryResult<Tabl
 
 export async function getCasesCompact(
   params: CasesCompactQueryParams = {},
-): Promise<SupabaseQueryResult<ViewRow<'v_cases_table_compact'>[]>> {
+): Promise<SupabaseQueryResult<ViewRow<'v_cases_display'>[]>> {
   const { docketType, docketYear, limit } = params;
 
-  return runSupabaseQuery('getCasesCompact', 'v_cases_table_compact', async () => {
+  return runSupabaseQuery('getCasesCompact', 'v_cases_display', async () => {
     const supabase = await getSupabaseBrowserClient();
     let query = supabase
-      .from('v_cases_table_compact')
+      .from('v_cases_display')
       .select('*')
       .order('created_at', { ascending: false });
 
     if (docketType && docketType !== 'All') {
-      query = query.eq('docket_type', docketType);
+      query = query.eq('docket_type_prefix', docketType);
     }
 
     if (docketYear !== undefined) {
@@ -194,7 +194,7 @@ export async function getCasesCompact(
 
 export async function getCompactCases(
   params?: number | CasesCompactQueryParams,
-): Promise<SupabaseQueryResult<ViewRow<'v_cases_table_compact'>[]>> {
+): Promise<SupabaseQueryResult<ViewRow<'v_cases_display'>[]>> {
   if (typeof params === 'number') {
     return getCasesCompact({ limit: params });
   }
@@ -204,11 +204,7 @@ export async function getCompactCases(
 
 
 export type CaseDetailsRecord = TableRow<'cases'> & {
-  case_statuses: Pick<TableRow<'case_statuses'>, 'code' | 'display_label'> | null;
-  courts: Pick<TableRow<'courts'>, 'code' | 'court_type' | 'name'> | null;
   docket_types: Pick<TableRow<'docket_types'>, 'name' | 'prefix'> | null;
-  prosecutors: Pick<TableRow<'prosecutors'>, 'full_name' | 'short_name'> | null;
-  violations: Pick<TableRow<'violations'>, 'description' | 'law_reference' | 'reference_code' | 'short_label' | 'title'> | null;
 };
 
 export type CaseParticipantRecord = TableRow<'case_participants'> & {
@@ -228,10 +224,10 @@ export type CaseStatusHistoryRecord = TableRow<'case_status_history'> & {
 
 export async function getCaseCompactById(
   caseId: number,
-): Promise<SupabaseQueryResult<ViewRow<'v_cases_table_compact'> | null>> {
-  return runSupabaseQuery('getCaseCompactById', 'v_cases_table_compact', async () => {
+): Promise<SupabaseQueryResult<ViewRow<'v_cases_display'> | null>> {
+  return runSupabaseQuery('getCaseCompactById', 'v_cases_display', async () => {
     const supabase = await getSupabaseBrowserClient();
-    return supabase.from('v_cases_table_compact').select('*').eq('case_id', caseId).maybeSingle();
+    return supabase.from('v_cases_display').select('*').eq('id', caseId).maybeSingle();
   }, null);
 }
 
@@ -242,14 +238,7 @@ export async function getCaseDetailsById(
     const supabase = await getSupabaseBrowserClient();
     const query = supabase
       .from('cases')
-      .select(`
-        *,
-        case_statuses:case_statuses!cases_current_status_id_fkey (code, display_label),
-        courts:courts!cases_court_id_fkey (code, court_type, name),
-        docket_types:docket_types!cases_docket_type_id_fkey (name, prefix),
-        prosecutors:prosecutors!cases_current_prosecutor_id_fkey (full_name, short_name),
-        violations:violations!cases_violation_id_fkey (description, law_reference, reference_code, short_label, title)
-      `)
+      .select('*, docket_types:docket_types!cases_docket_type_id_fkey (name, prefix)')
       .eq('id', caseId)
       .maybeSingle();
 
@@ -269,7 +258,7 @@ export async function getCaseById(
 export async function searchCases(
   query: string,
   limit?: number,
-): Promise<SupabaseQueryResult<ViewRow<'v_cases_table_compact'>[]>> {
+): Promise<SupabaseQueryResult<ViewRow<'v_cases_display'>[]>> {
   const safeLimit = normalizeLimit(limit, 25, 100);
   const safeQuery = escapeIlikeTerm(query);
 
@@ -277,13 +266,13 @@ export async function searchCases(
     return getCompactCases(safeLimit);
   }
 
-  return runSupabaseQuery('searchCases', 'v_cases_table_compact', async () => {
+  return runSupabaseQuery('searchCases', 'v_cases_display', async () => {
     const supabase = await getSupabaseBrowserClient();
     return supabase
-      .from('v_cases_table_compact')
+      .from('v_cases_display')
       .select('*')
       .or(
-        `docket_number.ilike.%${safeQuery}%,complainant.ilike.%${safeQuery}%,respondent.ilike.%${safeQuery}%`,
+        `docket_display_number.ilike.%${safeQuery}%,summary_text.ilike.%${safeQuery}%,violations.ilike.%${safeQuery}%,prosecutor_full_name.ilike.%${safeQuery}%,staff_full_name.ilike.%${safeQuery}%`,
       )
       .order('created_at', { ascending: false })
       .limit(safeLimit);
@@ -383,21 +372,24 @@ export async function getCaseStatusHistory(
   }, []);
 }
 
+export type CaseCourtRecord = TableRow<'case_courts'> & {
+  courts: Pick<TableRow<'courts'>, 'code' | 'court_type' | 'name'> | null;
+};
+
 export async function getCaseCourtDetails(
   caseId: number,
-): Promise<SupabaseQueryResult<Pick<CaseDetailsRecord, 'court_branch' | 'court_id' | 'court_remarks' | 'court_status' | 'criminal_case_number' | 'date_filed_in_court' | 'information_count' | 'courts'> | null>> {
-  const result = await getCaseDetailsById(caseId);
+): Promise<SupabaseQueryResult<CaseCourtRecord[]>> {
+  return runSupabaseQuery('getCaseCourtDetails', 'case_courts', async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const query = supabase
+      .from('case_courts')
+      .select('*, courts:courts!case_courts_court_id_fkey (code, court_type, name)')
+      .eq('case_id', caseId)
+      .order('court_order', { ascending: true })
+      .order('created_at', { ascending: true });
 
-  if (result.error) {
-    return fail(result.error);
-  }
-
-  if (!result.data) {
-    return ok(null);
-  }
-
-  const { court_branch, court_id, court_remarks, court_status, criminal_case_number, date_filed_in_court, information_count, courts } = result.data;
-  return ok({ court_branch, court_id, court_remarks, court_status, criminal_case_number, date_filed_in_court, information_count, courts });
+    return query as unknown as Promise<{ data: CaseCourtRecord[] | null; error: unknown }>;
+  }, []);
 }
 
 export async function getCaseMotions(
@@ -462,19 +454,20 @@ export async function getRecentAuditLogs(
 export async function getDashboardStats(): Promise<
   SupabaseQueryResult<{
     totalCases: number;
-    byStatusId: Record<number, number>;
+    byStatusId: Record<string, number>;
   }>
 > {
-  return runSupabaseQuery('getDashboardStats', 'cases', async () => {
+  return runSupabaseQuery('getDashboardStats', 'v_cases_display', async () => {
     const supabase = await getSupabaseBrowserClient();
-    const { data, error } = await supabase.from('cases').select('id,current_status_id');
+    const { data, error } = await supabase.from('v_cases_display').select('id,current_status_code');
 
     if (error || !data) {
       return { data: null, error };
     }
 
-    const byStatusId = data.reduce<Record<number, number>>((totals, row) => {
-      totals[row.current_status_id] = (totals[row.current_status_id] ?? 0) + 1;
+    const byStatusId = data.reduce<Record<string, number>>((totals, row) => {
+      const statusKey = row.current_status_code ?? 'UNKNOWN';
+      totals[statusKey] = (totals[statusKey] ?? 0) + 1;
       return totals;
     }, {});
 

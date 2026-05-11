@@ -32,7 +32,7 @@ const SUPPORTED_DOCKET_TYPES = new Set(['INV', 'INQ']);
 const SUPPORTED_DOCKET_YEAR = 2022;
 
 type CaseDetailsState = {
-  compact: ViewRow<'v_cases_table_compact'> | null;
+  compact: ViewRow<'v_cases_display'> | null;
   details: CaseDetailsRecord | null;
   participants: CaseParticipantRecord[];
   assignments: CaseAssignmentRecord[];
@@ -91,7 +91,7 @@ function displayValue(value: string | number | null | undefined) {
 }
 
 function personName(participant: CaseParticipantRecord) {
-  return participant.persons?.full_name ?? participant.raw_name_text ?? 'Unnamed participant';
+  return participant.persons?.full_name ?? 'Unnamed participant';
 }
 
 function roleLabel(participant: CaseParticipantRecord) {
@@ -190,8 +190,8 @@ export default function CaseDetailsPage() {
   }, [data?.participants]);
 
   const isSupportedFocus = Boolean(
-    data?.compact?.docket_type &&
-      SUPPORTED_DOCKET_TYPES.has(data.compact.docket_type) &&
+    data?.compact?.docket_type_prefix &&
+      SUPPORTED_DOCKET_TYPES.has(data.compact.docket_type_prefix) &&
       data.compact.docket_year === SUPPORTED_DOCKET_YEAR,
   );
 
@@ -246,10 +246,10 @@ export default function CaseDetailsPage() {
                 <CardHeader className="gap-5 p-4 sm:p-6">
                   <div className="min-w-0">
                     <CardTitle className="whitespace-nowrap text-2xl sm:text-3xl">
-                      {data.compact.docket_number ?? data.details.docket_display_number}
+                      {data.compact.docket_display_number ?? displayValue(data.details.docket_number)}
                     </CardTitle>
                     <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
-                      {data.compact.violations ?? data.details.violations?.title ?? 'No violation recorded'}
+                      {data.compact.violations ?? 'No violation recorded'}
                     </CardDescription>
                   </div>
 
@@ -257,11 +257,11 @@ export default function CaseDetailsPage() {
                     <DetailItem label="Date received" value={formatDate(data.compact.date_received ?? data.details.date_received)} />
                     <DetailItem
                       label="Assigned prosecutor"
-                      value={data.compact.assigned_prosecutor ?? data.details.prosecutors?.full_name ?? '—'}
+                      value={data.compact.prosecutor_full_name ?? data.compact.prosecutor_short_name ?? '—'}
                     />
                     <DetailItem
                       label="Current status"
-                      value={<Badge variant="outline">{data.compact.current_status ?? data.details.case_statuses?.display_label ?? '—'}</Badge>}
+                      value={<Badge variant="outline">{data.compact.current_status_label ?? data.compact.current_status_code ?? '—'}</Badge>}
                     />
                   </div>
                 </CardHeader>
@@ -287,13 +287,12 @@ export default function CaseDetailsPage() {
                                   <div className="flex items-start justify-between gap-3">
                                     <div>
                                       <p className="font-medium">{personName(participant)}</p>
-                                      <p className="text-sm text-muted-foreground">{participant.persons?.gender ?? participant.gender_snapshot ?? 'Gender not recorded'}</p>
+                                      <p className="text-sm text-muted-foreground">{participant.persons?.gender ?? 'Gender not recorded'}</p>
                                     </div>
-                                    {participant.is_primary ? <Badge>Primary</Badge> : null}
                                   </div>
                                   <Separator className="my-3" />
                                   <div className="grid gap-2 text-sm sm:grid-cols-2">
-                                    <DetailItem label="Age" value={participant.age_text ?? participant.age_at_case ?? '—'} />
+                                    <DetailItem label="Order" value={displayValue(participant.participant_order)} />
                                     <DetailItem label="Birthdate" value={formatDate(participant.persons?.birth_date)} />
                                     <DetailItem label="Role" value={role} />
                                     <DetailItem label="Remarks" value={participant.remarks ?? '—'} />
@@ -312,15 +311,10 @@ export default function CaseDetailsPage() {
                       <CardTitle>Case information</CardTitle>
                     </CardHeader>
                     <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      <DetailItem label="Violation/s" value={data.compact.violations ?? data.details.violations?.title ?? '—'} />
-                      <DetailItem label="Law reference" value={data.details.violations?.law_reference ?? data.details.violations?.reference_code ?? '—'} />
-                      <DetailItem label="Charge filed" value={data.details.charge_filed ?? '—'} />
+                      <DetailItem label="Violation/s" value={data.compact.violations ?? '—'} />
                       <DetailItem label="Date received" value={formatDate(data.details.date_received)} />
-                      <DetailItem label="Date filed in court" value={formatDate(data.details.date_filed_in_court)} />
-                      <DetailItem label="Date resolved" value={formatDate(data.details.date_resolved)} />
-                      <DetailItem label="Court" value={data.details.courts?.name ?? '—'} />
-                      <DetailItem label="Branch" value={data.details.court_branch ?? '—'} />
-                      <DetailItem label="Criminal case #" value={data.details.criminal_case_number ?? '—'} />
+                      <DetailItem label="Court" value={data.compact.court_codes ?? '—'} />
+                      <DetailItem label="Criminal case #" value={data.compact.criminal_case_numbers ?? '—'} />
                       <DetailItem label="Remarks" value={data.details.remarks ?? '—'} />
                     </CardContent>
                   </Card>
@@ -332,7 +326,7 @@ export default function CaseDetailsPage() {
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="rounded-lg border p-4">
-                        <DetailItem label="Current status" value={data.compact.current_status ?? data.details.case_statuses?.display_label ?? '—'} />
+                        <DetailItem label="Current status" value={data.compact.current_status_label ?? data.compact.current_status_code ?? '—'} />
                       </div>
                       {data.statusHistory.length === 0 ? (
                         <SectionEmpty />
@@ -406,8 +400,8 @@ export default function CaseDetailsPage() {
                       <CardTitle>Prosecutor assignment</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <DetailItem label="Current prosecutor" value={data.compact.assigned_prosecutor ?? data.details.prosecutors?.full_name ?? '—'} />
-                      <DetailItem label="Date assigned" value={formatDate(data.details.date_assigned_to_prosecutor)} />
+                      <DetailItem label="Current prosecutor" value={data.compact.prosecutor_full_name ?? data.compact.prosecutor_short_name ?? '—'} />
+                      <DetailItem label="Date assigned" value={formatDate(data.compact.current_assigned_at)} />
                       {data.assignments.length === 0 ? (
                         <SectionEmpty />
                       ) : (
@@ -431,12 +425,9 @@ export default function CaseDetailsPage() {
                       <CardTitle>Court / criminal case info</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <DetailItem label="Court" value={data.details.courts?.name ?? '—'} />
-                      <DetailItem label="Branch" value={data.details.court_branch ?? '—'} />
-                      <DetailItem label="Criminal case #" value={data.details.criminal_case_number ?? '—'} />
-                      <DetailItem label="Number of information" value={displayValue(data.details.information_count)} />
-                      <DetailItem label="Court status" value={data.details.court_status ?? '—'} />
-                      <DetailItem label="Court remarks" value={data.details.court_remarks ?? '—'} />
+                      <DetailItem label="Court" value={data.compact.court_codes ?? '—'} />
+                      <DetailItem label="Criminal case #" value={data.compact.criminal_case_numbers ?? '—'} />
+                      <DetailItem label="Court review" value={data.compact.court_needs_review ? 'Needs review' : '—'} />
                     </CardContent>
                   </Card>
 

@@ -13,44 +13,36 @@ import { getCaseStatuses, getCompactCases } from '@/lib/supabase/queries';
 import type { ViewRow } from '@/lib/supabase/types';
 import { Search as SearchIcon } from 'lucide-react';
 
-type CompactCase = ViewRow<'v_cases_table_compact'>;
+type CompactCase = ViewRow<'v_cases_display'>;
 
 function getFallbackCases(): CompactCase[] {
   return dockets.flatMap((docket) =>
     docket.cases.map((caseDetail) => ({
-      assigned_prosecutor: caseDetail.prosecutor ?? null,
-      case_id: Number.parseInt(caseDetail.id.replace(/\D/g, ''), 10) || null,
-      complainant:
+      prosecutor_full_name: caseDetail.prosecutor ?? null,
+      prosecutor_short_name: caseDetail.prosecutor ?? null,
+      id: Number.parseInt(caseDetail.id.replace(/\D/g, ''), 10) || null,
+      summary_text:
         caseDetail.complainants.length > 0
-          ? `${caseDetail.complainants[0].firstName} ${caseDetail.complainants[0].lastName}${
+          ? `Complainant: ${caseDetail.complainants[0].firstName} ${caseDetail.complainants[0].lastName}${
               caseDetail.complainants.length > 1 ? ' et al.' : ''
             }`
           : null,
       created_at: docket.createdDate,
-      current_status: caseDetail.status,
+      current_status_label: caseDetail.status,
+      current_status_code: caseDetail.status,
       date_received: caseDetail.dateOfIncident,
       docket_month_code: null,
-      docket_number: docket.docketNumber,
-      docket_sequence_number: null,
-      docket_type: docket.docketNumber.split('-')[0] ?? null,
+      docket_display_number: docket.docketNumber,
+      docket_number: Number.parseInt(docket.docketNumber.match(/\d+$/)?.[0] ?? '', 10) || null,
+      docket_type_prefix: docket.docketNumber.split('-')[0] ?? null,
+      docket_type_name: docket.docketNumber.split('-')[0] ?? null,
       docket_year: Number.parseInt(docket.docketNumber.match(/\d{4}/)?.[0] ?? '', 10) || null,
-      respondent:
-        caseDetail.respondents.length > 0
-          ? `${caseDetail.respondents[0].firstName} ${caseDetail.respondents[0].lastName}${
-              caseDetail.respondents.length > 1 ? ' et al.' : ''
-            }`
-          : null,
-      status_background_hex: null,
-      status_border_hex: null,
-      status_code: caseDetail.status,
-      status_color_key: null,
-      status_text_hex: null,
       updated_at: null,
       violations:
         caseDetail.violations.length > 0
           ? caseDetail.violations.map((violation) => violation.statute).join(', ')
           : null,
-    })),
+    })) as CompactCase[],
   );
 }
 
@@ -105,13 +97,12 @@ export default function DocketSearch() {
 
     return [...cases]
       .filter((caseDetail) => {
-        const currentStatus = caseDetail.current_status ?? '';
+        const currentStatus = caseDetail.current_status_label ?? '';
         const matchesStatus = selectedStatus === 'All' || currentStatus === selectedStatus;
         const matchesSearch =
           normalizedQuery.length === 0 ||
-          (caseDetail.docket_number ?? '').toLowerCase().includes(normalizedQuery) ||
-          (caseDetail.complainant ?? '').toLowerCase().includes(normalizedQuery) ||
-          (caseDetail.respondent ?? '').toLowerCase().includes(normalizedQuery) ||
+          (caseDetail.docket_display_number ?? '').toLowerCase().includes(normalizedQuery) ||
+          (caseDetail.summary_text ?? '').toLowerCase().includes(normalizedQuery) ||
           (caseDetail.violations ?? '').toLowerCase().includes(normalizedQuery);
 
         return matchesStatus && matchesSearch;
@@ -124,7 +115,7 @@ export default function DocketSearch() {
           );
         }
 
-        return (firstCase.docket_number ?? '').localeCompare(secondCase.docket_number ?? '');
+        return (firstCase.docket_display_number ?? '').localeCompare(secondCase.docket_display_number ?? '');
       });
   }, [cases, searchQuery, selectedStatus, sortBy]);
 
@@ -239,18 +230,18 @@ export default function DocketSearch() {
                 </TableHeader>
                 <TableBody>
                   {filteredCases.map((caseDetail) => (
-                    <TableRow key={`${caseDetail.case_id ?? 'case'}-${caseDetail.docket_number ?? 'docket'}`} className="hover:bg-muted/50">
-                      <TableCell className="font-medium text-primary">{caseDetail.docket_number ?? '—'}</TableCell>
-                      <TableCell className="text-sm">{caseDetail.complainant ?? '—'}</TableCell>
-                      <TableCell className="text-sm">{caseDetail.respondent ?? '—'}</TableCell>
+                    <TableRow key={`${caseDetail.id ?? 'case'}-${caseDetail.docket_display_number ?? 'docket'}`} className="hover:bg-muted/50">
+                      <TableCell className="font-medium text-primary">{caseDetail.docket_display_number ?? '—'}</TableCell>
+                      <TableCell className="text-sm">{caseDetail.summary_text ?? '—'}</TableCell>
+                      <TableCell className="text-sm">{caseDetail.summary_text ?? '—'}</TableCell>
                       <TableCell className="text-sm max-w-xs truncate">{caseDetail.violations ?? '—'}</TableCell>
-                      <TableCell className="text-sm">{caseDetail.assigned_prosecutor ?? '—'}</TableCell>
+                      <TableCell className="text-sm">{caseDetail.prosecutor_full_name ?? caseDetail.prosecutor_short_name ?? '—'}</TableCell>
                       <TableCell>
-                        <Badge variant="outline">{caseDetail.current_status ?? '—'}</Badge>
+                        <Badge variant="outline">{caseDetail.current_status_label ?? '—'}</Badge>
                       </TableCell>
                       <TableCell className="text-right">
                         <Button variant="ghost" size="sm" asChild>
-                          <a href={`/case-details?caseId=${caseDetail.case_id ?? ''}`}>View</a>
+                          <a href={`/case-details?caseId=${caseDetail.id ?? ''}`}>View</a>
                         </Button>
                       </TableCell>
                     </TableRow>
