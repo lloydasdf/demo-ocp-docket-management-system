@@ -6,7 +6,7 @@ import { Sidebar } from '@/components/sidebar';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { dockets } from '@/lib/dummy-data';
 import { getCaseParticipantsForCases, getCasesCompact, type CaseParticipantRecord } from '@/lib/supabase/queries';
@@ -304,7 +304,7 @@ export default function CasesPage() {
                   className="h-full min-h-0 overflow-auto rounded-lg border border-border"
                   aria-label="Cases table with native horizontal and vertical scrollbars"
                 >
-                  <Table className="table-fixed" style={{ width: tableWidth, minWidth: '100%' }}>
+                  <table className="w-full caption-bottom table-fixed text-sm" style={{ width: tableWidth, minWidth: '100%' }}>
                     <colgroup>
                       {CASE_TABLE_COLUMNS.map((column) => (
                         <col key={column.key} style={{ width: columnWidths[column.key] }} />
@@ -379,7 +379,7 @@ export default function CasesPage() {
                         );
                       })}
                     </TableBody>
-                  </Table>
+                  </table>
                 </div>
               )}
             </CardContent>
