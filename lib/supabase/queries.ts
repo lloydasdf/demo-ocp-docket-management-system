@@ -293,9 +293,23 @@ export type CaseDetailsRecord = TableRow<'cases'> & {
   docket_types: Pick<TableRow<'docket_types'>, 'name' | 'prefix'> | null;
 };
 
+export type PersonAddressRecord = Pick<TableRow<'person_addresses'>, 'id' | 'is_primary' | 'remarks'> & {
+  addresses: Pick<
+    TableRow<'addresses'>,
+    'barangay' | 'city' | 'country' | 'line1' | 'line2' | 'province' | 'region' | 'zip_code'
+  > | null;
+};
+
+export type CaseParticipantPersonRecord = Pick<
+  TableRow<'persons'>,
+  'age' | 'birth_date' | 'first_name' | 'full_name' | 'gender' | 'last_name' | 'middle_name' | 'suffix'
+> & {
+  person_addresses: PersonAddressRecord[] | null;
+};
+
 export type CaseParticipantRecord = TableRow<'case_participants'> & {
   participant_roles: Pick<TableRow<'participant_roles'>, 'code' | 'display_label'> | null;
-  persons: Pick<TableRow<'persons'>, 'birth_date' | 'first_name' | 'full_name' | 'gender' | 'last_name' | 'middle_name' | 'suffix'> | null;
+  persons: CaseParticipantPersonRecord | null;
 };
 
 export type CaseAssignmentRecord = TableRow<'case_assignments'> & {
@@ -419,8 +433,51 @@ export async function getCaseParticipants(
     const supabase = await getSupabaseBrowserClient();
     const query = supabase
       .from('case_participants')
-      .select('*, participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label), persons:persons!case_participants_person_id_fkey (birth_date, first_name, full_name, gender, last_name, middle_name, suffix)')
+      .select(
+        `*,
+        participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
+        persons:persons!case_participants_person_id_fkey (
+          age, birth_date, first_name, full_name, gender, last_name, middle_name, suffix,
+          person_addresses:person_addresses!person_addresses_person_id_fkey (
+            id, is_primary, remarks,
+            addresses:addresses!person_addresses_address_id_fkey (barangay, city, country, line1, line2, province, region, zip_code)
+          )
+        )`,
+      )
       .eq('case_id', caseId)
+      .order('participant_order', { ascending: true, nullsFirst: false })
+      .order('id', { ascending: true });
+
+    return query as unknown as Promise<{ data: CaseParticipantRecord[] | null; error: unknown }>;
+  }, []);
+}
+
+export async function getCaseParticipantsForCases(
+  caseIds: number[],
+): Promise<SupabaseQueryResult<CaseParticipantRecord[]>> {
+  const safeCaseIds = Array.from(new Set(caseIds.filter((caseId) => Number.isFinite(caseId))));
+
+  if (safeCaseIds.length === 0) {
+    return { data: [], error: null };
+  }
+
+  return runSupabaseQuery('getCaseParticipantsForCases', 'case_participants', async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const query = supabase
+      .from('case_participants')
+      .select(
+        `*,
+        participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
+        persons:persons!case_participants_person_id_fkey (
+          age, birth_date, first_name, full_name, gender, last_name, middle_name, suffix,
+          person_addresses:person_addresses!person_addresses_person_id_fkey (
+            id, is_primary, remarks,
+            addresses:addresses!person_addresses_address_id_fkey (barangay, city, country, line1, line2, province, region, zip_code)
+          )
+        )`,
+      )
+      .in('case_id', safeCaseIds)
+      .order('case_id', { ascending: true })
       .order('participant_order', { ascending: true, nullsFirst: false })
       .order('id', { ascending: true });
 

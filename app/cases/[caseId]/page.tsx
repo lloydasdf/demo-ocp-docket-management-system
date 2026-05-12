@@ -17,11 +17,13 @@ import {
   getCaseAssignments,
   getCaseAttachmentsIndex,
   getCaseCompactById,
+  getCaseCourtDetails,
   getCaseDetailsById,
   getCaseMotions,
   getCaseParticipants,
   getCaseStatusHistory,
   type CaseAssignmentRecord,
+  type CaseCourtRecord,
   type CaseDetailsRecord,
   type CaseParticipantRecord,
   type CaseStatusHistoryRecord,
@@ -36,6 +38,7 @@ type CaseDetailsState = {
   details: CaseDetailsRecord | null;
   participants: CaseParticipantRecord[];
   assignments: CaseAssignmentRecord[];
+  courtDetails: CaseCourtRecord[];
   statusHistory: CaseStatusHistoryRecord[];
   motions: SupabaseTableRow<'case_motions'>[];
   attachments: SupabaseTableRow<'case_attachment_index'>[];
@@ -98,6 +101,48 @@ function roleLabel(participant: CaseParticipantRecord) {
   return participant.participant_roles?.display_label ?? participant.participant_roles?.code ?? 'Party';
 }
 
+function formatPersonDemographics(participant: CaseParticipantRecord) {
+  const age = displayValue(participant.persons?.age);
+  const gender = participant.persons?.gender ?? 'Gender not recorded';
+  return `Age: ${age} • ${gender}`;
+}
+
+function formatAddress(
+  address: NonNullable<NonNullable<CaseParticipantRecord['persons']>['person_addresses']>[number]['addresses'],
+) {
+  if (!address) {
+    return null;
+  }
+
+  const parts = [
+    address.line1,
+    address.line2,
+    address.barangay ? `Brgy. ${address.barangay}` : null,
+    address.city,
+    address.province,
+    address.region,
+    address.zip_code,
+    address.country,
+  ].filter((part): part is string => Boolean(part?.trim()));
+
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
+function primaryAddress(participant: CaseParticipantRecord) {
+  const addresses = participant.persons?.person_addresses ?? [];
+  const preferredAddress = addresses.find((address) => address.is_primary) ?? addresses[0];
+  return formatAddress(preferredAddress?.addresses ?? null) ?? '—';
+}
+
+function joinedValues(values: Array<string | null | undefined>) {
+  const uniqueValues = Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
+  return uniqueValues.length > 0 ? uniqueValues.join(', ') : '—';
+}
+
+function joinedDates(values: Array<string | null | undefined>) {
+  return joinedValues(values.map((value) => (value ? formatDate(value) : null)));
+}
+
 function SectionEmpty({ children = 'No records yet.' }: { children?: string }) {
   return <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">{children}</p>;
 }
@@ -131,11 +176,12 @@ export default function CaseDetailsPage() {
       setIsLoading(true);
       setErrorMessage(null);
 
-      const [compact, details, participants, assignments, statusHistory, motions, attachments] = await Promise.all([
+      const [compact, details, participants, assignments, courtDetails, statusHistory, motions, attachments] = await Promise.all([
         getCaseCompactById(caseId),
         getCaseDetailsById(caseId),
         getCaseParticipants(caseId),
         getCaseAssignments(caseId),
+        getCaseCourtDetails(caseId),
         getCaseStatusHistory(caseId),
         getCaseMotions(caseId),
         getCaseAttachmentsIndex(caseId),
@@ -154,7 +200,7 @@ export default function CaseDetailsPage() {
         return;
       }
 
-      const warnings = [participants, assignments, statusHistory, motions, attachments]
+      const warnings = [participants, assignments, courtDetails, statusHistory, motions, attachments]
         .map((result) => result.error?.message)
         .filter((message): message is string => Boolean(message));
 
@@ -163,6 +209,7 @@ export default function CaseDetailsPage() {
         details: details.data,
         participants: participants.data ?? [],
         assignments: assignments.data ?? [],
+        courtDetails: courtDetails.data ?? [],
         statusHistory: statusHistory.data ?? [],
         motions: motions.data ?? [],
         attachments: attachments.data ?? [],
@@ -287,14 +334,14 @@ export default function CaseDetailsPage() {
                                   <div className="flex items-start justify-between gap-3">
                                     <div>
                                       <p className="font-medium">{personName(participant)}</p>
-                                      <p className="text-sm text-muted-foreground">{participant.persons?.gender ?? 'Gender not recorded'}</p>
+                                      <p className="text-sm text-muted-foreground">{formatPersonDemographics(participant)}</p>
                                     </div>
                                   </div>
                                   <Separator className="my-3" />
                                   <div className="grid gap-2 text-sm sm:grid-cols-2">
-                                    <DetailItem label="Order" value={displayValue(participant.participant_order)} />
-                                    <DetailItem label="Birthdate" value={formatDate(participant.persons?.birth_date)} />
                                     <DetailItem label="Role" value={role} />
+                                    <DetailItem label="Birthdate" value={formatDate(participant.persons?.birth_date)} />
+                                    <DetailItem label="Address" value={primaryAddress(participant)} />
                                     <DetailItem label="Remarks" value={participant.remarks ?? '—'} />
                                   </div>
                                 </div>
@@ -313,8 +360,6 @@ export default function CaseDetailsPage() {
                     <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                       <DetailItem label="Violation/s" value={data.compact.violations ?? '—'} />
                       <DetailItem label="Date received" value={formatDate(data.details.date_received)} />
-                      <DetailItem label="Court" value={data.compact.court_codes ?? '—'} />
-                      <DetailItem label="Criminal case #" value={data.compact.criminal_case_numbers ?? '—'} />
                       <DetailItem label="Remarks" value={data.details.remarks ?? '—'} />
                     </CardContent>
                   </Card>
@@ -427,6 +472,8 @@ export default function CaseDetailsPage() {
                     <CardContent className="space-y-4">
                       <DetailItem label="Court" value={data.compact.court_codes ?? '—'} />
                       <DetailItem label="Criminal case #" value={data.compact.criminal_case_numbers ?? '—'} />
+                      <DetailItem label="Charge filed" value={joinedValues(data.courtDetails.map((court) => court.charge_filed))} />
+                      <DetailItem label="Date filed in court" value={joinedDates(data.courtDetails.map((court) => court.date_filed_in_court))} />
                       <DetailItem label="Court review" value={data.compact.court_needs_review ? 'Needs review' : '—'} />
                     </CardContent>
                   </Card>
