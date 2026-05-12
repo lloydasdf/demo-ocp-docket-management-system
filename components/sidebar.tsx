@@ -39,7 +39,7 @@ const navigation = [
     description: 'Create new docket',
   },
   {
-    name: 'Case Details',
+    name: 'Cases',
     href: '/cases',
     icon: FileText,
     description: 'View case information',

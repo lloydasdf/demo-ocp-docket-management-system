@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { dockets } from '@/lib/dummy-data';
-import { getCasesCompact } from '@/lib/supabase/queries';
+import { getCaseParticipantsForCases, getCasesCompact, type CaseParticipantRecord } from '@/lib/supabase/queries';
 import type { ViewRow } from '@/lib/supabase/types';
 
 type CompactCase = ViewRow<'v_cases_display'>;
@@ -32,6 +32,7 @@ const CASE_TABLE_COLUMNS = [
 
 type CaseTableColumnKey = (typeof CASE_TABLE_COLUMNS)[number]['key'];
 type ColumnWidths = Record<CaseTableColumnKey, number>;
+type CasePartyNames = { complainants: string | null; respondents: string | null };
 
 function getInitialColumnWidths(): ColumnWidths {
   return CASE_TABLE_COLUMNS.reduce((widths, column) => {
@@ -46,6 +47,41 @@ function formatDisplayDocketNumber(docketNumber: string | null) {
 
 function getCaseKey(caseDetail: CompactCase) {
   return `${caseDetail.id ?? 'case'}-${caseDetail.docket_display_number ?? 'docket'}`;
+}
+
+function personName(participant: CaseParticipantRecord) {
+  return participant.persons?.full_name?.trim() || 'Unnamed participant';
+}
+
+function participantMatchesRole(participant: CaseParticipantRecord, roleName: 'complainant' | 'respondent') {
+  const roleText = `${participant.participant_roles?.code ?? ''} ${participant.participant_roles?.display_label ?? ''}`.toLowerCase();
+  return roleText.includes(roleName);
+}
+
+function summarizePartyNames(participants: CaseParticipantRecord[], roleName: 'complainant' | 'respondent') {
+  const names = participants.filter((participant) => participantMatchesRole(participant, roleName)).map(personName);
+
+  if (names.length === 0) {
+    return null;
+  }
+
+  return names.length > 2 ? `${names.slice(0, 2).join(', ')} et al.` : names.join(', ');
+}
+
+function buildPartyNamesByCase(participants: CaseParticipantRecord[]) {
+  const grouped = new Map<number, CaseParticipantRecord[]>();
+
+  for (const participant of participants) {
+    grouped.set(participant.case_id, [...(grouped.get(participant.case_id) ?? []), participant]);
+  }
+
+  return Array.from(grouped.entries()).reduce((namesByCase, [caseId, caseParticipants]) => {
+    namesByCase[caseId] = {
+      complainants: summarizePartyNames(caseParticipants, 'complainant'),
+      respondents: summarizePartyNames(caseParticipants, 'respondent'),
+    };
+    return namesByCase;
+  }, {} as Record<number, CasePartyNames>);
 }
 
 function getFallbackCases(): CompactCase[] {
@@ -90,6 +126,7 @@ export default function CasesPage() {
   const [isUsingFallback, setIsUsingFallback] = useState(false);
   const [selectedCaseKey, setSelectedCaseKey] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(() => getInitialColumnWidths());
+  const [partyNamesByCase, setPartyNamesByCase] = useState<Record<number, CasePartyNames>>({});
 
   useEffect(() => {
     let isMounted = true;
@@ -114,14 +151,27 @@ export default function CasesPage() {
             return matchesType && matchesYear;
           }),
         );
+        setPartyNamesByCase({});
         setIsUsingFallback(true);
       } else {
         setErrorMessage(null);
         setCases(result.data);
         setIsUsingFallback(false);
+
+        const participantResult = await getCaseParticipantsForCases(
+          result.data.map((caseDetail) => caseDetail.id).filter((caseId): caseId is number => Number.isFinite(caseId)),
+        );
+
+        if (isMounted && !participantResult.error) {
+          setPartyNamesByCase(buildPartyNamesByCase(participantResult.data));
+        } else if (isMounted) {
+          setPartyNamesByCase({});
+        }
       }
 
-      setIsLoading(false);
+      if (isMounted) {
+        setIsLoading(false);
+      }
     }
 
     loadCases();
@@ -251,10 +301,11 @@ export default function CasesPage() {
                 <div className="py-8 text-center text-sm text-muted-foreground">No cases found.</div>
               ) : (
                 <div
-                  className="h-full min-h-0 overflow-auto rounded-lg border border-border"
+                  className="h-full min-h-0 overflow-x-auto rounded-lg border border-border"
                   aria-label="Cases table with horizontal scrollbar"
                 >
-                  <Table className="table-fixed" style={{ width: tableWidth, minWidth: '100%' }}>
+                  <div className="max-h-full overflow-y-auto" style={{ width: tableWidth, minWidth: '100%' }}>
+                    <Table className="table-fixed" style={{ width: tableWidth, minWidth: '100%' }}>
                     <colgroup>
                       {CASE_TABLE_COLUMNS.map((column) => (
                         <col key={column.key} style={{ width: columnWidths[column.key] }} />
@@ -314,8 +365,12 @@ export default function CasesPage() {
                             <TableCell className="truncate font-medium text-primary">
                               {formatDisplayDocketNumber(caseDetail.docket_display_number)}
                             </TableCell>
-                            <TableCell className="truncate text-sm">{caseDetail.summary_text ?? '—'}</TableCell>
-                            <TableCell className="truncate text-sm">{caseDetail.summary_text ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">
+                              {caseDetail.id ? partyNamesByCase[caseDetail.id]?.complainants ?? '—' : '—'}
+                            </TableCell>
+                            <TableCell className="truncate text-sm">
+                              {caseDetail.id ? partyNamesByCase[caseDetail.id]?.respondents ?? '—' : '—'}
+                            </TableCell>
                             <TableCell className="truncate text-sm">{caseDetail.violations ?? '—'}</TableCell>
                             <TableCell className="truncate text-sm">{caseDetail.prosecutor_full_name ?? caseDetail.prosecutor_short_name ?? '—'}</TableCell>
                             <TableCell>
@@ -325,7 +380,8 @@ export default function CasesPage() {
                         );
                       })}
                     </TableBody>
-                  </Table>
+                    </Table>
+                  </div>
                 </div>
               )}
             </CardContent>
