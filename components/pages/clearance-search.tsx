@@ -1,17 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import {
-  AlertCircle,
-  CheckCircle,
-  Database,
-  Search as SearchIcon,
-} from "lucide-react";
+import { AlertCircle, Database, Search as SearchIcon } from "lucide-react";
 
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -21,10 +16,8 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
   type ClearanceSearchResult,
-  type ClearanceSearchType,
   searchClearanceRecords,
 } from "@/lib/supabase/queries";
 
@@ -62,20 +55,6 @@ function normalizeStatusForBadge(status: string) {
   return "Pending";
 }
 
-function formatDate(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "Unknown";
-  }
-
-  return new Intl.DateTimeFormat("en", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
-}
-
 function groupResults(results: ClearanceSearchResult[]) {
   return results.reduce<
     Record<keyof typeof confidenceGroups, ClearanceSearchResult[]>
@@ -98,10 +77,9 @@ function groupResults(results: ClearanceSearchResult[]) {
 interface ResultGroupProps {
   label: keyof typeof confidenceGroups;
   results: ClearanceSearchResult[];
-  onVerify: (result: ClearanceSearchResult) => void;
 }
 
-function ResultGroup({ label, results, onVerify }: ResultGroupProps) {
+function ResultGroup({ label, results }: ResultGroupProps) {
   if (results.length === 0) {
     return null;
   }
@@ -118,15 +96,21 @@ function ResultGroup({ label, results, onVerify }: ResultGroupProps) {
       </CardHeader>
       <CardContent className="space-y-3">
         {results.map((result) => (
-          <div
+          <Link
             key={result.id}
-            className={`p-4 bg-white border rounded-lg transition-colors ${config.itemClass}`}
+            href={`/persons/${result.personId}`}
+            className={`block p-4 bg-white border rounded-lg transition-colors ${config.itemClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
           >
             <div className="flex items-start justify-between gap-4 mb-2">
               <div className="flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="font-semibold text-lg">
                     {result.respondentName}
+                    {result.age ? (
+                      <span className="ml-2 text-base font-medium text-muted-foreground">
+                        {result.age}
+                      </span>
+                    ) : null}
                   </p>
                   <Badge variant="outline" className="text-xs">
                     {result.roleLabel}
@@ -136,8 +120,8 @@ function ResultGroup({ label, results, onVerify }: ResultGroupProps) {
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Case: {result.caseNumber} | Docket: {result.docketNumber} |
-                  Updated: {formatDate(result.lastUpdated)}
+                  Violations: {result.violations || "—"} | Docket:{" "}
+                  {result.docketNumber} | Status: {result.status || "—"}
                 </p>
               </div>
               <Badge className={`${config.badgeClass} font-bold text-white`}>
@@ -160,20 +144,11 @@ function ResultGroup({ label, results, onVerify }: ResultGroupProps) {
                   </Badge>
                 )}
               </div>
-              <Button
-                size="sm"
-                variant={label === "High" ? "default" : "outline"}
-                onClick={() => onVerify(result)}
-                className={
-                  label === "High"
-                    ? "bg-green-600 hover:bg-green-700"
-                    : undefined
-                }
-              >
-                {label === "High" ? "Verify" : "Review"}
-              </Button>
+              <span className="text-sm font-medium text-primary">
+                View person details
+              </span>
             </div>
-          </div>
+          </Link>
         ))}
       </CardContent>
     </Card>
@@ -182,20 +157,11 @@ function ResultGroup({ label, results, onVerify }: ResultGroupProps) {
 
 export default function ClearanceSearch() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchType, setSearchType] = useState<ClearanceSearchType>("all");
   const [searchResults, setSearchResults] = useState<ClearanceSearchResult[]>(
     [],
   );
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [verifiedResults, setVerifiedResults] = useState<
-    ClearanceSearchResult[]
-  >([]);
-  const [showVerificationPanel, setShowVerificationPanel] = useState(false);
-  const [selectedResult, setSelectedResult] =
-    useState<ClearanceSearchResult | null>(null);
-  const [verificationNotes, setVerificationNotes] = useState("");
-  const [successMessage, setSuccessMessage] = useState("");
 
   useEffect(() => {
     const trimmedQuery = searchQuery.trim();
@@ -213,7 +179,7 @@ export default function ClearanceSearch() {
     const timer = window.setTimeout(async () => {
       const result = await searchClearanceRecords({
         query: trimmedQuery,
-        searchType,
+        searchType: "all",
         limit: 50,
       });
 
@@ -236,38 +202,12 @@ export default function ClearanceSearch() {
       isCurrent = false;
       window.clearTimeout(timer);
     };
-  }, [searchQuery, searchType]);
+  }, [searchQuery]);
 
   const groupedResults = useMemo(
     () => groupResults(searchResults),
     [searchResults],
   );
-
-  const handleVerifyResult = (result: ClearanceSearchResult) => {
-    setSelectedResult(result);
-    setShowVerificationPanel(true);
-  };
-
-  const handleConfirmVerification = () => {
-    if (!selectedResult) return;
-
-    setVerifiedResults((current) => {
-      if (current.some((result) => result.id === selectedResult.id)) {
-        return current;
-      }
-
-      return [...current, selectedResult];
-    });
-    setSuccessMessage("Result verified and recorded for this session");
-    setShowVerificationPanel(false);
-    setSelectedResult(null);
-    setVerificationNotes("");
-    setTimeout(() => setSuccessMessage(""), 3000);
-  };
-
-  const handleRemoveVerified = (id: string) => {
-    setVerifiedResults(verifiedResults.filter((result) => result.id !== id));
-  };
 
   return (
     <div className="p-8 space-y-6">
@@ -286,13 +226,6 @@ export default function ClearanceSearch() {
           alias matching, and phonetic fuzzy matching.
         </p>
       </div>
-
-      {successMessage && (
-        <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded flex items-center gap-2">
-          <CheckCircle className="w-5 h-5" />
-          {successMessage}
-        </div>
-      )}
 
       <Card>
         <CardHeader>
@@ -321,21 +254,6 @@ export default function ClearanceSearch() {
               single-token surname or phonetic matches stay in review ranges.
             </p>
           </div>
-
-          <div className="flex flex-wrap gap-2">
-            {(["all", "name", "alias"] as const).map((type) => (
-              <Button
-                key={type}
-                type="button"
-                variant={searchType === type ? "default" : "outline"}
-                size="sm"
-                onClick={() => setSearchType(type)}
-                className="capitalize"
-              >
-                {type === "all" ? "Names + aliases" : `${type} only`}
-              </Button>
-            ))}
-          </div>
         </CardContent>
       </Card>
 
@@ -347,10 +265,13 @@ export default function ClearanceSearch() {
             <p>{searchError}</p>
             <p>
               This means the app reached Supabase, but Supabase does not yet
-              have the <code>search_clearance_records</code> RPC that powers
-              the live fuzzy search. Apply
-              <code> supabase/migrations/20260511000000_clearance_search.sql</code>,
-              which enables pg_trgm/fuzzystrmatch and creates that function.
+              have the <code>search_clearance_records</code> RPC that powers the
+              live fuzzy search. Apply
+              <code>
+                {" "}
+                supabase/migrations/20260512000000_clearance_search_person_details.sql
+              </code>
+              , which enables pg_trgm/fuzzystrmatch and creates that function.
             </p>
           </AlertDescription>
         </Alert>
@@ -370,21 +291,9 @@ export default function ClearanceSearch() {
 
           {!isSearching && !searchError && (
             <>
-              <ResultGroup
-                label="High"
-                results={groupedResults.High}
-                onVerify={handleVerifyResult}
-              />
-              <ResultGroup
-                label="Medium"
-                results={groupedResults.Medium}
-                onVerify={handleVerifyResult}
-              />
-              <ResultGroup
-                label="Low"
-                results={groupedResults.Low}
-                onVerify={handleVerifyResult}
-              />
+              <ResultGroup label="High" results={groupedResults.High} />
+              <ResultGroup label="Medium" results={groupedResults.Medium} />
+              <ResultGroup label="Low" results={groupedResults.Low} />
 
               {searchResults.length === 0 && (
                 <Card>
@@ -398,98 +307,6 @@ export default function ClearanceSearch() {
             </>
           )}
         </div>
-      )}
-
-      {showVerificationPanel && selectedResult && (
-        <Card className="border-blue-200 bg-blue-50/50">
-          <CardHeader>
-            <CardTitle>Manual Verification</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="p-4 bg-white border border-border rounded">
-              <p className="font-semibold text-lg mb-1">
-                {selectedResult.respondentName}
-              </p>
-              <p className="text-sm text-muted-foreground mb-3">
-                Case: {selectedResult.caseNumber} | Docket:{" "}
-                {selectedResult.docketNumber} | Match:{" "}
-                {selectedResult.confidenceScore}%
-              </p>
-              <StatusBadge
-                status={normalizeStatusForBadge(selectedResult.status) as any}
-                size="sm"
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="verification-notes">Verification Notes</Label>
-              <Textarea
-                id="verification-notes"
-                placeholder="Add any notes about this verification..."
-                value={verificationNotes}
-                onChange={(event) => setVerificationNotes(event.target.value)}
-                rows={3}
-                className="mt-1"
-              />
-            </div>
-
-            <div className="flex gap-2">
-              <Button
-                onClick={handleConfirmVerification}
-                className="flex-1 bg-green-600 hover:bg-green-700"
-              >
-                Confirm & Record
-              </Button>
-              <Button
-                onClick={() => {
-                  setShowVerificationPanel(false);
-                  setSelectedResult(null);
-                  setVerificationNotes("");
-                }}
-                variant="outline"
-                className="flex-1"
-              >
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {verifiedResults.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Verified Results</CardTitle>
-            <CardDescription>
-              {verifiedResults.length} record
-              {verifiedResults.length === 1 ? "" : "s"} verified in this review
-              session
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {verifiedResults.map((result) => (
-              <div
-                key={result.id}
-                className="p-4 bg-green-50 border border-green-200 rounded-lg flex items-start justify-between"
-              >
-                <div>
-                  <p className="font-semibold">{result.respondentName}</p>
-                  <p className="text-sm text-muted-foreground">
-                    Case: {result.caseNumber} | {result.matchDetails}
-                  </p>
-                </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => handleRemoveVerified(result.id)}
-                  className="text-destructive"
-                >
-                  Remove
-                </Button>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
       )}
     </div>
   );

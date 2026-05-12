@@ -1,18 +1,31 @@
-'use client';
+"use client";
 
-import type React from 'react';
-import Link from 'next/link';
-import { useParams } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ExternalLink } from 'lucide-react';
+import type React from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ExternalLink } from "lucide-react";
 
-import { Sidebar } from '@/components/sidebar';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Sidebar } from "@/components/sidebar";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   getCaseAssignments,
   getCaseAttachmentsIndex,
@@ -27,27 +40,30 @@ import {
   type CaseDetailsRecord,
   type CaseParticipantRecord,
   type CaseStatusHistoryRecord,
-} from '@/lib/supabase/queries';
-import type { TableRow as SupabaseTableRow, ViewRow } from '@/lib/supabase/types';
+} from "@/lib/supabase/queries";
+import type {
+  TableRow as SupabaseTableRow,
+  ViewRow,
+} from "@/lib/supabase/types";
 
-const SUPPORTED_DOCKET_TYPES = new Set(['INV', 'INQ']);
+const SUPPORTED_DOCKET_TYPES = new Set(["INV", "INQ"]);
 const SUPPORTED_DOCKET_YEAR = 2022;
 
 type CaseDetailsState = {
-  compact: ViewRow<'v_cases_display'> | null;
+  compact: ViewRow<"v_cases_display"> | null;
   details: CaseDetailsRecord | null;
   participants: CaseParticipantRecord[];
   assignments: CaseAssignmentRecord[];
   courtDetails: CaseCourtRecord[];
   statusHistory: CaseStatusHistoryRecord[];
-  motions: SupabaseTableRow<'case_motions'>[];
-  attachments: SupabaseTableRow<'case_attachment_index'>[];
+  motions: SupabaseTableRow<"case_motions">[];
+  attachments: SupabaseTableRow<"case_attachment_index">[];
   warnings: string[];
 };
 
 function formatDate(value: string | null | undefined) {
   if (!value) {
-    return '—';
+    return "—";
   }
 
   const parsedDate = new Date(value);
@@ -61,7 +77,7 @@ function formatDate(value: string | null | undefined) {
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) {
-    return '—';
+    return "—";
   }
 
   const parsedDate = new Date(value);
@@ -75,7 +91,7 @@ function formatDateTime(value: string | null | undefined) {
 
 function formatFileSize(bytes: number | null) {
   if (bytes === null) {
-    return '—';
+    return "—";
   }
 
   if (bytes < 1024) {
@@ -90,25 +106,33 @@ function formatFileSize(bytes: number | null) {
 }
 
 function displayValue(value: string | number | null | undefined) {
-  return value === null || value === undefined || value === '' ? '—' : String(value);
+  return value === null || value === undefined || value === ""
+    ? "—"
+    : String(value);
 }
 
 function personName(participant: CaseParticipantRecord) {
-  return participant.persons?.full_name ?? 'Unnamed participant';
+  return participant.persons?.full_name ?? "Unnamed participant";
 }
 
 function roleLabel(participant: CaseParticipantRecord) {
-  return participant.participant_roles?.display_label ?? participant.participant_roles?.code ?? 'Party';
+  return (
+    participant.participant_roles?.display_label ??
+    participant.participant_roles?.code ??
+    "Party"
+  );
 }
 
 function formatPersonDemographics(participant: CaseParticipantRecord) {
   const age = displayValue(participant.persons?.age);
-  const gender = participant.persons?.gender ?? 'Gender not recorded';
+  const gender = participant.persons?.gender ?? "Gender not recorded";
   return `Age: ${age} • ${gender}`;
 }
 
 function formatAddress(
-  address: NonNullable<NonNullable<CaseParticipantRecord['persons']>['person_addresses']>[number]['addresses'],
+  address: NonNullable<
+    NonNullable<CaseParticipantRecord["persons"]>["person_addresses"]
+  >[number]["addresses"],
 ) {
   if (!address) {
     return null;
@@ -125,32 +149,53 @@ function formatAddress(
     address.country,
   ].filter((part): part is string => Boolean(part?.trim()));
 
-  return parts.length > 0 ? parts.join(', ') : null;
+  return parts.length > 0 ? parts.join(", ") : null;
 }
 
 function primaryAddress(participant: CaseParticipantRecord) {
   const addresses = participant.persons?.person_addresses ?? [];
-  const preferredAddress = addresses.find((address) => address.is_primary) ?? addresses[0];
-  return formatAddress(preferredAddress?.addresses ?? null) ?? '—';
+  const preferredAddress =
+    addresses.find((address) => address.is_primary) ?? addresses[0];
+  return formatAddress(preferredAddress?.addresses ?? null) ?? "—";
 }
 
 function joinedValues(values: Array<string | null | undefined>) {
-  const uniqueValues = Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
-  return uniqueValues.length > 0 ? uniqueValues.join(', ') : '—';
+  const uniqueValues = Array.from(
+    new Set(
+      values
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+  return uniqueValues.length > 0 ? uniqueValues.join(", ") : "—";
 }
 
 function joinedDates(values: Array<string | null | undefined>) {
-  return joinedValues(values.map((value) => (value ? formatDate(value) : null)));
+  return joinedValues(
+    values.map((value) => (value ? formatDate(value) : null)),
+  );
 }
 
-function SectionEmpty({ children = 'No records yet.' }: { children?: string }) {
-  return <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">{children}</p>;
+function SectionEmpty({ children = "No records yet." }: { children?: string }) {
+  return (
+    <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+      {children}
+    </p>
+  );
 }
 
-function DetailItem({ label, value }: { label: string; value: React.ReactNode }) {
+function DetailItem({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
   return (
     <div className="space-y-1">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
       <div className="text-sm font-medium text-foreground">{value}</div>
     </div>
   );
@@ -168,7 +213,7 @@ export default function CaseDetailsPage() {
 
     async function loadCase() {
       if (!Number.isFinite(caseId)) {
-        setErrorMessage('Invalid case id.');
+        setErrorMessage("Invalid case id.");
         setIsLoading(false);
         return;
       }
@@ -176,7 +221,16 @@ export default function CaseDetailsPage() {
       setIsLoading(true);
       setErrorMessage(null);
 
-      const [compact, details, participants, assignments, courtDetails, statusHistory, motions, attachments] = await Promise.all([
+      const [
+        compact,
+        details,
+        participants,
+        assignments,
+        courtDetails,
+        statusHistory,
+        motions,
+        attachments,
+      ] = await Promise.all([
         getCaseCompactById(caseId),
         getCaseDetailsById(caseId),
         getCaseParticipants(caseId),
@@ -200,7 +254,14 @@ export default function CaseDetailsPage() {
         return;
       }
 
-      const warnings = [participants, assignments, courtDetails, statusHistory, motions, attachments]
+      const warnings = [
+        participants,
+        assignments,
+        courtDetails,
+        statusHistory,
+        motions,
+        attachments,
+      ]
         .map((result) => result.error?.message)
         .filter((message): message is string => Boolean(message));
 
@@ -238,8 +299,8 @@ export default function CaseDetailsPage() {
 
   const isSupportedFocus = Boolean(
     data?.compact?.docket_type_prefix &&
-      SUPPORTED_DOCKET_TYPES.has(data.compact.docket_type_prefix) &&
-      data.compact.docket_year === SUPPORTED_DOCKET_YEAR,
+    SUPPORTED_DOCKET_TYPES.has(data.compact.docket_type_prefix) &&
+    data.compact.docket_year === SUPPORTED_DOCKET_YEAR,
   );
 
   return (
@@ -269,7 +330,9 @@ export default function CaseDetailsPage() {
             </Alert>
           ) : !data?.details || !data.compact ? (
             <Card>
-              <CardContent className="py-10 text-center text-sm text-muted-foreground">Case not found.</CardContent>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                Case not found.
+              </CardContent>
             </Card>
           ) : (
             <>
@@ -277,15 +340,18 @@ export default function CaseDetailsPage() {
                 <Alert>
                   <AlertTitle>Outside first implementation focus</AlertTitle>
                   <AlertDescription>
-                    This details page is currently optimized for INV and INQ 2022 cases. Available schema-backed data is still shown.
+                    This details page is currently optimized for INV and INQ
+                    2022 cases. Available schema-backed data is still shown.
                   </AlertDescription>
                 </Alert>
               ) : null}
 
               {data.warnings.length > 0 ? (
                 <Alert>
-                  <AlertTitle>Some related sections could not be loaded</AlertTitle>
-                  <AlertDescription>{data.warnings.join(' ')}</AlertDescription>
+                  <AlertTitle>
+                    Some related sections could not be loaded
+                  </AlertTitle>
+                  <AlertDescription>{data.warnings.join(" ")}</AlertDescription>
                 </Alert>
               ) : null}
 
@@ -293,22 +359,39 @@ export default function CaseDetailsPage() {
                 <CardHeader className="gap-5 p-4 sm:p-6">
                   <div className="min-w-0">
                     <CardTitle className="whitespace-nowrap text-2xl sm:text-3xl">
-                      {data.compact.docket_display_number ?? displayValue(data.details.docket_number)}
+                      {data.compact.docket_display_number ??
+                        displayValue(data.details.docket_number)}
                     </CardTitle>
                     <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
-                      {data.compact.violations ?? 'No violation recorded'}
+                      {data.compact.violations ?? "No violation recorded"}
                     </CardDescription>
                   </div>
 
                   <div className="grid gap-3 border-t pt-4 sm:grid-cols-[max-content_minmax(0,14rem)_max-content] sm:gap-x-10">
-                    <DetailItem label="Date received" value={formatDate(data.compact.date_received ?? data.details.date_received)} />
+                    <DetailItem
+                      label="Date received"
+                      value={formatDate(
+                        data.compact.date_received ??
+                          data.details.date_received,
+                      )}
+                    />
                     <DetailItem
                       label="Assigned prosecutor"
-                      value={data.compact.prosecutor_full_name ?? data.compact.prosecutor_short_name ?? '—'}
+                      value={
+                        data.compact.prosecutor_full_name ??
+                        data.compact.prosecutor_short_name ??
+                        "—"
+                      }
                     />
                     <DetailItem
                       label="Current status"
-                      value={<Badge variant="outline">{data.compact.current_status_label ?? data.compact.current_status_code ?? '—'}</Badge>}
+                      value={
+                        <Badge variant="outline">
+                          {data.compact.current_status_label ??
+                            data.compact.current_status_code ??
+                            "—"}
+                        </Badge>
+                      }
                     />
                   </div>
                 </CardHeader>
@@ -319,7 +402,10 @@ export default function CaseDetailsPage() {
                   <Card>
                     <CardHeader className="p-4 sm:p-6">
                       <CardTitle>Parties</CardTitle>
-                      <CardDescription>Complainants, respondents, and any other schema-backed participant roles.</CardDescription>
+                      <CardDescription>
+                        Complainants, respondents, and any other schema-backed
+                        participant roles.
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">
                       {partiesByRole.length === 0 ? (
@@ -330,19 +416,46 @@ export default function CaseDetailsPage() {
                             <h3 className="font-semibold">{role}</h3>
                             <div className="grid gap-3 md:grid-cols-2">
                               {participants.map((participant) => (
-                                <div key={participant.id} className="rounded-lg border p-4">
+                                <div
+                                  key={participant.id}
+                                  className="rounded-lg border p-4"
+                                >
                                   <div className="flex items-start justify-between gap-3">
                                     <div>
-                                      <p className="font-medium">{personName(participant)}</p>
-                                      <p className="text-sm text-muted-foreground">{formatPersonDemographics(participant)}</p>
+                                      {participant.persons?.id ? (
+                                        <Link
+                                          href={`/persons/${participant.persons.id}`}
+                                          className="font-medium text-primary hover:underline"
+                                        >
+                                          {personName(participant)}
+                                        </Link>
+                                      ) : (
+                                        <p className="font-medium">
+                                          {personName(participant)}
+                                        </p>
+                                      )}
+                                      <p className="text-sm text-muted-foreground">
+                                        {formatPersonDemographics(participant)}
+                                      </p>
                                     </div>
                                   </div>
                                   <Separator className="my-3" />
                                   <div className="grid gap-2 text-sm sm:grid-cols-2">
                                     <DetailItem label="Role" value={role} />
-                                    <DetailItem label="Birthdate" value={formatDate(participant.persons?.birth_date)} />
-                                    <DetailItem label="Address" value={primaryAddress(participant)} />
-                                    <DetailItem label="Remarks" value={participant.remarks ?? '—'} />
+                                    <DetailItem
+                                      label="Birthdate"
+                                      value={formatDate(
+                                        participant.persons?.birth_date,
+                                      )}
+                                    />
+                                    <DetailItem
+                                      label="Address"
+                                      value={primaryAddress(participant)}
+                                    />
+                                    <DetailItem
+                                      label="Remarks"
+                                      value={participant.remarks ?? "—"}
+                                    />
                                   </div>
                                 </div>
                               ))}
@@ -358,20 +471,38 @@ export default function CaseDetailsPage() {
                       <CardTitle>Case information</CardTitle>
                     </CardHeader>
                     <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      <DetailItem label="Violation/s" value={data.compact.violations ?? '—'} />
-                      <DetailItem label="Date received" value={formatDate(data.details.date_received)} />
-                      <DetailItem label="Remarks" value={data.details.remarks ?? '—'} />
+                      <DetailItem
+                        label="Violation/s"
+                        value={data.compact.violations ?? "—"}
+                      />
+                      <DetailItem
+                        label="Date received"
+                        value={formatDate(data.details.date_received)}
+                      />
+                      <DetailItem
+                        label="Remarks"
+                        value={data.details.remarks ?? "—"}
+                      />
                     </CardContent>
                   </Card>
 
                   <Card>
                     <CardHeader>
                       <CardTitle>Status history</CardTitle>
-                      <CardDescription>Current status and recorded prior movements.</CardDescription>
+                      <CardDescription>
+                        Current status and recorded prior movements.
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="rounded-lg border p-4">
-                        <DetailItem label="Current status" value={data.compact.current_status_label ?? data.compact.current_status_code ?? '—'} />
+                        <DetailItem
+                          label="Current status"
+                          value={
+                            data.compact.current_status_label ??
+                            data.compact.current_status_code ??
+                            "—"
+                          }
+                        />
                       </div>
                       {data.statusHistory.length === 0 ? (
                         <SectionEmpty />
@@ -389,10 +520,18 @@ export default function CaseDetailsPage() {
                             <TableBody>
                               {data.statusHistory.map((history) => (
                                 <TableRow key={history.id}>
-                                  <TableCell>{formatDateTime(history.changed_at)}</TableCell>
-                                  <TableCell>{history.from_status?.display_label ?? '—'}</TableCell>
-                                  <TableCell>{history.to_status?.display_label ?? '—'}</TableCell>
-                                  <TableCell>{history.remarks ?? '—'}</TableCell>
+                                  <TableCell>
+                                    {formatDateTime(history.changed_at)}
+                                  </TableCell>
+                                  <TableCell>
+                                    {history.from_status?.display_label ?? "—"}
+                                  </TableCell>
+                                  <TableCell>
+                                    {history.to_status?.display_label ?? "—"}
+                                  </TableCell>
+                                  <TableCell>
+                                    {history.remarks ?? "—"}
+                                  </TableCell>
                                 </TableRow>
                               ))}
                             </TableBody>
@@ -425,10 +564,16 @@ export default function CaseDetailsPage() {
                               {data.motions.map((motion) => (
                                 <TableRow key={motion.id}>
                                   <TableCell>{motion.motion_name}</TableCell>
-                                  <TableCell>{formatDate(motion.date_received)}</TableCell>
-                                  <TableCell>{motion.filed_by ?? '—'}</TableCell>
-                                  <TableCell>{motion.motion_status ?? '—'}</TableCell>
-                                  <TableCell>{motion.remarks ?? '—'}</TableCell>
+                                  <TableCell>
+                                    {formatDate(motion.date_received)}
+                                  </TableCell>
+                                  <TableCell>
+                                    {motion.filed_by ?? "—"}
+                                  </TableCell>
+                                  <TableCell>
+                                    {motion.motion_status ?? "—"}
+                                  </TableCell>
+                                  <TableCell>{motion.remarks ?? "—"}</TableCell>
                                 </TableRow>
                               ))}
                             </TableBody>
@@ -445,19 +590,47 @@ export default function CaseDetailsPage() {
                       <CardTitle>Prosecutor assignment</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <DetailItem label="Current prosecutor" value={data.compact.prosecutor_full_name ?? data.compact.prosecutor_short_name ?? '—'} />
-                      <DetailItem label="Date assigned" value={formatDate(data.compact.current_assigned_at)} />
+                      <DetailItem
+                        label="Current prosecutor"
+                        value={
+                          data.compact.prosecutor_full_name ??
+                          data.compact.prosecutor_short_name ??
+                          "—"
+                        }
+                      />
+                      <DetailItem
+                        label="Date assigned"
+                        value={formatDate(data.compact.current_assigned_at)}
+                      />
                       {data.assignments.length === 0 ? (
                         <SectionEmpty />
                       ) : (
                         <div className="space-y-3">
                           {data.assignments.map((assignment) => (
-                            <div key={assignment.id} className="rounded-lg border p-3 text-sm">
-                              <p className="font-medium">{assignment.prosecutors?.full_name ?? 'Unrecorded prosecutor'}</p>
-                              <p className="text-muted-foreground">Assigned {formatDateTime(assignment.assigned_at)}</p>
-                              <p className="text-muted-foreground">Staff: {assignment.staff?.full_name ?? '—'}</p>
-                              {assignment.unassigned_at ? <p className="text-muted-foreground">Unassigned {formatDateTime(assignment.unassigned_at)}</p> : null}
-                              {assignment.remarks ? <p className="mt-2">{assignment.remarks}</p> : null}
+                            <div
+                              key={assignment.id}
+                              className="rounded-lg border p-3 text-sm"
+                            >
+                              <p className="font-medium">
+                                {assignment.prosecutors?.full_name ??
+                                  "Unrecorded prosecutor"}
+                              </p>
+                              <p className="text-muted-foreground">
+                                Assigned{" "}
+                                {formatDateTime(assignment.assigned_at)}
+                              </p>
+                              <p className="text-muted-foreground">
+                                Staff: {assignment.staff?.full_name ?? "—"}
+                              </p>
+                              {assignment.unassigned_at ? (
+                                <p className="text-muted-foreground">
+                                  Unassigned{" "}
+                                  {formatDateTime(assignment.unassigned_at)}
+                                </p>
+                              ) : null}
+                              {assignment.remarks ? (
+                                <p className="mt-2">{assignment.remarks}</p>
+                              ) : null}
                             </div>
                           ))}
                         </div>
@@ -470,23 +643,53 @@ export default function CaseDetailsPage() {
                       <CardTitle>Court / criminal case info</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <DetailItem label="Court" value={data.compact.court_codes ?? '—'} />
-                      <DetailItem label="Criminal case #" value={data.compact.criminal_case_numbers ?? '—'} />
-                      <DetailItem label="Charge filed" value={joinedValues(data.courtDetails.map((court) => court.charge_filed))} />
-                      <DetailItem label="Date filed in court" value={joinedDates(data.courtDetails.map((court) => court.date_filed_in_court))} />
-                      <DetailItem label="Court review" value={data.compact.court_needs_review ? 'Needs review' : '—'} />
+                      <DetailItem
+                        label="Court"
+                        value={data.compact.court_codes ?? "—"}
+                      />
+                      <DetailItem
+                        label="Criminal case #"
+                        value={data.compact.criminal_case_numbers ?? "—"}
+                      />
+                      <DetailItem
+                        label="Charge filed"
+                        value={joinedValues(
+                          data.courtDetails.map((court) => court.charge_filed),
+                        )}
+                      />
+                      <DetailItem
+                        label="Date filed in court"
+                        value={joinedDates(
+                          data.courtDetails.map(
+                            (court) => court.date_filed_in_court,
+                          ),
+                        )}
+                      />
+                      <DetailItem
+                        label="Court review"
+                        value={
+                          data.compact.court_needs_review ? "Needs review" : "—"
+                        }
+                      />
                     </CardContent>
                   </Card>
 
                   <Card>
                     <CardHeader>
                       <CardTitle>Attachments</CardTitle>
-                      <CardDescription>Google Drive folder and indexed file records, when available.</CardDescription>
+                      <CardDescription>
+                        Google Drive folder and indexed file records, when
+                        available.
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       {data.details.gdrive_folder_link ? (
                         <Button variant="outline" asChild>
-                          <a href={data.details.gdrive_folder_link} target="_blank" rel="noreferrer">
+                          <a
+                            href={data.details.gdrive_folder_link}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
                             Open Google Drive folder
                             <ExternalLink className="ml-2 h-4 w-4" />
                           </a>
@@ -494,19 +697,34 @@ export default function CaseDetailsPage() {
                       ) : null}
 
                       {data.attachments.length === 0 ? (
-                        <SectionEmpty>Attachments integration not yet connected.</SectionEmpty>
+                        <SectionEmpty>
+                          Attachments integration not yet connected.
+                        </SectionEmpty>
                       ) : (
                         <div className="space-y-3">
                           {data.attachments.map((attachment) => (
-                            <div key={attachment.id} className="rounded-lg border p-3 text-sm">
+                            <div
+                              key={attachment.id}
+                              className="rounded-lg border p-3 text-sm"
+                            >
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
-                                  <p className="truncate font-medium">{attachment.file_name}</p>
-                                  <p className="text-muted-foreground">{formatFileSize(attachment.file_size_bytes)} • {attachment.file_status}</p>
+                                  <p className="truncate font-medium">
+                                    {attachment.file_name}
+                                  </p>
+                                  <p className="text-muted-foreground">
+                                    {formatFileSize(attachment.file_size_bytes)}{" "}
+                                    • {attachment.file_status}
+                                  </p>
                                 </div>
                                 {attachment.web_view_link ? (
                                   <Button variant="ghost" size="sm" asChild>
-                                    <a href={attachment.web_view_link} target="_blank" rel="noreferrer" aria-label={`Open ${attachment.file_name}`}>
+                                    <a
+                                      href={attachment.web_view_link}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      aria-label={`Open ${attachment.file_name}`}
+                                    >
                                       <ExternalLink className="h-4 w-4" />
                                     </a>
                                   </Button>
