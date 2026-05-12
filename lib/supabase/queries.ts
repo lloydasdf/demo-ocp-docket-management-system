@@ -1024,8 +1024,48 @@ export async function getAddressTypes(): Promise<
   );
 }
 
+export type DatabaseUserSummary = Pick<TableRow<"users">, "email" | "id">;
+
+async function getCurrentDatabaseUserRecord() {
+  const supabase = await getSupabaseBrowserClient();
+  const { data: authData } = await supabase.auth.getUser();
+  const authEmail = authData.user?.email;
+
+  if (authEmail) {
+    const authenticatedUserQuery = await supabase
+      .from("users")
+      .select("id,email")
+      .eq("email", authEmail)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (authenticatedUserQuery.error || authenticatedUserQuery.data) {
+      return authenticatedUserQuery;
+    }
+  }
+
+  return supabase
+    .from("users")
+    .select("id,email")
+    .eq("is_active", true)
+    .order("id", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+}
+
+export async function getCurrentDatabaseUser(): Promise<
+  SupabaseQueryResult<DatabaseUserSummary | null>
+> {
+  return runSupabaseQuery(
+    "getCurrentDatabaseUser",
+    "users",
+    async () => getCurrentDatabaseUserRecord(),
+    null,
+  );
+}
+
 export async function getActiveUsers(): Promise<
-  SupabaseQueryResult<Pick<TableRow<"users">, "email" | "id">[]>
+  SupabaseQueryResult<DatabaseUserSummary[]>
 > {
   return runSupabaseQuery(
     "getActiveUsers",
@@ -1042,6 +1082,117 @@ export async function getActiveUsers(): Promise<
   );
 }
 
+async function getNextDocketNumberValue(
+  docketTypeId: number,
+  docketYear: number,
+) {
+  const supabase = await getSupabaseBrowserClient();
+  const counterQuery = await supabase
+    .from("docket_sequence_counters")
+    .select("next_number")
+    .eq("docket_type_id", docketTypeId)
+    .eq("docket_year", docketYear)
+    .maybeSingle();
+
+  if (counterQuery.error || counterQuery.data) {
+    return {
+      data: counterQuery.data?.next_number ?? null,
+      error: counterQuery.error,
+    };
+  }
+
+  const latestCaseQuery = await supabase
+    .from("cases")
+    .select("docket_number")
+    .eq("docket_type_id", docketTypeId)
+    .eq("docket_year", docketYear)
+    .order("docket_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    data: latestCaseQuery.data?.docket_number
+      ? latestCaseQuery.data.docket_number + 1
+      : 1,
+    error: latestCaseQuery.error,
+  };
+}
+
+export async function getNextDocketNumber(
+  docketTypeId: number,
+  docketYear: number,
+): Promise<SupabaseQueryResult<number>> {
+  if (!Number.isFinite(docketTypeId) || !Number.isFinite(docketYear)) {
+    return ok(1);
+  }
+
+  return runSupabaseQuery(
+    "getNextDocketNumber",
+    "docket_sequence_counters",
+    async () => getNextDocketNumberValue(docketTypeId, docketYear),
+    1,
+  );
+}
+
+export async function searchAddressSuggestions(
+  query: string,
+  limit?: number,
+): Promise<SupabaseQueryResult<TableRow<"addresses">[]>> {
+  const safeLimit = normalizeLimit(limit, 8, 25);
+  const safeQuery = escapeIlikeTerm(query);
+
+  if (!safeQuery) {
+    return ok([]);
+  }
+
+  return runSupabaseQuery(
+    "searchAddressSuggestions",
+    "addresses",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return supabase
+        .from("addresses")
+        .select("*")
+        .or(
+          `line1.ilike.%${safeQuery}%,line2.ilike.%${safeQuery}%,barangay.ilike.%${safeQuery}%,city.ilike.%${safeQuery}%,province.ilike.%${safeQuery}%,region.ilike.%${safeQuery}%`,
+        )
+        .order("created_at", { ascending: false })
+        .limit(safeLimit);
+    },
+    [],
+  );
+}
+
+export async function searchViolationSuggestions(
+  query: string,
+  limit?: number,
+): Promise<SupabaseQueryResult<TableRow<"violations">[]>> {
+  const safeLimit = normalizeLimit(limit, 8, 25);
+  const safeQuery = escapeIlikeTerm(query);
+
+  if (!safeQuery) {
+    return getViolations(safeLimit);
+  }
+
+  return runSupabaseQuery(
+    "searchViolationSuggestions",
+    "violations",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return supabase
+        .from("violations")
+        .select("*")
+        .eq("is_active", true)
+        .or(
+          `title.ilike.%${safeQuery}%,short_label.ilike.%${safeQuery}%,law_reference.ilike.%${safeQuery}%,reference_code.ilike.%${safeQuery}%,description.ilike.%${safeQuery}%`,
+        )
+        .order("title", { ascending: true })
+        .limit(safeLimit);
+    },
+    [],
+  );
+}
+
 export interface NewDocketPersonInput {
   firstName: string;
   middleName?: string | null;
@@ -1049,6 +1200,7 @@ export interface NewDocketPersonInput {
   suffix?: string | null;
   gender?: string | null;
   age?: string | null;
+  birthDate?: string | null;
   roleId: number;
   remarks?: string | null;
 }
@@ -1074,11 +1226,8 @@ export interface NewDocketViolationInput {
 export interface NewDocketEntryInput {
   docketTypeId: number;
   docketYear: number;
-  docketNumber: number;
   dateReceived: string;
-  createdByUserId: number;
   initialStatusId?: number | null;
-  docketMonthCode?: string | null;
   regionCode?: string | null;
   source?: string | null;
   summaryText?: string | null;
@@ -1101,6 +1250,16 @@ function cleanString(value: string | null | undefined) {
   return cleaned ? cleaned : null;
 }
 
+function getDocketMonthCode(dateReceived: string) {
+  const date = new Date(`${dateReceived}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toLocaleString("en-US", { month: "short" }).toUpperCase();
+}
+
 function buildFullName(person: NewDocketPersonInput) {
   return [
     cleanString(person.firstName),
@@ -1110,6 +1269,49 @@ function buildFullName(person: NewDocketPersonInput) {
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+async function advanceDocketCounter(
+  docketTypeId: number,
+  docketYear: number,
+  issuedNumber: number,
+) {
+  const supabase = await getSupabaseBrowserClient();
+  const { data: existingCounter, error: counterError } = await supabase
+    .from("docket_sequence_counters")
+    .select("id,next_number")
+    .eq("docket_type_id", docketTypeId)
+    .eq("docket_year", docketYear)
+    .maybeSingle();
+
+  if (counterError) {
+    return counterError;
+  }
+
+  if (existingCounter) {
+    if (existingCounter.next_number > issuedNumber) {
+      return null;
+    }
+
+    const { error } = await supabase
+      .from("docket_sequence_counters")
+      .update({
+        last_issued_number: issuedNumber,
+        next_number: issuedNumber + 1,
+      })
+      .eq("id", existingCounter.id);
+
+    return error;
+  }
+
+  const { error } = await supabase.from("docket_sequence_counters").insert({
+    docket_type_id: docketTypeId,
+    docket_year: docketYear,
+    last_issued_number: issuedNumber,
+    next_number: issuedNumber + 1,
+  });
+
+  return error;
 }
 
 export async function createNewDocketEntry(
@@ -1127,22 +1329,51 @@ export async function createNewDocketEntry(
   }
 
   try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(
+        toQueryError(
+          currentUserQuery.error ?? new Error("No active database user is available for docket creation."),
+          "createNewDocketEntry",
+          "users",
+        ),
+      );
+    }
+
+    const nextDocketNumber = await getNextDocketNumberValue(
+      input.docketTypeId,
+      input.docketYear,
+    );
+
+    if (nextDocketNumber.error || !nextDocketNumber.data) {
+      return fail(
+        toQueryError(
+          nextDocketNumber.error ?? new Error("Unable to determine the next docket number."),
+          "createNewDocketEntry",
+          "docket_sequence_counters",
+        ),
+      );
+    }
+
+    const createdByUserId = currentUserQuery.data.id;
+    const docketNumber = nextDocketNumber.data;
     const supabase = await getSupabaseBrowserClient();
     const { data: createdCase, error: caseError } = await supabase
       .from("cases")
       .insert({
-        created_by_user_id: input.createdByUserId,
+        created_by_user_id: createdByUserId,
         date_received: input.dateReceived,
-        docket_month_code: cleanString(input.docketMonthCode),
-        docket_number: input.docketNumber,
+        docket_month_code: getDocketMonthCode(input.dateReceived),
+        docket_number: docketNumber,
         docket_type_id: input.docketTypeId,
         docket_year: input.docketYear,
         is_summary_procedure: input.isSummaryProcedure ?? null,
-        region_code: cleanString(input.regionCode),
+        region_code: cleanString(input.regionCode) ?? "IV-A",
         remarks: cleanString(input.remarks),
         source: cleanString(input.source) ?? "manual",
         summary_text: cleanString(input.summaryText),
-        updated_by_user_id: input.createdByUserId,
+        updated_by_user_id: createdByUserId,
       })
       .select("id,docket_number,docket_year,docket_type_id")
       .single();
@@ -1152,6 +1383,17 @@ export async function createNewDocketEntry(
     }
 
     const caseId = createdCase.id;
+    const counterError = await advanceDocketCounter(
+      input.docketTypeId,
+      input.docketYear,
+      docketNumber,
+    );
+
+    if (counterError) {
+      return fail(
+        toQueryError(counterError, "createNewDocketEntry", "docket_sequence_counters"),
+      );
+    }
 
     for (const [index, person] of input.persons.entries()) {
       const firstName = cleanString(person.firstName);
@@ -1165,6 +1407,7 @@ export async function createNewDocketEntry(
         .from("persons")
         .insert({
           age: cleanString(person.age),
+          birth_date: cleanString(person.birthDate),
           first_name: firstName,
           full_name: buildFullName(person),
           gender: cleanString(person.gender),
@@ -1255,8 +1498,8 @@ export async function createNewDocketEntry(
         .from("case_status_history")
         .insert({
           case_id: caseId,
-          changed_by_user_id: input.createdByUserId,
-          remarks: "Initial status set during docket creation.",
+          changed_by_user_id: createdByUserId,
+          remarks: "Initial status set to Received during docket creation.",
           status_date: input.dateReceived,
           to_status_id: input.initialStatusId,
         });
