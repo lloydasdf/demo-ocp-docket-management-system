@@ -702,6 +702,7 @@ export async function getCaseParticipantsForCases(
   const safeCaseIds = Array.from(
     new Set(caseIds.filter((caseId) => Number.isFinite(caseId))),
   );
+  const caseIdChunkSize = 100;
 
   if (safeCaseIds.length === 0) {
     return { data: [], error: null };
@@ -712,10 +713,14 @@ export async function getCaseParticipantsForCases(
     "case_participants",
     async () => {
       const supabase = await getSupabaseBrowserClient();
-      const query = supabase
-        .from("case_participants")
-        .select(
-          `*,
+      const allParticipants: CaseParticipantRecord[] = [];
+
+      for (let start = 0; start < safeCaseIds.length; start += caseIdChunkSize) {
+        const caseIdChunk = safeCaseIds.slice(start, start + caseIdChunkSize);
+        const query = supabase
+          .from("case_participants")
+          .select(
+            `*,
         participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
         persons:persons!case_participants_person_id_fkey (
           age, birth_date, first_name, full_name, gender, id, is_minor, is_pwd, is_senior, last_name, middle_name, notes, person_descriptor, suffix,
@@ -724,16 +729,25 @@ export async function getCaseParticipantsForCases(
             addresses:addresses!person_addresses_address_id_fkey (barangay, city, country, line1, line2, province, region, zip_code)
           )
         )`,
-        )
-        .in("case_id", safeCaseIds)
-        .order("case_id", { ascending: true })
-        .order("participant_order", { ascending: true, nullsFirst: false })
-        .order("id", { ascending: true });
+          )
+          .in("case_id", caseIdChunk)
+          .order("case_id", { ascending: true })
+          .order("participant_order", { ascending: true, nullsFirst: false })
+          .order("id", { ascending: true });
 
-      return query as unknown as Promise<{
-        data: CaseParticipantRecord[] | null;
-        error: unknown;
-      }>;
+        const { data, error } = (await query) as unknown as {
+          data: CaseParticipantRecord[] | null;
+          error: unknown;
+        };
+
+        if (error) {
+          return { data: null, error };
+        }
+
+        allParticipants.push(...(data ?? []));
+      }
+
+      return { data: allParticipants, error: null };
     },
     [],
   );

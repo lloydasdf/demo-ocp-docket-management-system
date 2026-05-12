@@ -301,11 +301,10 @@ export default function CasesPage() {
                 <div className="py-8 text-center text-sm text-muted-foreground">No cases found.</div>
               ) : (
                 <div
-                  className="h-full min-h-0 overflow-x-auto rounded-lg border border-border"
-                  aria-label="Cases table with horizontal scrollbar"
+                  className="h-full min-h-0 overflow-auto rounded-lg border border-border"
+                  aria-label="Cases table with synchronized horizontal and vertical scrollbars"
                 >
-                  <div className="max-h-full overflow-y-auto" style={{ width: tableWidth, minWidth: '100%' }}>
-                    <Table className="table-fixed" style={{ width: tableWidth, minWidth: '100%' }}>
+                  <Table className="table-fixed" style={{ width: tableWidth, minWidth: '100%' }}>
                     <colgroup>
                       {CASE_TABLE_COLUMNS.map((column) => (
                         <col key={column.key} style={{ width: columnWidths[column.key] }} />
@@ -380,8 +379,7 @@ export default function CasesPage() {
                         );
                       })}
                     </TableBody>
-                    </Table>
-                  </div>
+                  </Table>
                 </div>
               )}
             </CardContent>
