@@ -986,3 +986,295 @@ export async function searchClearanceRecords(
     [],
   );
 }
+
+
+export async function getParticipantRoles(): Promise<
+  SupabaseQueryResult<TableRow<"participant_roles">[]>
+> {
+  return runSupabaseQuery(
+    "getParticipantRoles",
+    "participant_roles",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return supabase
+        .from("participant_roles")
+        .select("*")
+        .eq("is_active", true)
+        .order("display_label", { ascending: true });
+    },
+    [],
+  );
+}
+
+export async function getAddressTypes(): Promise<
+  SupabaseQueryResult<TableRow<"address_types">[]>
+> {
+  return runSupabaseQuery(
+    "getAddressTypes",
+    "address_types",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return supabase
+        .from("address_types")
+        .select("*")
+        .eq("is_active", true)
+        .order("display_label", { ascending: true });
+    },
+    [],
+  );
+}
+
+export async function getActiveUsers(): Promise<
+  SupabaseQueryResult<Pick<TableRow<"users">, "email" | "id">[]>
+> {
+  return runSupabaseQuery(
+    "getActiveUsers",
+    "users",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return supabase
+        .from("users")
+        .select("id,email")
+        .eq("is_active", true)
+        .order("email", { ascending: true });
+    },
+    [],
+  );
+}
+
+export interface NewDocketPersonInput {
+  firstName: string;
+  middleName?: string | null;
+  lastName: string;
+  suffix?: string | null;
+  gender?: string | null;
+  age?: string | null;
+  roleId: number;
+  remarks?: string | null;
+}
+
+export interface NewDocketAddressInput {
+  addressTypeId: number;
+  line1?: string | null;
+  line2?: string | null;
+  barangay?: string | null;
+  city?: string | null;
+  province?: string | null;
+  region?: string | null;
+  zipCode?: string | null;
+  country?: string | null;
+  remarks?: string | null;
+}
+
+export interface NewDocketViolationInput {
+  violationId: number;
+  rawViolationText?: string | null;
+}
+
+export interface NewDocketEntryInput {
+  docketTypeId: number;
+  docketYear: number;
+  docketNumber: number;
+  dateReceived: string;
+  createdByUserId: number;
+  initialStatusId?: number | null;
+  docketMonthCode?: string | null;
+  regionCode?: string | null;
+  source?: string | null;
+  summaryText?: string | null;
+  remarks?: string | null;
+  isSummaryProcedure?: boolean | null;
+  persons: NewDocketPersonInput[];
+  addresses: NewDocketAddressInput[];
+  violations: NewDocketViolationInput[];
+}
+
+export interface NewDocketEntryResult {
+  caseId: number;
+  docketNumber: number;
+  docketYear: number;
+  docketTypeId: number;
+}
+
+function cleanString(value: string | null | undefined) {
+  const cleaned = value?.trim();
+  return cleaned ? cleaned : null;
+}
+
+function buildFullName(person: NewDocketPersonInput) {
+  return [
+    cleanString(person.firstName),
+    cleanString(person.middleName),
+    cleanString(person.lastName),
+    cleanString(person.suffix),
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+export async function createNewDocketEntry(
+  input: NewDocketEntryInput,
+): Promise<SupabaseQueryResult<NewDocketEntryResult>> {
+  const environment = getSupabaseEnvironmentStatus();
+
+  if (!environment.isConfigured) {
+    return fail({
+      message:
+        "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable live docket creation.",
+      table: "cases",
+      operation: "createNewDocketEntry",
+    });
+  }
+
+  try {
+    const supabase = await getSupabaseBrowserClient();
+    const { data: createdCase, error: caseError } = await supabase
+      .from("cases")
+      .insert({
+        created_by_user_id: input.createdByUserId,
+        date_received: input.dateReceived,
+        docket_month_code: cleanString(input.docketMonthCode),
+        docket_number: input.docketNumber,
+        docket_type_id: input.docketTypeId,
+        docket_year: input.docketYear,
+        is_summary_procedure: input.isSummaryProcedure ?? null,
+        region_code: cleanString(input.regionCode),
+        remarks: cleanString(input.remarks),
+        source: cleanString(input.source) ?? "manual",
+        summary_text: cleanString(input.summaryText),
+        updated_by_user_id: input.createdByUserId,
+      })
+      .select("id,docket_number,docket_year,docket_type_id")
+      .single();
+
+    if (caseError || !createdCase) {
+      return fail(toQueryError(caseError, "createNewDocketEntry", "cases"));
+    }
+
+    const caseId = createdCase.id;
+
+    for (const [index, person] of input.persons.entries()) {
+      const firstName = cleanString(person.firstName);
+      const lastName = cleanString(person.lastName);
+
+      if (!firstName || !lastName) {
+        continue;
+      }
+
+      const { data: createdPerson, error: personError } = await supabase
+        .from("persons")
+        .insert({
+          age: cleanString(person.age),
+          first_name: firstName,
+          full_name: buildFullName(person),
+          gender: cleanString(person.gender),
+          last_name: lastName,
+          middle_name: cleanString(person.middleName),
+          suffix: cleanString(person.suffix),
+        })
+        .select("id")
+        .single();
+
+      if (personError || !createdPerson) {
+        return fail(toQueryError(personError, "createNewDocketEntry", "persons"));
+      }
+
+      const { error: participantError } = await supabase
+        .from("case_participants")
+        .insert({
+          case_id: caseId,
+          participant_order: index + 1,
+          person_id: createdPerson.id,
+          remarks: cleanString(person.remarks),
+          role_id: person.roleId,
+        });
+
+      if (participantError) {
+        return fail(
+          toQueryError(participantError, "createNewDocketEntry", "case_participants"),
+        );
+      }
+    }
+
+    for (const address of input.addresses) {
+      const { data: createdAddress, error: addressError } = await supabase
+        .from("addresses")
+        .insert({
+          barangay: cleanString(address.barangay),
+          city: cleanString(address.city),
+          country: cleanString(address.country) ?? "Philippines",
+          line1: cleanString(address.line1),
+          line2: cleanString(address.line2),
+          province: cleanString(address.province),
+          region: cleanString(address.region),
+          zip_code: cleanString(address.zipCode),
+        })
+        .select("id")
+        .single();
+
+      if (addressError || !createdAddress) {
+        return fail(toQueryError(addressError, "createNewDocketEntry", "addresses"));
+      }
+
+      const { error: caseAddressError } = await supabase
+        .from("case_addresses")
+        .insert({
+          address_id: createdAddress.id,
+          address_type_id: address.addressTypeId,
+          case_id: caseId,
+          is_primary: true,
+          remarks: cleanString(address.remarks),
+        });
+
+      if (caseAddressError) {
+        return fail(
+          toQueryError(caseAddressError, "createNewDocketEntry", "case_addresses"),
+        );
+      }
+    }
+
+    if (input.violations.length > 0) {
+      const { error: violationsError } = await supabase.from("case_violations").insert(
+        input.violations.map((violation, index) => ({
+          case_id: caseId,
+          raw_violation_text: cleanString(violation.rawViolationText),
+          violation_id: violation.violationId,
+          violation_order: index + 1,
+        })),
+      );
+
+      if (violationsError) {
+        return fail(
+          toQueryError(violationsError, "createNewDocketEntry", "case_violations"),
+        );
+      }
+    }
+
+    if (input.initialStatusId) {
+      const { error: statusError } = await supabase
+        .from("case_status_history")
+        .insert({
+          case_id: caseId,
+          changed_by_user_id: input.createdByUserId,
+          remarks: "Initial status set during docket creation.",
+          status_date: input.dateReceived,
+          to_status_id: input.initialStatusId,
+        });
+
+      if (statusError) {
+        return fail(
+          toQueryError(statusError, "createNewDocketEntry", "case_status_history"),
+        );
+      }
+    }
+
+    return ok({
+      caseId,
+      docketNumber: createdCase.docket_number,
+      docketTypeId: createdCase.docket_type_id,
+      docketYear: createdCase.docket_year,
+    });
+  } catch (error) {
+    return fail(toQueryError(error, "createNewDocketEntry", "cases"));
+  }
+}
