@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict bepKbqTd38qXfIynPDrwsWy3CTpMO9IxrS5ovkaXg9tI0asbfTqcIQyKjmF9wXM
+\restrict eeRh25Es5JAlQubWljOijPnP7kkuoXLnrtCuBYRDDsVz1Np9TUw4CyCLKnAcu8U
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 18.3
@@ -755,6 +755,251 @@ CREATE FUNCTION pgbouncer.get_auth(p_usename text) RETURNS TABLE(username text, 
 
 
 --
+-- Name: inv2022_bool(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_bool(p_text text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT CASE
+        WHEN upper(trim(coalesce(p_text, ''))) IN ('TRUE','YES','Y','1','CHECKED') THEN true
+        WHEN upper(trim(coalesce(p_text, ''))) IN ('FALSE','NO','N','0','UNCHECKED') THEN false
+        ELSE NULL
+    END;
+$$;
+
+
+--
+-- Name: inv2022_clean_line(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_clean_line(p_text text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT NULLIF(trim(regexp_replace(coalesce(p_text, ''), '[\t ]+', ' ', 'g')), '');
+$$;
+
+
+--
+-- Name: inv2022_line_count(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_line_count(p_text text) RETURNS integer
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT count(*)::integer
+    FROM public.inv2022_split_lines(p_text);
+$$;
+
+
+--
+-- Name: inv2022_line_value(text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_line_value(p_text text, p_line_order integer) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT value
+    FROM public.inv2022_split_lines(p_text)
+    WHERE line_order = p_line_order
+    LIMIT 1;
+$$;
+
+
+--
+-- Name: inv2022_make_code(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_make_code(p_text text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT left(
+        trim(both '_' from regexp_replace(upper(coalesce(p_text, 'UNKNOWN')), '[^A-Z0-9]+', '_', 'g')),
+        500
+    );
+$$;
+
+
+--
+-- Name: inv2022_normalize_prosecutor(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_normalize_prosecutor(p_text text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT CASE
+        WHEN upper(trim(coalesce(p_text, ''))) IN ('PARRA', 'ASPP PARRA') THEN 'APP PARRA'
+        WHEN upper(trim(coalesce(p_text, ''))) = 'ASCP TAMONDONG' THEN 'ACP TAMONDONG'
+        ELSE upper(trim(coalesce(p_text, '')))
+    END;
+$$;
+
+
+--
+-- Name: inv2022_normalize_status_code(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_normalize_status_code(p_text text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT public.inv2022_make_code(
+        CASE
+            WHEN upper(trim(coalesce(p_text, ''))) = 'MIXED RESULT' THEN 'MIXED_RESULT'
+            WHEN upper(trim(coalesce(p_text, ''))) = 'DISMISSSED' THEN 'DISMISSED'
+            ELSE coalesce(p_text, 'UNKNOWN')
+        END
+    );
+$$;
+
+
+--
+-- Name: inv2022_normalize_status_label(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_normalize_status_label(p_text text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT CASE
+        WHEN upper(trim(coalesce(p_text, ''))) = 'MIXED RESULT' THEN 'MIXED_RESULT'
+        WHEN upper(trim(coalesce(p_text, ''))) = 'DISMISSSED' THEN 'DISMISSED'
+        ELSE public.inv2022_clean_line(p_text)
+    END;
+$$;
+
+
+--
+-- Name: inv2022_parse_docket_number(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_parse_docket_number(p_text text) RETURNS integer
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT NULLIF(substring(coalesce(p_text, '') from '^\s*([0-9]+)'), '')::integer;
+$$;
+
+
+--
+-- Name: inv2022_parse_year(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_parse_year(p_text text) RETURNS integer
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT CASE
+        WHEN substring(coalesce(p_text, '') from '([0-9]{1,4})') IS NULL THEN NULL
+        WHEN substring(coalesce(p_text, '') from '([0-9]{1,4})')::integer < 100
+            THEN 2000 + substring(coalesce(p_text, '') from '([0-9]{1,4})')::integer
+        ELSE substring(coalesce(p_text, '') from '([0-9]{1,4})')::integer
+    END;
+$$;
+
+
+--
+-- Name: inv2022_split_lines(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_split_lines(p_text text) RETURNS TABLE(line_order integer, value text)
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT ordinality::integer AS line_order,
+           public.inv2022_strip_trailing_comma(raw_line) AS value
+    FROM regexp_split_to_table(coalesce(p_text, ''), E'\\r?\\n+') WITH ORDINALITY AS t(raw_line, ordinality)
+    WHERE public.inv2022_strip_trailing_comma(raw_line) IS NOT NULL;
+$$;
+
+
+--
+-- Name: inv2022_split_persons(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_split_persons(p_text text) RETURNS TABLE(line_order integer, full_name text)
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT ordinality::integer AS line_order,
+           public.inv2022_strip_person_number(raw_line) AS full_name
+    FROM regexp_split_to_table(coalesce(p_text, ''), E'\\r?\\n+') WITH ORDINALITY AS t(raw_line, ordinality)
+    WHERE public.inv2022_strip_person_number(raw_line) IS NOT NULL;
+$$;
+
+
+--
+-- Name: inv2022_strip_person_number(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_strip_person_number(p_text text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+    SELECT public.inv2022_clean_line(
+        regexp_replace(
+            coalesce(p_text, ''),
+            '^\s*(\(?[0-9]+\)?\s*([.)\-:]|\s+))+',
+            '',
+            'g'
+        )
+    );
+$$;
+
+
+--
+-- Name: inv2022_strip_trailing_comma(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_strip_trailing_comma(p_text text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+    SELECT public.inv2022_clean_line(regexp_replace(coalesce(p_text, ''), '\s*[,;]+\s*$', '', 'g'));
+$_$;
+
+
+--
+-- Name: inv2022_try_date(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.inv2022_try_date(p_text text) RETURNS date
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE
+    v text;
+    parts text[];
+    y integer;
+    m integer;
+    d integer;
+BEGIN
+    v := nullif(trim(coalesce(p_text, '')), '');
+    IF v IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    v := regexp_replace(v, '\s*[,;]+\s*$', '', 'g');
+
+    IF v ~ '^\d{4}-\d{2}-\d{2}$' THEN
+        RETURN v::date;
+    END IF;
+
+    IF v ~ '^\d{1,2}/\d{1,2}/\d{2,4}$' THEN
+        parts := regexp_split_to_array(v, '/');
+        y := parts[3]::integer;
+        IF y < 100 THEN
+            y := 2000 + y;
+        END IF;
+        m := parts[1]::integer;
+        d := parts[2]::integer;
+        RETURN make_date(y, m, d);
+    END IF;
+
+    -- Excel serial date fallback.
+    IF v ~ '^\d{4,5}(\.\d+)?$' THEN
+        RETURN date '1899-12-30' + (v::numeric::integer);
+    END IF;
+
+    RETURN NULL;
+EXCEPTION WHEN others THEN
+    RETURN NULL;
+END;
+$_$;
+
+
+--
 -- Name: inv22_compare_norm(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1186,8 +1431,7 @@ BEGIN
     IF n = 1 THEN RETURN v; END IF;
 
     last_name := tokens[n];
-
-    IF n >= 3 AND tokens[n - 1] ~ '^[A-ZÑ]\\.?$' THEN
+    IF n >= 3 AND tokens[n - 1] ~ '^[A-ZÑ]\.?$' THEN
         middle_name := replace(tokens[n - 1], '.', '');
         first_name := array_to_string(tokens[1:greatest(n - 2, 1)], ' ');
     ELSE
@@ -1198,7 +1442,6 @@ BEGIN
     IF middle_name IS NULL OR middle_name = '' THEN
         RETURN last_name || ', ' || first_name;
     END IF;
-
     RETURN last_name || ', ' || first_name || ' y ' || middle_name;
 END;
 $_$;
@@ -1295,7 +1538,7 @@ $_$;
 -- Name: legacy_gender_normalized(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.legacy_gender_normalized(p_text text) RETURNS character varying
+CREATE FUNCTION public.legacy_gender_normalized(p_text text) RETURNS text
     LANGUAGE plpgsql IMMUTABLE
     AS $$
 DECLARE
@@ -1422,7 +1665,7 @@ $$;
 -- Name: legacy_org_type(text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.legacy_org_type(p_text text, p_descriptor text DEFAULT NULL::text) RETURNS character varying
+CREATE FUNCTION public.legacy_org_type(p_text text, p_descriptor text DEFAULT NULL::text) RETURNS text
     LANGUAGE plpgsql IMMUTABLE
     AS $$
 DECLARE
@@ -1958,37 +2201,24 @@ DECLARE
     n int := 0;
 BEGIN
     block := public.legacy_representative_from_repby(p_text);
-    IF block IS NULL THEN
-        RETURN;
-    END IF;
+    IF block IS NULL THEN RETURN; END IF;
 
     work := replace(block, E'\r', E'\n');
-
-    -- Put enumerated entries on separate lines even if the source cell has mixed spacing.
-    -- Keep the number with the entry temporarily so it can be stripped cleanly below.
     work := regexp_replace(work, '(^|[[:space:]])([0-9]+)[[:space:]]*[\.)][[:space:]]*', E'\n\\2. ', 'g');
     work := regexp_replace(work, E'\n+', E'\n', 'g');
 
     FOR line IN SELECT * FROM regexp_split_to_table(work, E'\n+') LOOP
         cleaned := public.legacy_clean_text(line);
-        IF cleaned IS NULL THEN
-            CONTINUE;
-        END IF;
-
+        IF cleaned IS NULL THEN CONTINUE; END IF;
         cleaned := regexp_replace(cleaned, '^\s*[0-9]+\s*[\.)]\s*', '', 'g');
         cleaned := regexp_replace(cleaned, '\s+', ' ', 'g');
         cleaned := btrim(cleaned, ' ,.;:-');
-
-        IF cleaned IS NULL OR cleaned = '' THEN
-            CONTINUE;
-        END IF;
+        IF cleaned IS NULL OR cleaned = '' THEN CONTINUE; END IF;
 
         n := n + 1;
         seq := n;
         raw_representative := cleaned;
 
-        -- Collective/non-person rows should not be inserted into persons.first_name.
-        -- They are still detectable from the raw relationship text and can be reviewed later.
         IF cleaned ~* '(DIRECTORS?|OFFICERS?|STOCKHOLDERS?|OWNERS?|EMPLOYEES?|MEMBERS?)\s+(AND|/|OR)?\s*(DIRECTORS?|OFFICERS?|STOCKHOLDERS?|OWNERS?|EMPLOYEES?|MEMBERS?)?\s*(OF|FOR)'
            OR public.legacy_is_organization_text(cleaned) THEN
             is_probable_person := false;
@@ -1997,7 +2227,6 @@ BEGIN
             is_probable_person := true;
             review_reason := NULL;
         END IF;
-
         RETURN NEXT;
     END LOOP;
 END;
@@ -4946,8 +5175,16 @@ CREATE TABLE public.case_assignments (
     assigned_by_user_id bigint NOT NULL,
     assigned_at timestamp with time zone,
     unassigned_at timestamp with time zone,
-    remarks text
+    remarks text,
+    legacy_date_raffled_raw text
 );
+
+
+--
+-- Name: COLUMN case_assignments.legacy_date_raffled_raw; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_assignments.legacy_date_raffled_raw IS 'Original cleaned legacy Date Raffled to Prosecutor value for exact legacy export reconstruction.';
 
 
 --
@@ -5074,8 +5311,16 @@ CREATE TABLE public.case_courts (
     legacy_source_sheet character varying(100),
     legacy_row_number integer,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    date_filed_in_court_raw text
 );
+
+
+--
+-- Name: COLUMN case_courts.date_filed_in_court_raw; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_courts.date_filed_in_court_raw IS 'Original cleaned legacy Date Filed in Court value per court line for exact legacy export reconstruction, including invalid/unparseable legacy text.';
 
 
 --
@@ -5433,8 +5678,24 @@ CREATE TABLE public.case_status_history (
     changed_by_user_id bigint NOT NULL,
     changed_at timestamp with time zone DEFAULT now() NOT NULL,
     remarks text,
-    status_date date
+    status_date date,
+    legacy_status_approved_date_raw text,
+    legacy_status_date_raw text
 );
+
+
+--
+-- Name: COLUMN case_status_history.legacy_status_approved_date_raw; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_status_history.legacy_status_approved_date_raw IS 'Original cleaned legacy Status Approved Date value for exact legacy export reconstruction.';
+
+
+--
+-- Name: COLUMN case_status_history.legacy_status_date_raw; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_status_history.legacy_status_date_raw IS 'Original cleaned legacy Status Date value for exact legacy export reconstruction, including invalid/unparseable legacy text.';
 
 
 --
@@ -5596,6 +5857,7 @@ CREATE TABLE public.cases (
     legacy_raw_json jsonb,
     is_summary_procedure boolean DEFAULT false,
     summary_text text,
+    case_classification_id bigint,
     CONSTRAINT chk_cases_gdrive_folder_status CHECK (((gdrive_folder_status)::text = ANY (ARRAY[('NOT_CREATED'::character varying)::text, ('ACTIVE'::character varying)::text, ('MISSING'::character varying)::text, ('PERMISSION_ERROR'::character varying)::text, ('ARCHIVED'::character varying)::text])))
 );
 
@@ -5758,6 +6020,43 @@ ALTER SEQUENCE public.docket_types_id_seq OWNED BY public.docket_types.id;
 
 
 --
+-- Name: inv2022_manual_entry_rows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.inv2022_manual_entry_rows (
+    id bigint NOT NULL,
+    legacy_source_sheet text DEFAULT 'INV22'::text NOT NULL,
+    legacy_row_number integer NOT NULL,
+    docket_month text,
+    docket_number text,
+    skip_scope text DEFAULT 'PARTICIPANTS'::text NOT NULL,
+    skip_reason text DEFAULT 'MANUAL_ENTRY_REQUIRED'::text NOT NULL,
+    party_role text,
+    main_party_detected text,
+    representative_text_detected text,
+    raw_party_text text,
+    review_flags text,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: inv2022_manual_entry_rows_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.inv2022_manual_entry_rows ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.inv2022_manual_entry_rows_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: legacy_inq2022_import_rows; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5834,73 +6133,6 @@ CREATE SEQUENCE public.legacy_inq2022_import_rows_id_seq
 --
 
 ALTER SEQUENCE public.legacy_inq2022_import_rows_id_seq OWNED BY public.legacy_inq2022_import_rows.id;
-
-
---
--- Name: legacy_inv2022_import_rows; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.legacy_inv2022_import_rows (
-    id bigint NOT NULL,
-    excel_row_number integer NOT NULL,
-    row_kind text NOT NULL,
-    source_file text NOT NULL,
-    source_sheet text NOT NULL,
-    region_raw text,
-    docket_year_raw text,
-    docket_month_raw text,
-    docket_number_raw text,
-    complainants_raw text,
-    complainant_age_raw text,
-    complainant_gender_raw text,
-    complainant_minor_raw text,
-    respondents_raw text,
-    respondent_age_raw text,
-    respondent_gender_raw text,
-    respondent_minor_raw text,
-    violation_raw text,
-    date_received_raw text,
-    date_raffled_raw text,
-    case_classification_raw text,
-    minor_flag_raw text,
-    senior_raw text,
-    pwd_raw text,
-    summary_raw text,
-    prosecutor_raw text,
-    date_approved_raw text,
-    status_raw text,
-    date_filed_in_court_raw text,
-    actual_filing_date_raw text,
-    court_raw text,
-    rtc_branch_raw text,
-    charge_raw text,
-    criminal_case_number_raw text,
-    motion_raw text,
-    motion_date_received_raw text,
-    motion_filed_by_raw text,
-    motion_status_raw text,
-    motion_remarks_raw text,
-    remarks_mtcc_raw text,
-    court_status_raw text,
-    raw_json_text text,
-    import_status text DEFAULT 'STAGED'::text,
-    review_flags text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: legacy_inv2022_import_rows_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-ALTER TABLE public.legacy_inv2022_import_rows ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
-    SEQUENCE NAME public.legacy_inv2022_import_rows_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1
-);
 
 
 --
@@ -6464,31 +6696,18 @@ ALTER SEQUENCE public.users_id_seq OWNED BY public.users.id;
 CREATE VIEW public.v_case_participants_long_term AS
  SELECT cp.id AS case_participant_id,
     cp.case_id,
-    cp.role_id,
     pr.code AS role_code,
     pr.display_label AS role_label,
     cp.participant_order,
     cp.participant_kind,
     cp.person_id,
     cp.organization_id,
-        CASE
-            WHEN (cp.person_id IS NOT NULL) THEN p.full_name
-            WHEN (cp.organization_id IS NOT NULL) THEN o.organization_name
-            ELSE cp.display_name_snapshot
-        END AS party_display_name,
-        CASE
-            WHEN (cp.person_id IS NOT NULL) THEN 'PERSON'::text
-            WHEN (cp.organization_id IS NOT NULL) THEN 'ORGANIZATION'::text
-            ELSE cp.participant_kind
-        END AS party_type,
-    p.first_name,
-    p.middle_name,
-    p.last_name,
-    p.suffix,
+    COALESCE(p.full_name, o.organization_name, cp.display_name_snapshot) AS display_name,
+    p.full_name AS person_name,
+    o.organization_name,
     o.organization_type,
     cpa.age_text,
     cpa.age_years,
-    cpa.age_basis_date,
     cpa.gender_text,
     cpa.gender_normalized,
     cpa.minor_text,
@@ -6499,10 +6718,11 @@ CREATE VIEW public.v_case_participants_long_term AS
     cpa.is_pwd_at_case,
     cp.remarks,
     cp.source,
+    cp.source_detail,
     cp.legacy_source_file,
     cp.legacy_source_sheet,
     cp.legacy_row_number,
-    cp.created_at
+    cp.legacy_raw_text
    FROM ((((public.case_participants cp
      JOIN public.participant_roles pr ON ((pr.id = cp.role_id)))
      LEFT JOIN public.persons p ON ((p.id = cp.person_id)))
@@ -6511,19 +6731,11 @@ CREATE VIEW public.v_case_participants_long_term AS
 
 
 --
--- Name: VIEW v_case_participants_long_term; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON VIEW public.v_case_participants_long_term IS 'UI-friendly participant view combining person/organization party display with case-specific participant attributes.';
-
-
---
 -- Name: violations; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.violations (
     id bigint NOT NULL,
-    category_id bigint NOT NULL,
     reference_code character varying(100),
     title character varying(255) NOT NULL,
     short_label character varying(150),
@@ -6628,115 +6840,6 @@ CREATE VIEW public.v_cases_display AS
      LEFT JOIN active_assignment aa ON ((aa.case_id = c.id)))
      LEFT JOIN court_summary ON ((court_summary.case_id = c.id)))
      LEFT JOIN violation_summary ON ((violation_summary.case_id = c.id)));
-
-
---
--- Name: v_inv2022_original_legacy_layout; Type: VIEW; Schema: public; Owner: -
---
-
-CREATE VIEW public.v_inv2022_original_legacy_layout AS
- SELECT excel_row_number,
-    region_raw AS a_region,
-    docket_year_raw AS b_year,
-    docket_month_raw AS c_month,
-    docket_number_raw AS d_docket_number,
-    complainants_raw AS e_complainants,
-    complainant_age_raw AS f_complainant_age,
-    complainant_gender_raw AS g_complainant_gender,
-    complainant_minor_raw AS h_complainant_minor,
-    'vs.'::text AS i_vs,
-    respondents_raw AS j_respondents,
-    respondent_age_raw AS k_respondent_age,
-    respondent_gender_raw AS l_respondent_gender,
-    respondent_minor_raw AS m_respondent_minor,
-    violation_raw AS n_violations,
-    date_received_raw AS o_date_received,
-    date_raffled_raw AS p_date_raffled,
-    case_classification_raw AS q_case_classification,
-    minor_flag_raw AS r_minor_flag,
-    senior_raw AS s_senior,
-    pwd_raw AS t_pwd,
-    summary_raw AS u_summary,
-    prosecutor_raw AS v_prosecutor,
-    date_approved_raw AS w_date_approved_out,
-    status_raw AS x_status,
-    date_filed_in_court_raw AS y_date_filed_in_court,
-    actual_filing_date_raw AS z_actual_filing_date,
-    court_raw AS aa_court,
-    rtc_branch_raw AS ab_rtc_branch,
-    charge_raw AS ac_charge,
-    criminal_case_number_raw AS ad_criminal_case_number,
-    motion_raw AS ae_motion,
-    motion_date_received_raw AS af_motion_date_received,
-    motion_filed_by_raw AS ag_motion_filed_by,
-    motion_status_raw AS ah_motion_status,
-    motion_remarks_raw AS ai_motion_remarks,
-    NULL::text AS aj_days_pending,
-    NULL::text AS ak_aging_60_below,
-    NULL::text AS al_aging_61_120,
-    NULL::text AS am_aging_121_365,
-    NULL::text AS an_aging_more_than_1_year,
-    NULL::text AS ao_today,
-    NULL::text AS ap_days,
-    remarks_mtcc_raw AS aq_remarks_mtcc,
-    NULL::text AS ar_decisions_received,
-    court_status_raw AS as_court_status
-   FROM public.legacy_inv2022_import_rows s
-  WHERE ((source_sheet = 'INV22'::text) AND (row_kind = 'VALID_DOCKET'::text));
-
-
---
--- Name: v_inv2022_original_legacy_layout_export; Type: VIEW; Schema: public; Owner: -
---
-
-CREATE VIEW public.v_inv2022_original_legacy_layout_export AS
- SELECT a_region,
-    b_year,
-    c_month,
-    d_docket_number,
-    e_complainants,
-    f_complainant_age,
-    g_complainant_gender,
-    h_complainant_minor,
-    i_vs,
-    j_respondents,
-    k_respondent_age,
-    l_respondent_gender,
-    m_respondent_minor,
-    n_violations,
-    o_date_received,
-    p_date_raffled,
-    q_case_classification,
-    r_minor_flag,
-    s_senior,
-    t_pwd,
-    u_summary,
-    v_prosecutor,
-    w_date_approved_out,
-    x_status,
-    y_date_filed_in_court,
-    z_actual_filing_date,
-    aa_court,
-    ab_rtc_branch,
-    ac_charge,
-    ad_criminal_case_number,
-    ae_motion,
-    af_motion_date_received,
-    ag_motion_filed_by,
-    ah_motion_status,
-    ai_motion_remarks,
-    aj_days_pending,
-    ak_aging_60_below,
-    al_aging_61_120,
-    am_aging_121_365,
-    an_aging_more_than_1_year,
-    ao_today,
-    ap_days,
-    aq_remarks_mtcc,
-    ar_decisions_received,
-    as_court_status
-   FROM public.v_inv2022_original_legacy_layout
-  ORDER BY excel_row_number;
 
 
 --
@@ -7795,19 +7898,27 @@ ALTER TABLE ONLY public.docket_types
 
 
 --
+-- Name: inv2022_manual_entry_rows inv2022_manual_entry_rows_legacy_source_sheet_legacy_row_nu_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inv2022_manual_entry_rows
+    ADD CONSTRAINT inv2022_manual_entry_rows_legacy_source_sheet_legacy_row_nu_key UNIQUE (legacy_source_sheet, legacy_row_number, skip_scope);
+
+
+--
+-- Name: inv2022_manual_entry_rows inv2022_manual_entry_rows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.inv2022_manual_entry_rows
+    ADD CONSTRAINT inv2022_manual_entry_rows_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: legacy_inq2022_import_rows legacy_inq2022_import_rows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.legacy_inq2022_import_rows
     ADD CONSTRAINT legacy_inq2022_import_rows_pkey PRIMARY KEY (id);
-
-
---
--- Name: legacy_inv2022_import_rows legacy_inv2022_import_rows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.legacy_inv2022_import_rows
-    ADD CONSTRAINT legacy_inv2022_import_rows_pkey PRIMARY KEY (id);
 
 
 --
@@ -8741,6 +8852,13 @@ CREATE INDEX idx_case_participants_case_role_order ON public.case_participants U
 
 
 --
+-- Name: idx_case_participants_inv2022_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_participants_inv2022_lookup ON public.case_participants USING btree (case_id, person_id, role_id);
+
+
+--
 -- Name: idx_case_participants_legacy_row; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -8811,6 +8929,13 @@ CREATE INDEX idx_case_witness_details_side ON public.case_witness_details USING 
 
 
 --
+-- Name: idx_cases_case_classification_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cases_case_classification_id ON public.cases USING btree (case_classification_id);
+
+
+--
 -- Name: idx_cases_docket_type; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -8836,6 +8961,13 @@ CREATE INDEX idx_cases_gdrive_folder_id ON public.cases USING btree (gdrive_fold
 --
 
 CREATE INDEX idx_cases_gdrive_folder_status ON public.cases USING btree (gdrive_folder_status);
+
+
+--
+-- Name: idx_cases_inv2022_legacy_source_row; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cases_inv2022_legacy_source_row ON public.cases USING btree (legacy_source_file, legacy_source_sheet, source, legacy_row_number);
 
 
 --
@@ -8906,20 +9038,6 @@ CREATE INDEX idx_legacy_inq2022_row_kind ON public.legacy_inq2022_import_rows US
 --
 
 CREATE INDEX idx_legacy_inq2022_status ON public.legacy_inq2022_import_rows USING btree (status_raw);
-
-
---
--- Name: idx_legacy_inv2022_excel_row; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_legacy_inv2022_excel_row ON public.legacy_inv2022_import_rows USING btree (excel_row_number);
-
-
---
--- Name: idx_legacy_inv2022_import_status; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_legacy_inv2022_import_status ON public.legacy_inv2022_import_rows USING btree (import_status);
 
 
 --
@@ -9028,6 +9146,13 @@ CREATE INDEX idx_persons_full_name_trgm ON public.persons USING gin (lower(full_
 
 
 --
+-- Name: idx_persons_inv2022_full_name_norm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_persons_inv2022_full_name_norm ON public.persons USING btree (upper(TRIM(BOTH FROM full_name)));
+
+
+--
 -- Name: idx_persons_last_name_metaphone; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -9042,6 +9167,13 @@ CREATE INDEX idx_persons_name_lookup ON public.persons USING btree (last_name, f
 
 
 --
+-- Name: idx_prosecutors_inv2022_short_name_norm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_prosecutors_inv2022_short_name_norm ON public.prosecutors USING btree (upper(TRIM(BOTH FROM COALESCE(short_name, full_name))));
+
+
+--
 -- Name: idx_psa_prosecutor; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -9053,6 +9185,13 @@ CREATE INDEX idx_psa_prosecutor ON public.prosecutor_staff_assignments USING btr
 --
 
 CREATE INDEX idx_psa_staff ON public.prosecutor_staff_assignments USING btree (staff_id);
+
+
+--
+-- Name: idx_violations_inv2022_canonical_norm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_violations_inv2022_canonical_norm ON public.violations USING btree (public.inv2022_make_code(COALESCE(canonical_title, (title)::text)));
 
 
 --
@@ -9752,6 +9891,14 @@ ALTER TABLE ONLY public.case_witness_details
 
 
 --
+-- Name: cases cases_case_classification_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.cases
+    ADD CONSTRAINT cases_case_classification_id_fkey FOREIGN KEY (case_classification_id) REFERENCES public.case_classifications(id);
+
+
+--
 -- Name: cases cases_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9965,14 +10112,6 @@ ALTER TABLE ONLY public.users
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_staff_id_fkey FOREIGN KEY (staff_id) REFERENCES public.staff(id);
-
-
---
--- Name: violations violations_category_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.violations
-    ADD CONSTRAINT violations_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.case_classifications(id);
 
 
 --
@@ -10228,5 +10367,5 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 -- PostgreSQL database dump complete
 --
 
-\unrestrict bepKbqTd38qXfIynPDrwsWy3CTpMO9IxrS5ovkaXg9tI0asbfTqcIQyKjmF9wXM
+\unrestrict eeRh25Es5JAlQubWljOijPnP7kkuoXLnrtCuBYRDDsVz1Np9TUw4CyCLKnAcu8U
 
