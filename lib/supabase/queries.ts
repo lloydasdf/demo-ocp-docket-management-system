@@ -793,6 +793,100 @@ export async function getCaseAssignments(
   );
 }
 
+export interface AssignProsecutorInput {
+  caseId: number;
+  prosecutorId: number;
+  remarks?: string;
+}
+
+export async function assignProsecutorToCase(
+  input: AssignProsecutorInput,
+): Promise<SupabaseQueryResult<TableRow<"case_assignments">>> {
+  const environment = getSupabaseEnvironmentStatus();
+
+  if (!environment.isConfigured) {
+    return fail({
+      message:
+        "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable live prosecutor assignments.",
+      table: "case_assignments",
+      operation: "assignProsecutorToCase",
+    });
+  }
+
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(
+        toQueryError(
+          currentUserQuery.error ??
+            new Error("No active database user is available for prosecutor assignment."),
+          "assignProsecutorToCase",
+          "users",
+        ),
+      );
+    }
+
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase
+      .from("case_assignments")
+      .insert({
+        assigned_at: new Date().toISOString(),
+        assigned_by_user_id: currentUserQuery.data.id,
+        case_id: input.caseId,
+        prosecutor_id: input.prosecutorId,
+        remarks: input.remarks?.trim() || null,
+      })
+      .select("*")
+      .single();
+
+    if (error || !data) {
+      return fail(toQueryError(error, "assignProsecutorToCase", "case_assignments"));
+    }
+
+    return ok(data);
+  } catch (error) {
+    return fail(toQueryError(error, "assignProsecutorToCase", "case_assignments"));
+  }
+}
+
+export async function unassignActiveProsecutorFromCase(
+  caseId: number,
+): Promise<SupabaseQueryResult<TableRow<"case_assignments">[]>> {
+  const environment = getSupabaseEnvironmentStatus();
+
+  if (!environment.isConfigured) {
+    return fail({
+      message:
+        "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable live prosecutor assignments.",
+      table: "case_assignments",
+      operation: "unassignActiveProsecutorFromCase",
+    });
+  }
+
+  try {
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase
+      .from("case_assignments")
+      .update({ unassigned_at: new Date().toISOString() })
+      .eq("case_id", caseId)
+      .is("unassigned_at", null)
+      .select("*");
+
+    if (error) {
+      return fail(
+        toQueryError(error, "unassignActiveProsecutorFromCase", "case_assignments"),
+      );
+    }
+
+    return ok(data ?? []);
+  } catch (error) {
+    return fail(
+      toQueryError(error, "unassignActiveProsecutorFromCase", "case_assignments"),
+    );
+  }
+}
+
 export async function getCaseStatusHistory(
   caseId: number,
 ): Promise<SupabaseQueryResult<CaseStatusHistoryRecord[]>> {
