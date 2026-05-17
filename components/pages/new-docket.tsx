@@ -352,9 +352,9 @@ export default function NewDocket() {
     updatePerson(entryId, {
       age: person.age ?? '',
       birthDate: person.birth_date ?? '',
-      firstName: person.first_name,
+      firstName: person.first_name ?? '',
       gender: person.gender ?? 'Unspecified',
-      lastName: person.last_name,
+      lastName: person.last_name ?? '',
       middleName: person.middle_name ?? '',
       suffix: person.suffix ?? '',
     });

@@ -386,7 +386,19 @@ export type CaseParticipantPersonRecord = Pick<
   person_addresses: PersonAddressRecord[] | null;
 };
 
+export type CaseParticipantAttributeRecord = Pick<
+  TableRow<"case_participant_attributes">,
+  | "age_text"
+  | "age_years"
+  | "gender_text"
+  | "gender_normalized"
+  | "is_minor_at_case"
+  | "is_senior_at_case"
+  | "is_pwd_at_case"
+>;
+
 export type CaseParticipantRecord = TableRow<"case_participants"> & {
+  case_participant_attributes: CaseParticipantAttributeRecord | null;
   participant_roles: Pick<
     TableRow<"participant_roles">,
     "code" | "display_label"
@@ -456,6 +468,7 @@ export async function getCaseParticipantsForPerson(
         .from("case_participants")
         .select(
           `*,
+        case_participant_attributes:case_participant_attributes!case_participant_attributes_case_participant_id_fkey (age_text, age_years, gender_text, gender_normalized, is_minor_at_case, is_senior_at_case, is_pwd_at_case),
         participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
         persons:persons!case_participants_person_id_fkey (
           age, birth_date, first_name, full_name, gender, id, is_minor, is_pwd, is_senior, last_name, middle_name, notes, person_descriptor, suffix,
@@ -674,6 +687,7 @@ export async function getCaseParticipants(
         .from("case_participants")
         .select(
           `*,
+        case_participant_attributes:case_participant_attributes!case_participant_attributes_case_participant_id_fkey (age_text, age_years, gender_text, gender_normalized, is_minor_at_case, is_senior_at_case, is_pwd_at_case),
         participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
         persons:persons!case_participants_person_id_fkey (
           age, birth_date, first_name, full_name, gender, id, is_minor, is_pwd, is_senior, last_name, middle_name, notes, person_descriptor, suffix,
@@ -721,6 +735,7 @@ export async function getCaseParticipantsForCases(
           .from("case_participants")
           .select(
             `*,
+        case_participant_attributes:case_participant_attributes!case_participant_attributes_case_participant_id_fkey (age_text, age_years, gender_text, gender_normalized, is_minor_at_case, is_senior_at_case, is_pwd_at_case),
         participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
         persons:persons!case_participants_person_id_fkey (
           age, birth_date, first_name, full_name, gender, id, is_minor, is_pwd, is_senior, last_name, middle_name, notes, person_descriptor, suffix,
@@ -976,11 +991,62 @@ export async function searchClearanceRecords(
         } as never,
       );
 
+      if (error || !Array.isArray(data)) {
+        return { data: [], error };
+      }
+
+      const results = (data as ClearanceRpcRow[]).map(normalizeClearanceSearchRow);
+      const caseIds = Array.from(new Set(results.map((result) => result.caseId)));
+
+      if (caseIds.length === 0) {
+        return { data: results, error: null };
+      }
+
+      const [caseSummaries, participantAttributes] = await Promise.all([
+        supabase
+          .from("v_cases_display")
+          .select("id,violations")
+          .in("id", caseIds),
+        supabase
+          .from("case_participants")
+          .select(
+            "case_id, person_id, case_participant_attributes:case_participant_attributes!case_participant_attributes_case_participant_id_fkey (age_text, age_years)",
+          )
+          .in("case_id", caseIds),
+      ]);
+
+      if (caseSummaries.error) {
+        return { data: null, error: caseSummaries.error };
+      }
+
+      if (participantAttributes.error) {
+        return { data: null, error: participantAttributes.error };
+      }
+
+      const violationsByCaseId = new Map(
+        (caseSummaries.data ?? []).map((row) => [row.id, row.violations ?? "—"]),
+      );
+      const ageByCasePersonKey = new Map<string, string>();
+
+      for (const row of participantAttributes.data ?? []) {
+        const rawAttributes = row.case_participant_attributes;
+        const attributes = Array.isArray(rawAttributes)
+          ? rawAttributes[0]
+          : rawAttributes;
+        const age = attributes?.age_text ?? attributes?.age_years?.toString();
+
+        if (age) {
+          ageByCasePersonKey.set(`${row.case_id}-${row.person_id}`, age);
+        }
+      }
+
       return {
-        data: Array.isArray(data)
-          ? (data as ClearanceRpcRow[]).map(normalizeClearanceSearchRow)
-          : [],
-        error,
+        data: results.map((result) => ({
+          ...result,
+          age: ageByCasePersonKey.get(`${result.caseId}-${result.personId}`) ?? result.age,
+          violations: violationsByCaseId.get(result.caseId) ?? result.violations,
+        })),
+        error: null,
       };
     },
     [],
@@ -1271,6 +1337,43 @@ function buildFullName(person: NewDocketPersonInput) {
     .join(" ");
 }
 
+function normalizeGenderForAttributes(value: string | null | undefined) {
+  const cleaned = cleanString(value);
+
+  if (!cleaned || cleaned.toLowerCase() === "unspecified") {
+    return { genderText: null, genderNormalized: "UNKNOWN" };
+  }
+
+  const normalized = cleaned.toUpperCase();
+
+  if (["MALE", "FEMALE", "OTHER", "UNKNOWN"].includes(normalized)) {
+    return { genderText: cleaned, genderNormalized: normalized };
+  }
+
+  return { genderText: cleaned, genderNormalized: "OTHER" };
+}
+
+function parseAgeYears(value: string | null | undefined) {
+  const cleaned = cleanString(value);
+
+  if (!cleaned) {
+    return null;
+  }
+
+  const match = cleaned.match(/\d+/);
+
+  if (!match) {
+    return null;
+  }
+
+  const age = Number.parseInt(match[0], 10);
+  return age >= 0 && age <= 150 ? age : null;
+}
+
+function ageFlag(ageYears: number | null, minimumAge: number) {
+  return ageYears === null ? null : ageYears >= minimumAge;
+}
+
 async function advanceDocketCounter(
   docketTypeId: number,
   docketYear: number,
@@ -1422,7 +1525,7 @@ export async function createNewDocketEntry(
         return fail(toQueryError(personError, "createNewDocketEntry", "persons"));
       }
 
-      const { error: participantError } = await supabase
+      const { data: createdParticipant, error: participantError } = await supabase
         .from("case_participants")
         .insert({
           case_id: caseId,
@@ -1430,12 +1533,43 @@ export async function createNewDocketEntry(
           person_id: createdPerson.id,
           remarks: cleanString(person.remarks),
           role_id: person.roleId,
-        });
+        })
+        .select("id")
+        .single();
 
-      if (participantError) {
+      if (participantError || !createdParticipant) {
         return fail(
           toQueryError(participantError, "createNewDocketEntry", "case_participants"),
         );
+      }
+
+      const ageText = cleanString(person.age);
+      const ageYears = parseAgeYears(person.age);
+      const gender = normalizeGenderForAttributes(person.gender);
+
+      if (ageText || gender.genderText || gender.genderNormalized !== "UNKNOWN") {
+        const { error: attributesError } = await supabase
+          .from("case_participant_attributes")
+          .insert({
+            age_basis_date: input.dateReceived,
+            age_source: ageText ? "MANUAL_ENTRY" : "UNKNOWN",
+            age_text: ageText,
+            age_years: ageYears,
+            case_participant_id: createdParticipant.id,
+            created_by_user_id: createdByUserId,
+            gender_normalized: gender.genderNormalized,
+            gender_text: gender.genderText,
+            is_minor_at_case: ageYears === null ? null : ageYears < 18,
+            is_senior_at_case: ageFlag(ageYears, 60),
+            source: "MANUAL_ENTRY",
+            updated_by_user_id: createdByUserId,
+          });
+
+        if (attributesError) {
+          return fail(
+            toQueryError(attributesError, "createNewDocketEntry", "case_participant_attributes"),
+          );
+        }
       }
     }
 

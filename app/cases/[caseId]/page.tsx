@@ -124,9 +124,28 @@ function roleLabel(participant: CaseParticipantRecord) {
 }
 
 function formatPersonDemographics(participant: CaseParticipantRecord) {
-  const age = displayValue(participant.persons?.age);
-  const gender = participant.persons?.gender ?? "Gender not recorded";
-  return `Age: ${age} • ${gender}`;
+  const attributes = participant.case_participant_attributes;
+  const age = displayValue(
+    attributes?.age_text ?? attributes?.age_years ?? participant.persons?.age,
+  );
+  const gender =
+    attributes?.gender_text ??
+    attributes?.gender_normalized ??
+    participant.persons?.gender ??
+    "Gender not recorded";
+
+  return `Case age: ${age} • ${gender}`;
+}
+
+function caseSpecificFlags(participant: CaseParticipantRecord) {
+  const attributes = participant.case_participant_attributes;
+  const flags = [
+    attributes?.is_minor_at_case ? "Minor" : null,
+    attributes?.is_senior_at_case ? "Senior" : null,
+    attributes?.is_pwd_at_case ? "PWD" : null,
+  ].filter((flag): flag is string => Boolean(flag));
+
+  return flags.length > 0 ? flags.join(", ") : "—";
 }
 
 function formatAddress(
@@ -451,6 +470,10 @@ export default function CaseDetailsPage() {
                                     <DetailItem
                                       label="Address"
                                       value={primaryAddress(participant)}
+                                    />
+                                    <DetailItem
+                                      label="Case flags"
+                                      value={caseSpecificFlags(participant)}
                                     />
                                     <DetailItem
                                       label="Remarks"
