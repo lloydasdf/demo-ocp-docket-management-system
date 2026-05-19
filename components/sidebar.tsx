@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import {
   FileText,
   Plus,
+  Search,
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react';
@@ -26,6 +27,12 @@ const navigation = [
     href: '/cases',
     icon: FileText,
     description: 'View case information',
+  },
+  {
+    name: 'Clearance Search',
+    href: '/clearance-search',
+    icon: Search,
+    description: 'Search clearance records',
   },
 ];
 
