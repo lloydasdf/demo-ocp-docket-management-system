@@ -8,6 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { dockets } from '@/lib/dummy-data';
 import { getCaseParticipantsForCases, getCasesCompact, type CaseParticipantRecord } from '@/lib/supabase/queries';
 import type { ViewRow } from '@/lib/supabase/types';
@@ -121,6 +122,7 @@ export default function CasesPage() {
   const [cases, setCases] = useState<CompactCase[]>([]);
   const [selectedDocketType, setSelectedDocketType] = useState<DocketTypeFilter>('All');
   const [selectedDocketYear, setSelectedDocketYear] = useState<DocketYearFilter>('2022');
+  const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isUsingFallback, setIsUsingFallback] = useState(false);
@@ -181,15 +183,38 @@ export default function CasesPage() {
     };
   }, [fallbackCases, selectedDocketType, selectedDocketYear]);
 
+  const filteredCases = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    if (!normalizedSearch) {
+      return cases;
+    }
+
+    return cases.filter((caseDetail) => {
+      const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
+      const searchableText = [
+        formatDisplayDocketNumber(caseDetail.docket_display_number),
+        casePartyNames?.complainants ?? '',
+        casePartyNames?.respondents ?? '',
+        caseDetail.violations ?? '',
+        caseDetail.prosecutor_full_name ?? caseDetail.prosecutor_short_name ?? '',
+        caseDetail.current_status_label ?? '',
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      return searchableText.includes(normalizedSearch);
+    });
+  }, [cases, partyNamesByCase, searchTerm]);
+
   const sortedCases = useMemo(
     () =>
-      [...cases].sort((left, right) =>
+      [...filteredCases].sort((left, right) =>
         docketNumberCollator.compare(
           formatDisplayDocketNumber(left.docket_display_number),
           formatDisplayDocketNumber(right.docket_display_number),
         ),
       ),
-    [cases],
+    [filteredCases],
   );
 
   const tableWidth = useMemo(
@@ -250,6 +275,18 @@ export default function CasesPage() {
               </div>
 
               <div className="grid gap-4 sm:max-w-xl sm:grid-cols-2">
+                <div className="flex flex-col gap-2 sm:col-span-2">
+                  <label className="text-sm font-medium text-foreground" htmlFor="case-search">
+                    Search Cases
+                  </label>
+                  <Input
+                    id="case-search"
+                    placeholder="Search docket no., parties, violation, prosecutor, or status"
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                  />
+                </div>
+
                 <div className="flex flex-col gap-2">
                   <label className="text-sm font-medium text-foreground" htmlFor="docket-type-filter">
                     Docket Type
@@ -297,7 +334,7 @@ export default function CasesPage() {
             <CardContent className="min-h-0 flex-1 overflow-hidden px-4 md:px-6">
               {isLoading ? (
                 <div className="py-8 text-center text-sm text-muted-foreground">Loading cases...</div>
-              ) : cases.length === 0 ? (
+              ) : sortedCases.length === 0 ? (
                 <div className="py-8 text-center text-sm text-muted-foreground">No cases found.</div>
               ) : (
                 <div

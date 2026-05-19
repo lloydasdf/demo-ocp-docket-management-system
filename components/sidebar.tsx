@@ -4,13 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
-  Search,
   FileText,
   Plus,
-  Users,
-  CheckCircle,
-  BarChart3,
-  Home,
   PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react';
@@ -20,18 +15,6 @@ const SIDEBAR_AUTO_COLLAPSE_QUERY = '(max-width: 1024px)';
 const SIDEBAR_HIDE_QUERY = '(max-width: 768px)';
 
 const navigation = [
-  {
-    name: 'Dashboard',
-    href: '/',
-    icon: Home,
-    description: 'Overview and KPIs',
-  },
-  {
-    name: 'Docket Search',
-    href: '/docket-search',
-    icon: Search,
-    description: 'Search for dockets',
-  },
   {
     name: 'New Docket Entry',
     href: '/new-docket',
@@ -43,30 +26,6 @@ const navigation = [
     href: '/cases',
     icon: FileText,
     description: 'View case information',
-  },
-  {
-    name: 'Prosecutor Assignment',
-    href: '/prosecutor-assignment',
-    icon: Users,
-    description: 'Assign prosecutors',
-  },
-  {
-    name: 'Status Update',
-    href: '/status-update',
-    icon: CheckCircle,
-    description: 'Update case status',
-  },
-  {
-    name: 'Clearance Search',
-    href: '/clearance-search',
-    icon: Search,
-    description: 'Search clearance records',
-  },
-  {
-    name: 'Reports',
-    href: '/reports',
-    icon: BarChart3,
-    description: 'Analytics and reports',
   },
 ];
 
