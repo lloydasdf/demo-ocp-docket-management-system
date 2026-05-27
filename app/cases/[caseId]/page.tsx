@@ -35,11 +35,15 @@ import {
   getCaseMotions,
   getCaseParticipants,
   getCaseStatusHistory,
+  getCaseTimelineEvents,
+  createCaseEvent,
+  voidCaseEvent,
   type CaseAssignmentRecord,
   type CaseCourtRecord,
   type CaseDetailsRecord,
   type CaseParticipantRecord,
   type CaseStatusHistoryRecord,
+  type CaseTimelineEventRecord,
 } from "@/lib/supabase/queries";
 import type {
   TableRow as SupabaseTableRow,
@@ -57,9 +61,20 @@ type CaseDetailsState = {
   courtDetails: CaseCourtRecord[];
   statusHistory: CaseStatusHistoryRecord[];
   motions: SupabaseTableRow<"case_motions">[];
+  timeline: CaseTimelineEventRecord[];
   attachments: SupabaseTableRow<"case_attachment_index">[];
   warnings: string[];
 };
+const EVENT_TYPE_CODES = [
+  "CASE_RECEIVED",
+  "CASE_RAFFLED",
+  "STATUS_CHANGE",
+  "COURT_FILING",
+  "COURT_UPDATE",
+  "MOTION",
+  "PETITION_FOR_REVIEW",
+  "CUSTOM",
+] as const;
 
 function formatDate(value: string | null | undefined) {
   if (!value) {
@@ -226,6 +241,12 @@ export default function CaseDetailsPage() {
   const [data, setData] = useState<CaseDetailsState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSavingEvent, setIsSavingEvent] = useState(false);
+  const [eventTypeCode, setEventTypeCode] = useState<string>("CUSTOM");
+  const [eventDate, setEventDate] = useState<string>("");
+  const [eventTitle, setEventTitle] = useState<string>("");
+  const [eventDescription, setEventDescription] = useState<string>("");
+  const [eventDetails, setEventDetails] = useState<string>("{}");
 
   useEffect(() => {
     let isMounted = true;
@@ -249,6 +270,7 @@ export default function CaseDetailsPage() {
         statusHistory,
         motions,
         attachments,
+        timeline,
       ] = await Promise.all([
         getCaseCompactById(caseId),
         getCaseDetailsById(caseId),
@@ -258,6 +280,7 @@ export default function CaseDetailsPage() {
         getCaseStatusHistory(caseId),
         getCaseMotions(caseId),
         getCaseAttachmentsIndex(caseId),
+        getCaseTimelineEvents(caseId),
       ]);
 
       if (!isMounted) {
@@ -280,6 +303,7 @@ export default function CaseDetailsPage() {
         statusHistory,
         motions,
         attachments,
+        timeline,
       ]
         .map((result) => result.error?.message)
         .filter((message): message is string => Boolean(message));
@@ -293,6 +317,7 @@ export default function CaseDetailsPage() {
         statusHistory: statusHistory.data ?? [],
         motions: motions.data ?? [],
         attachments: attachments.data ?? [],
+        timeline: timeline.data ?? [],
         warnings,
       });
       setIsLoading(false);
@@ -304,6 +329,61 @@ export default function CaseDetailsPage() {
       isMounted = false;
     };
   }, [caseId]);
+
+  async function refreshTimeline() {
+    const timeline = await getCaseTimelineEvents(caseId);
+    if (timeline.error) {
+      setErrorMessage(timeline.error.message);
+      return;
+    }
+    setData((previous) =>
+      previous ? { ...previous, timeline: timeline.data ?? [] } : previous,
+    );
+  }
+
+  async function handleAddEvent() {
+    if (!eventDate || !eventTitle.trim()) {
+      setErrorMessage("Event date and title are required.");
+      return;
+    }
+    let parsedDetails: unknown = {};
+    try {
+      parsedDetails = eventDetails.trim() ? JSON.parse(eventDetails) : {};
+    } catch {
+      setErrorMessage("Details JSON is invalid.");
+      return;
+    }
+    setIsSavingEvent(true);
+    setErrorMessage(null);
+    const created = await createCaseEvent({
+      caseId,
+      eventTypeCode,
+      eventDate,
+      title: eventTitle.trim(),
+      description: eventDescription.trim(),
+      detailsJson: parsedDetails as never,
+    });
+    setIsSavingEvent(false);
+    if (created.error) {
+      setErrorMessage(created.error.message);
+      return;
+    }
+    setEventTitle("");
+    setEventDescription("");
+    setEventDetails("{}");
+    await refreshTimeline();
+  }
+
+  async function handleVoidEvent(caseEventId: number) {
+    const reason = window.prompt("Void reason (required):");
+    if (!reason?.trim()) return;
+    const result = await voidCaseEvent(caseEventId, reason.trim());
+    if (result.error) {
+      setErrorMessage(result.error.message);
+      return;
+    }
+    await refreshTimeline();
+  }
 
   const partiesByRole = useMemo(() => {
     const grouped = new Map<string, CaseParticipantRecord[]>();
@@ -506,6 +586,69 @@ export default function CaseDetailsPage() {
                         label="Remarks"
                         value={data.details.remarks ?? "—"}
                       />
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Timeline</CardTitle>
+                      <CardDescription>
+                        Canonical case timeline from v_case_timeline.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="rounded-lg border p-4">
+                        <h4 className="mb-3 font-medium">Add Event</h4>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <input className="rounded border p-2 text-sm" value={eventDate} onChange={(event) => setEventDate(event.target.value)} type="date" />
+                          <select className="rounded border p-2 text-sm" value={eventTypeCode} onChange={(event) => setEventTypeCode(event.target.value)}>
+                            {EVENT_TYPE_CODES.map((code) => (
+                              <option key={code} value={code}>
+                                {code}
+                              </option>
+                            ))}
+                          </select>
+                          <input className="rounded border p-2 text-sm md:col-span-2" placeholder="Event title" value={eventTitle} onChange={(event) => setEventTitle(event.target.value)} />
+                          <textarea className="rounded border p-2 text-sm md:col-span-2" placeholder="Description" value={eventDescription} onChange={(event) => setEventDescription(event.target.value)} />
+                          <textarea className="rounded border p-2 font-mono text-xs md:col-span-2" rows={4} placeholder='{"key":"value"}' value={eventDetails} onChange={(event) => setEventDetails(event.target.value)} />
+                        </div>
+                        <Button className="mt-3" onClick={handleAddEvent} disabled={isSavingEvent}>
+                          {isSavingEvent ? "Saving..." : "Add Event"}
+                        </Button>
+                      </div>
+                      {data.timeline.length === 0 ? (
+                        <SectionEmpty>No timeline events found.</SectionEmpty>
+                      ) : (
+                        <div className="space-y-3">
+                          {data.timeline.map((event) => (
+                            <div key={event.case_event_id} className={`rounded-lg border p-3 ${event.is_voided ? "opacity-60" : ""}`}>
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="font-medium">{event.title ?? event.event_type_label ?? "Untitled event"}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {formatDate(event.event_date)} • {event.event_type_code ?? "—"}
+                                  </p>
+                                </div>
+                                {event.needs_review ? <Badge variant="destructive">Needs review</Badge> : null}
+                              </div>
+                              {event.description ? <p className="mt-2 text-sm">{event.description}</p> : null}
+                              <p className="mt-2 text-xs text-muted-foreground">
+                                Status: {event.status_label ?? "—"} • Prosecutor: {event.prosecutor_short_name ?? "—"} • Court: {event.court_name ?? "—"}
+                              </p>
+                              {event.details_jsonb ? (
+                                <pre className="mt-2 overflow-auto rounded bg-muted p-2 text-xs">{JSON.stringify(event.details_jsonb, null, 2)}</pre>
+                              ) : null}
+                              {!event.is_voided ? (
+                                <Button variant="outline" size="sm" className="mt-2" onClick={() => handleVoidEvent(event.case_event_id)}>
+                                  Void event
+                                </Button>
+                              ) : (
+                                <p className="mt-2 text-xs font-medium text-amber-600">Voided event</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
 

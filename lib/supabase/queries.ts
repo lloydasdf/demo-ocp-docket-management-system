@@ -416,6 +416,35 @@ export type CaseStatusHistoryRecord = TableRow<"case_status_history"> & {
   to_status: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
 };
 
+export type CaseTimelineEventRecord = {
+  case_event_id: number;
+  case_id: number;
+  docket_display_number: string | null;
+  event_type_code: string | null;
+  event_type_label: string | null;
+  event_category: string | null;
+  event_date: string | null;
+  event_time: string | null;
+  event_order: number | null;
+  title: string | null;
+  description: string | null;
+  status_code: string | null;
+  status_label: string | null;
+  prosecutor_short_name: string | null;
+  staff_short_name: string | null;
+  court_name: string | null;
+  details_jsonb: Json | null;
+  source: string | null;
+  source_table: string | null;
+  source_id: number | null;
+  legacy_source_file: string | null;
+  legacy_row_number: number | null;
+  legacy_line_order: number | null;
+  needs_review: boolean | null;
+  review_reason: string | null;
+  is_voided: boolean | null;
+};
+
 export type PersonDetailsRecord = TableRow<"persons"> & {
   person_aliases:
     | Pick<
@@ -977,6 +1006,114 @@ export async function getCaseAttachmentsIndex(
     },
     [],
   );
+}
+
+export async function getCaseTimelineEvents(
+  caseId: number,
+): Promise<SupabaseQueryResult<CaseTimelineEventRecord[]>> {
+  return runSupabaseQuery(
+    "getCaseTimelineEvents",
+    "cases",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return (await supabase
+        .from("v_case_timeline" as never)
+        .select("*")
+        .eq("case_id", caseId)
+        .order("event_date", { ascending: true, nullsFirst: false })
+        .order("event_order", { ascending: true, nullsFirst: false })
+        .order("case_event_id", { ascending: true })) as {
+        data: CaseTimelineEventRecord[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
+export interface CreateCaseEventInput {
+  caseId: number;
+  eventTypeCode: string;
+  eventDate: string;
+  title: string;
+  description?: string;
+  detailsJson?: Json | null;
+}
+
+export async function createCaseEvent(
+  input: CreateCaseEventInput,
+): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) {
+    return fail({
+      message: "Supabase is not configured.",
+      table: "cases",
+      operation: "createCaseEvent",
+    });
+  }
+
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(
+        toQueryError(
+          currentUserQuery.error ?? new Error("No active user available."),
+          "createCaseEvent",
+          "users",
+        ),
+      );
+    }
+
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("create_case_event" as never, {
+      p_case_id: input.caseId,
+      p_event_type_code: input.eventTypeCode,
+      p_event_date: input.eventDate,
+      p_title: input.title,
+      p_description: input.description?.trim() || null,
+      p_details_jsonb: input.detailsJson ?? {},
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+
+    if (error) {
+      return fail(toQueryError(error, "createCaseEvent", "cases"));
+    }
+
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "createCaseEvent", "cases"));
+  }
+}
+
+export async function voidCaseEvent(
+  caseEventId: number,
+  reason: string,
+): Promise<SupabaseQueryResult<boolean>> {
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(
+        toQueryError(
+          currentUserQuery.error ?? new Error("No active user available."),
+          "voidCaseEvent",
+          "users",
+        ),
+      );
+    }
+
+    const supabase = await getSupabaseBrowserClient();
+    const { error } = await supabase.rpc("void_case_event" as never, {
+      p_case_event_id: caseEventId,
+      p_reason: reason,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) {
+      return fail(toQueryError(error, "voidCaseEvent", "cases"));
+    }
+    return ok(true);
+  } catch (error) {
+    return fail(toQueryError(error, "voidCaseEvent", "cases"));
+  }
 }
 
 export async function getViolations(
