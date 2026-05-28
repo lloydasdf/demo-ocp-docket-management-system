@@ -346,6 +346,28 @@ export async function getCasesFromTable(
       const pageSize = limit === undefined ? 1000 : normalizeLimit(limit, 50, 250);
       const shouldFetchAllPages = limit === undefined;
       const allCases: CasesTableRecord[] = [];
+      let docketTypeId: number | null = null;
+
+      if (docketType && docketType !== "All") {
+        const docketTypeResponse = (await supabase
+          .from("docket_types")
+          .select("id")
+          .eq("prefix", docketType)
+          .maybeSingle()) as {
+          data: Pick<TableRow<"docket_types">, "id"> | null;
+          error: unknown;
+        };
+
+        if (docketTypeResponse.error) {
+          return { data: null, error: docketTypeResponse.error };
+        }
+
+        if (!docketTypeResponse.data) {
+          return { data: [], error: null };
+        }
+
+        docketTypeId = docketTypeResponse.data.id;
+      }
 
       for (let start = 0; ; start += pageSize) {
         let query = supabase
@@ -366,6 +388,10 @@ export async function getCasesFromTable(
           )
           .order("created_at", { ascending: false })
           .range(start, start + pageSize - 1);
+
+        if (docketTypeId !== null) {
+          query = query.eq("docket_type_id", docketTypeId);
+        }
 
         if (docketYear !== undefined) {
           query = query.eq("docket_year", docketYear);
@@ -388,18 +414,51 @@ export async function getCasesFromTable(
         }
       }
 
-      if (!docketType || docketType === "All") {
-        return { data: allCases, error: null };
-      }
-
-      return {
-        data: allCases.filter(
-          (caseRecord) => caseRecord.docket_types?.prefix === docketType,
-        ),
-        error: null,
-      };
+      return { data: allCases, error: null };
     },
     [],
+  );
+}
+
+export async function getLatestCaseDocketYear(
+  docketType: string,
+): Promise<SupabaseQueryResult<number | null>> {
+  return runSupabaseQuery(
+    "getLatestCaseDocketYear",
+    "cases",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      const docketTypeResponse = (await supabase
+        .from("docket_types")
+        .select("id")
+        .eq("prefix", docketType)
+        .maybeSingle()) as {
+        data: Pick<TableRow<"docket_types">, "id"> | null;
+        error: unknown;
+      };
+
+      if (docketTypeResponse.error) {
+        return { data: null, error: docketTypeResponse.error };
+      }
+
+      if (!docketTypeResponse.data) {
+        return { data: null, error: null };
+      }
+
+      const response = (await supabase
+        .from("cases")
+        .select("docket_year")
+        .eq("docket_type_id", docketTypeResponse.data.id)
+        .order("docket_year", { ascending: false })
+        .limit(1)
+        .maybeSingle()) as {
+        data: Pick<TableRow<"cases">, "docket_year"> | null;
+        error: unknown;
+      };
+
+      return { data: response.data?.docket_year ?? null, error: response.error };
+    },
+    null,
   );
 }
 

@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { getCaseParticipantsForCases, getCasesFromTable, type CaseParticipantRecord, type CasesTableRecord } from '@/lib/supabase/queries';
+import { getCaseParticipantsForCases, getCasesFromTable, getLatestCaseDocketYear, type CaseParticipantRecord, type CasesTableRecord } from '@/lib/supabase/queries';
 
 type CompactCase = CasesTableRecord;
 type DocketTypeFilter = string;
@@ -100,21 +100,6 @@ function getCaseKey(caseDetail: CompactCase) {
   return `${caseDetail.id ?? 'case'}-${formatDisplayDocketNumber(caseDetail)}`;
 }
 
-function latestDocketYear(cases: CompactCase[], docketType: DocketTypeFilter) {
-  const years = cases
-    .filter((caseDetail) =>
-      docketType === 'All' || caseDetail.docket_types?.prefix === docketType,
-    )
-    .map((caseDetail) => caseDetail.docket_year)
-    .filter((year): year is number => Number.isFinite(year));
-
-  if (years.length === 0) {
-    return null;
-  }
-
-  return String(Math.max(...years));
-}
-
 function personName(participant: CaseParticipantRecord) {
   return participant.persons?.full_name?.trim() || 'Unnamed participant';
 }
@@ -157,6 +142,7 @@ export default function CasesPage() {
   const [selectedDocketYear, setSelectedDocketYear] = useState<DocketYearFilter>('All');
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingAllCases, setIsLoadingAllCases] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedCaseKey, setSelectedCaseKey] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(() => getInitialColumnWidths());
@@ -165,36 +151,87 @@ export default function CasesPage() {
   useEffect(() => {
     let isMounted = true;
 
-    async function loadCases() {
-      setIsLoading(true);
-      const result = await getCasesFromTable();
+    async function loadPartyNamesForCases(
+      nextCases: CompactCase[],
+      options: { clearOnError?: boolean } = {},
+    ) {
+      const participantResult = await getCaseParticipantsForCases(
+        nextCases.map((caseDetail) => caseDetail.id).filter((caseId): caseId is number => Number.isFinite(caseId)),
+      );
 
       if (!isMounted) {
         return;
       }
 
-      if (result.error) {
-        setErrorMessage(result.error.message);
+      if (!participantResult.error) {
+        setPartyNamesByCase(buildPartyNamesByCase(participantResult.data));
+      } else if (options.clearOnError) {
+        setPartyNamesByCase({});
+      }
+    }
+
+    async function loadAllCasesInBackground() {
+      setIsLoadingAllCases(true);
+      const allCasesResult = await getCasesFromTable();
+
+      if (!isMounted) {
+        return;
+      }
+
+      setIsLoadingAllCases(false);
+
+      if (allCasesResult.error) {
+        return;
+      }
+
+      setCases(allCasesResult.data);
+      await loadPartyNamesForCases(allCasesResult.data);
+    }
+
+    async function loadCases() {
+      setIsLoading(true);
+      const latestYearResult = await getLatestCaseDocketYear(DEFAULT_DOCKET_TYPE);
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (latestYearResult.error) {
+        setErrorMessage(latestYearResult.error.message);
+        setCases([]);
+        setPartyNamesByCase({});
+        setIsLoading(false);
+        return;
+      }
+
+      const defaultDocketYear = latestYearResult.data ?? undefined;
+      setSelectedDocketYear(defaultDocketYear ? String(defaultDocketYear) : 'All');
+
+      const initialCasesResult = await getCasesFromTable({
+        docketType: DEFAULT_DOCKET_TYPE,
+        docketYear: defaultDocketYear,
+      });
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (initialCasesResult.error) {
+        setErrorMessage(initialCasesResult.error.message);
         setCases([]);
         setPartyNamesByCase({});
       } else {
         setErrorMessage(null);
-        setCases(result.data);
-        setSelectedDocketYear(latestDocketYear(result.data, DEFAULT_DOCKET_TYPE) ?? 'All');
-
-        const participantResult = await getCaseParticipantsForCases(
-          result.data.map((caseDetail) => caseDetail.id).filter((caseId): caseId is number => Number.isFinite(caseId)),
-        );
-
-        if (isMounted && !participantResult.error) {
-          setPartyNamesByCase(buildPartyNamesByCase(participantResult.data));
-        } else if (isMounted) {
-          setPartyNamesByCase({});
-        }
+        setCases(initialCasesResult.data);
+        await loadPartyNamesForCases(initialCasesResult.data, { clearOnError: true });
       }
 
       if (isMounted) {
         setIsLoading(false);
+
+        if (!initialCasesResult.error) {
+          void loadAllCasesInBackground();
+        }
       }
     }
 
@@ -202,6 +239,7 @@ export default function CasesPage() {
 
     return () => {
       isMounted = false;
+      setIsLoadingAllCases(false);
     };
   }, []);
 
@@ -309,7 +347,7 @@ export default function CasesPage() {
             </Alert>
           ) : null}
 
-          <Card className="min-h-0 flex-1 gap-4 overflow-hidden py-4">
+          <Card aria-busy={isLoading || isLoadingAllCases} className="min-h-0 flex-1 gap-4 overflow-hidden py-4">
             <CardHeader className="shrink-0 px-4 md:px-6">
               <div className="grid gap-4 sm:max-w-xl sm:grid-cols-2">
                 <div className="flex flex-col gap-2 sm:col-span-2">
