@@ -343,43 +343,57 @@ export async function getCasesFromTable(
     "cases",
     async () => {
       const supabase = await getSupabaseBrowserClient();
-      let query = supabase
-        .from("cases")
-        .select(
-          `*,
-          docket_types:docket_types!cases_docket_type_id_fkey (name, prefix),
-          case_classifications:case_classifications!cases_case_classification_id_fkey (display_label),
-          case_violations:case_violations!case_violations_case_id_fkey (
-            raw_violation_text, violation_order,
-            violations:violations!case_violations_violation_id_fkey (canonical_title, short_label, title)
-          ),
-          case_assignments:case_assignments!case_assignments_case_id_fkey (
-            assigned_at, unassigned_at,
-            prosecutors:prosecutors!case_assignments_prosecutor_id_fkey (full_name, short_name)
-          ),
-          current_status:case_statuses!cases_current_status_id_fkey (code, display_label)`,
-        )
-        .order("created_at", { ascending: false });
+      const pageSize = limit === undefined ? 1000 : normalizeLimit(limit, 50, 250);
+      const shouldFetchAllPages = limit === undefined;
+      const allCases: CasesTableRecord[] = [];
 
-      if (docketYear !== undefined) {
-        query = query.eq("docket_year", docketYear);
+      for (let start = 0; ; start += pageSize) {
+        let query = supabase
+          .from("cases")
+          .select(
+            `*,
+            docket_types:docket_types!cases_docket_type_id_fkey (name, prefix),
+            case_classifications:case_classifications!cases_case_classification_id_fkey (display_label),
+            case_violations:case_violations!case_violations_case_id_fkey (
+              raw_violation_text, violation_order,
+              violations:violations!case_violations_violation_id_fkey (canonical_title, short_label, title)
+            ),
+            case_assignments:case_assignments!case_assignments_case_id_fkey (
+              assigned_at, unassigned_at,
+              prosecutors:prosecutors!case_assignments_prosecutor_id_fkey (full_name, short_name)
+            ),
+            current_status:case_statuses!cases_current_status_id_fkey (code, display_label)`,
+          )
+          .order("created_at", { ascending: false })
+          .range(start, start + pageSize - 1);
+
+        if (docketYear !== undefined) {
+          query = query.eq("docket_year", docketYear);
+        }
+
+        const response = (await query) as unknown as {
+          data: CasesTableRecord[] | null;
+          error: unknown;
+        };
+
+        if (response.error) {
+          return response;
+        }
+
+        const page = response.data ?? [];
+        allCases.push(...page);
+
+        if (!shouldFetchAllPages || page.length < pageSize) {
+          break;
+        }
       }
 
-      if (limit !== undefined) {
-        query = query.limit(normalizeLimit(limit, 50, 250));
-      }
-
-      const response = (await query) as unknown as {
-        data: CasesTableRecord[] | null;
-        error: unknown;
-      };
-
-      if (response.error || !docketType || docketType === "All") {
-        return response;
+      if (!docketType || docketType === "All") {
+        return { data: allCases, error: null };
       }
 
       return {
-        data: (response.data ?? []).filter(
+        data: allCases.filter(
           (caseRecord) => caseRecord.docket_types?.prefix === docketType,
         ),
         error: null,

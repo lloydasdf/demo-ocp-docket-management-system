@@ -150,10 +150,7 @@ export default function CasesPage() {
 
     async function loadCases() {
       setIsLoading(true);
-      const result = await getCasesFromTable({
-        docketType: selectedDocketType === 'All' ? undefined : selectedDocketType,
-        docketYear: selectedDocketYear === 'All' ? undefined : Number(selectedDocketYear),
-      });
+      const result = await getCasesFromTable();
 
       if (!isMounted) {
         return;
@@ -188,18 +185,29 @@ export default function CasesPage() {
     return () => {
       isMounted = false;
     };
-  }, [selectedDocketType, selectedDocketYear]);
+  }, []);
 
   const filteredCases = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
-    if (!normalizedSearch) {
-      return cases;
-    }
 
     return cases.filter((caseDetail) => {
+      if (selectedDocketType !== 'All' && caseDetail.docket_types?.prefix !== selectedDocketType) {
+        return false;
+      }
+
+      if (selectedDocketYear !== 'All' && String(caseDetail.docket_year) !== selectedDocketYear) {
+        return false;
+      }
+
+      if (!normalizedSearch) {
+        return true;
+      }
+
       const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
       const searchableText = [
         formatDisplayDocketNumber(caseDetail),
+        caseDetail.docket_types?.prefix ?? '',
+        String(caseDetail.docket_year ?? ''),
         casePartyNames?.complainants ?? '',
         casePartyNames?.respondents ?? '',
         caseViolations(caseDetail) ?? '',
@@ -212,7 +220,7 @@ export default function CasesPage() {
 
       return searchableText.includes(normalizedSearch);
     });
-  }, [cases, partyNamesByCase, searchTerm]);
+  }, [cases, partyNamesByCase, searchTerm, selectedDocketType, selectedDocketYear]);
 
   const sortedCases = useMemo(
     () =>
