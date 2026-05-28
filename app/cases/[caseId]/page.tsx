@@ -425,8 +425,8 @@ export default function CaseDetailsPage() {
                       label="Current status"
                       value={
                         <Badge variant="outline">
-                          {data.compact.current_status_label ??
-                            data.compact.current_status_code ??
+                          {data.details.current_status?.display_label ??
+                            data.details.current_status?.code ??
                             "—"}
                         </Badge>
                       }
@@ -435,215 +435,209 @@ export default function CaseDetailsPage() {
                 </CardHeader>
               </Card>
 
-              <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
-                <div className="space-y-6">
-                  <Card>
-                    <CardHeader className="p-4 sm:p-6">
-                      <CardTitle>Parties</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">
-                      {partiesByRole.length === 0 ? (
-                        <SectionEmpty />
-                      ) : (
-                        partiesByRole.map(([role, participants]) => (
-                          <div key={role} className="space-y-3">
-                            <h3 className="font-semibold">{role}</h3>
-                            <div className="grid gap-3 md:grid-cols-2">
-                              {participants.map((participant) => (
-                                <div
-                                  key={participant.id}
-                                  className="rounded-lg border p-4"
-                                >
-                                  <div className="flex items-start justify-between gap-3">
-                                    <div>
-                                      {participant.persons?.id ? (
-                                        <Link
-                                          href={`/persons/${participant.persons.id}`}
-                                          className="font-medium text-primary hover:underline"
-                                        >
-                                          {personName(participant)}
-                                        </Link>
-                                      ) : (
-                                        <p className="font-medium">
-                                          {personName(participant)}
-                                        </p>
-                                      )}
-                                      {formatPersonDemographics(participant) ? (
-                                        <p className="text-sm text-muted-foreground">
-                                          {formatPersonDemographics(participant)}
-                                        </p>
-                                      ) : null}
-                                    </div>
-                                  </div>
-                                  <Separator className="my-3" />
-                                  <div className="grid gap-2 text-sm sm:grid-cols-2">
-                                    <DetailItem label="Role" value={role} />
-                                    <OptionalDetailItem
-                                      label="Birthdate"
-                                      value={participant.persons?.birth_date ? formatDate(participant.persons.birth_date) : null}
-                                    />
-                                    <OptionalDetailItem
-                                      label="Address"
-                                      value={primaryAddress(participant)}
-                                    />
-                                    <OptionalDetailItem
-                                      label="Case flags"
-                                      value={caseSpecificFlags(participant)}
-                                    />
-                                    <OptionalDetailItem
-                                      label="Remarks"
-                                      value={participant.remarks}
-                                    />
+              <div className="space-y-6">
+                <Card>
+                  <CardHeader className="p-4 sm:p-6">
+                    <CardTitle>Parties</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">
+                    {partiesByRole.length === 0 ? (
+                      <SectionEmpty />
+                    ) : (
+                      partiesByRole.map(([role, participants]) => (
+                        <div key={role} className="space-y-3">
+                          <h3 className="font-semibold">{role}</h3>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {participants.map((participant) => (
+                              <div
+                                key={participant.id}
+                                className="rounded-lg border p-4"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div>
+                                    {participant.persons?.id ? (
+                                      <Link
+                                        href={`/persons/${participant.persons.id}`}
+                                        className="font-medium text-primary hover:underline"
+                                      >
+                                        {personName(participant)}
+                                      </Link>
+                                    ) : (
+                                      <p className="font-medium">
+                                        {personName(participant)}
+                                      </p>
+                                    )}
+                                    {formatPersonDemographics(participant) ? (
+                                      <p className="text-sm text-muted-foreground">
+                                        {formatPersonDemographics(participant)}
+                                      </p>
+                                    ) : null}
                                   </div>
                                 </div>
+                                <Separator className="my-3" />
+                                <div className="grid gap-2 text-sm sm:grid-cols-2">
+                                  <DetailItem label="Role" value={role} />
+                                  <OptionalDetailItem
+                                    label="Birthdate"
+                                    value={
+                                      participant.persons?.birth_date
+                                        ? formatDate(participant.persons.birth_date)
+                                        : null
+                                    }
+                                  />
+                                  <OptionalDetailItem
+                                    label="Address"
+                                    value={primaryAddress(participant)}
+                                  />
+                                  <OptionalDetailItem
+                                    label="Case flags"
+                                    value={caseSpecificFlags(participant)}
+                                  />
+                                  <OptionalDetailItem
+                                    label="Remarks"
+                                    value={participant.remarks}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Timeline</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {timelineGroupedByDate.length === 0 ? (
+                      <SectionEmpty>No timeline events found.</SectionEmpty>
+                    ) : (
+                      <div className="space-y-4">
+                        {timelineGroupedByDate.map(([dateLabel, events]) => (
+                          <div key={dateLabel}>
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              {dateLabel}
+                            </p>
+                            <Accordion type="single" collapsible className="space-y-2">
+                              {events.map((event) => (
+                                <AccordionItem
+                                  key={event.case_event_id}
+                                  value={`event-${event.case_event_id}`}
+                                  className={`rounded-lg border px-3 ${event.is_voided ? "opacity-60" : ""}`}
+                                >
+                                  <AccordionTrigger className="py-3 text-left hover:no-underline">
+                                    <div className="flex w-full items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <p className="truncate font-medium">
+                                          {event.title ?? event.event_type_label ?? "Untitled event"}
+                                        </p>
+                                        <p className="line-clamp-2 text-xs text-muted-foreground">
+                                          {event.description ?? "No description provided."}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </AccordionTrigger>
+                                  <AccordionContent className="space-y-3 pb-3">
+                                    <div className="grid gap-3 sm:grid-cols-2">
+                                      {timelineDetailItems(event).map((detail) => (
+                                        <OptionalDetailItem
+                                          key={detail.label}
+                                          label={detail.label}
+                                          value={detail.value}
+                                        />
+                                      ))}
+                                    </div>
+                                    {visibleEventDetails(event).length > 0 ? (
+                                      <div className="rounded-md border bg-background p-3">
+                                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                          Event details
+                                        </p>
+                                        <div className="grid gap-2 sm:grid-cols-2">
+                                          {visibleEventDetails(event).map(([key, value]) => (
+                                            <DetailItem
+                                              key={key}
+                                              label={key.replace(/_/g, " ")}
+                                              value={String(value)}
+                                            />
+                                          ))}
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                  </AccordionContent>
+                                </AccordionItem>
                               ))}
+                            </Accordion>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Attachments</CardTitle>
+                    <CardDescription>
+                      Google Drive folder and indexed file records, when available.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {data.details.gdrive_folder_link ? (
+                      <Button variant="outline" asChild>
+                        <a
+                          href={data.details.gdrive_folder_link}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open Google Drive folder
+                          <ExternalLink className="ml-2 h-4 w-4" />
+                        </a>
+                      </Button>
+                    ) : null}
+
+                    {data.attachments.length === 0 ? (
+                      <SectionEmpty>
+                        Attachments integration not yet connected.
+                      </SectionEmpty>
+                    ) : (
+                      <div className="space-y-3">
+                        {data.attachments.map((attachment) => (
+                          <div
+                            key={attachment.id}
+                            className="rounded-lg border p-3 text-sm"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate font-medium">
+                                  {attachment.file_name}
+                                </p>
+                                <p className="text-muted-foreground">
+                                  {formatFileSize(attachment.file_size_bytes)}{" "}
+                                  • {attachment.file_status}
+                                </p>
+                              </div>
+                              {attachment.web_view_link ? (
+                                <Button variant="ghost" size="sm" asChild>
+                                  <a
+                                    href={attachment.web_view_link}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    aria-label={`Open ${attachment.file_name}`}
+                                  >
+                                    <ExternalLink className="h-4 w-4" />
+                                  </a>
+                                </Button>
+                              ) : null}
                             </div>
                           </div>
-                        ))
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Case information</CardTitle>
-                    </CardHeader>
-                    <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      <DetailItem
-                        label="Violation/s"
-                        value={data.compact.violations ?? "—"}
-                      />
-                      <DetailItem
-                        label="Date received"
-                        value={formatDate(data.details.date_received)}
-                      />
-                      <DetailItem
-                        label="Remarks"
-                        value={data.details.remarks ?? "—"}
-                      />
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Timeline</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      {timelineGroupedByDate.length === 0 ? (
-                        <SectionEmpty>No timeline events found.</SectionEmpty>
-                      ) : (
-                        <div className="space-y-4">
-                          {timelineGroupedByDate.map(([dateLabel, events]) => (
-                            <div key={dateLabel}>
-                              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{dateLabel}</p>
-                              <Accordion type="single" collapsible className="space-y-2">
-                                {events.map((event) => (
-                                  <AccordionItem key={event.case_event_id} value={`event-${event.case_event_id}`} className={`rounded-lg border px-3 ${event.is_voided ? "opacity-60" : ""}`}>
-                                    <AccordionTrigger className="py-3 text-left hover:no-underline">
-                                      <div className="flex w-full items-start justify-between gap-3">
-                                        <div className="min-w-0">
-                                          <p className="truncate font-medium">
-                                            {event.title ?? event.event_type_label ?? "Untitled event"}
-                                          </p>
-                                          <p className="line-clamp-2 text-xs text-muted-foreground">
-                                            {event.description ?? "No description provided."}
-                                          </p>
-                                        </div>
-                                      </div>
-                                    </AccordionTrigger>
-                                    <AccordionContent className="space-y-3 pb-3">
-                                      <div className="grid gap-3 sm:grid-cols-2">
-                                        {timelineDetailItems(event).map((detail) => (
-                                          <OptionalDetailItem key={detail.label} label={detail.label} value={detail.value} />
-                                        ))}
-                                      </div>
-                                      {visibleEventDetails(event).length > 0 ? (
-                                        <div className="rounded-md border bg-background p-3">
-                                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Event details</p>
-                                          <div className="grid gap-2 sm:grid-cols-2">
-                                            {visibleEventDetails(event).map(([key, value]) => (
-                                              <DetailItem key={key} label={key.replace(/_/g, " ")} value={String(value)} />
-                                            ))}
-                                          </div>
-                                        </div>
-                                      ) : null}
-                                    </AccordionContent>
-                                  </AccordionItem>
-                                ))}
-                              </Accordion>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
-
-                <div className="space-y-6">
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Attachments</CardTitle>
-                      <CardDescription>
-                        Google Drive folder and indexed file records, when
-                        available.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      {data.details.gdrive_folder_link ? (
-                        <Button variant="outline" asChild>
-                          <a
-                            href={data.details.gdrive_folder_link}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Open Google Drive folder
-                            <ExternalLink className="ml-2 h-4 w-4" />
-                          </a>
-                        </Button>
-                      ) : null}
-
-                      {data.attachments.length === 0 ? (
-                        <SectionEmpty>
-                          Attachments integration not yet connected.
-                        </SectionEmpty>
-                      ) : (
-                        <div className="space-y-3">
-                          {data.attachments.map((attachment) => (
-                            <div
-                              key={attachment.id}
-                              className="rounded-lg border p-3 text-sm"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <p className="truncate font-medium">
-                                    {attachment.file_name}
-                                  </p>
-                                  <p className="text-muted-foreground">
-                                    {formatFileSize(attachment.file_size_bytes)}{" "}
-                                    • {attachment.file_status}
-                                  </p>
-                                </div>
-                                {attachment.web_view_link ? (
-                                  <Button variant="ghost" size="sm" asChild>
-                                    <a
-                                      href={attachment.web_view_link}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      aria-label={`Open ${attachment.file_name}`}
-                                    >
-                                      <ExternalLink className="h-4 w-4" />
-                                    </a>
-                                  </Button>
-                                ) : null}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
               </div>
             </>
           )}

@@ -70,11 +70,7 @@ function currentAssignment(caseDetail: CompactCase) {
 }
 
 function currentStatus(caseDetail: CompactCase) {
-  return (caseDetail.case_status_history ?? [])
-    .slice()
-    .sort((left, right) =>
-      (right.status_date ?? right.changed_at ?? '').localeCompare(left.status_date ?? left.changed_at ?? ''),
-    )[0]?.to_status;
+  return caseDetail.current_status;
 }
 
 function getCaseKey(caseDetail: CompactCase) {
@@ -157,9 +153,8 @@ function getFallbackCases(): CompactCase[] {
       case_assignments: caseDetail.prosecutor
         ? [{ assigned_at: null, unassigned_at: null, prosecutors: { full_name: caseDetail.prosecutor, short_name: caseDetail.prosecutor } }]
         : [],
-      case_status_history: caseDetail.status
-        ? [{ changed_at: docket.createdDate, status_date: null, to_status: { code: caseDetail.status, display_label: caseDetail.status } }]
-        : [],
+      current_status_id: null,
+      current_status: caseDetail.status ? { code: caseDetail.status, display_label: caseDetail.status } : null,
     })) as CompactCase[],
   );
 }

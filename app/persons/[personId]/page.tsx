@@ -65,6 +65,34 @@ function booleanDisplay(value: boolean | null | undefined) {
   return value ? "Yes" : "No";
 }
 
+function formatAddress(
+  address: NonNullable<
+    NonNullable<PersonDetailsRecord["person_addresses"]>[number]["addresses"]
+  >,
+) {
+  const parts = [
+    address.line1,
+    address.line2,
+    address.barangay ? `Brgy. ${address.barangay}` : null,
+    address.city,
+    address.province,
+    address.region,
+    address.zip_code,
+    address.country,
+  ].filter((part): part is string => Boolean(part?.trim()));
+
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
+function primaryPersonAddress(person: PersonDetailsRecord) {
+  const addresses = person.person_addresses ?? [];
+  const preferredAddress =
+    addresses.find((address) => address.is_primary) ?? addresses[0];
+
+  return preferredAddress?.addresses
+    ? formatAddress(preferredAddress.addresses)
+    : null;
+}
 
 function roleLabel(participant: CaseParticipantRecord) {
   return (
@@ -181,6 +209,7 @@ export default function PersonDetailsPage() {
   const personDetails = [
     { label: "Age", value: participantAttributes?.age_text ?? participantAttributes?.age_years },
     { label: "Gender", value: participantAttributes?.gender_text ?? participantAttributes?.gender_normalized },
+    { label: "Address", value: data?.person ? primaryPersonAddress(data.person) : null },
     { label: "Minor", value: booleanDisplay(participantAttributes?.is_minor_at_case) },
     { label: "Senior citizen", value: booleanDisplay(participantAttributes?.is_senior_at_case) },
     { label: "PWD", value: booleanDisplay(participantAttributes?.is_pwd_at_case) },
@@ -237,7 +266,7 @@ export default function PersonDetailsPage() {
                   </div>
 
                   {personDetails.length > 0 ? (
-                    <div className="grid gap-3 border-t pt-4 sm:grid-cols-2 lg:grid-cols-5">
+                    <div className="grid gap-3 border-t pt-4 sm:grid-cols-2 lg:grid-cols-3">
                       {personDetails.map((detail) => (
                         <DetailItem
                           key={detail.label}

@@ -319,11 +319,8 @@ export type CasesTableRecord = TableRow<"cases"> & {
         prosecutors: Pick<TableRow<"prosecutors">, "full_name" | "short_name"> | null;
       })[]
     | null;
-  case_status_history:
-    | (Pick<TableRow<"case_status_history">, "changed_at" | "status_date"> & {
-        to_status: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
-      })[]
-    | null;
+  current_status_id?: number | null;
+  current_status: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
 };
 
 export async function getCasesFromTable(
@@ -349,10 +346,7 @@ export async function getCasesFromTable(
             assigned_at, unassigned_at,
             prosecutors:prosecutors!case_assignments_prosecutor_id_fkey (full_name, short_name)
           ),
-          case_status_history:case_status_history!case_status_history_case_id_fkey (
-            changed_at, status_date,
-            to_status:case_statuses!case_status_history_to_status_id_fkey (code, display_label)
-          )`,
+          current_status:case_statuses!cases_current_status_id_fkey (code, display_label)`,
         )
         .order("created_at", { ascending: false });
 
@@ -428,6 +422,8 @@ export async function getCompactCases(
 }
 
 export type CaseDetailsRecord = TableRow<"cases"> & {
+  current_status_id?: number | null;
+  current_status: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
   docket_types: Pick<TableRow<"docket_types">, "name" | "prefix"> | null;
 };
 
@@ -659,7 +655,9 @@ export async function getCaseDetailsById(
       const query = supabase
         .from("cases")
         .select(
-          "*, docket_types:docket_types!cases_docket_type_id_fkey (name, prefix)",
+          `*,
+          current_status:case_statuses!cases_current_status_id_fkey (code, display_label),
+          docket_types:docket_types!cases_docket_type_id_fkey (name, prefix)`,
         )
         .eq("id", caseId)
         .maybeSingle();
