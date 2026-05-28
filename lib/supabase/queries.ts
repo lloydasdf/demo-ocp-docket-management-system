@@ -1072,6 +1072,23 @@ export async function getCaseCourtDetails(
   );
 }
 
+
+export type CasePetitionForReviewRecord = {
+  id: number;
+  case_id: number;
+  petition_title: string | null;
+  handling_prosecutor_text: string | null;
+  date_received: string | null;
+  date_received_raw: string | null;
+  filed_by: string | null;
+  petition_status: string | null;
+  date_resolved: string | null;
+  date_resolved_raw: string | null;
+  date_approved: string | null;
+  date_approved_raw: string | null;
+  remarks: string | null;
+};
+
 export type CaseMotionRecord = TableRow<"case_motions"> & {
   motion_order?: number | null;
   date_received_raw?: string | null;
@@ -1100,6 +1117,30 @@ export async function getCaseMotions(
         .order("date_received", { ascending: false, nullsFirst: false })
         .order("created_at", { ascending: false })) as {
         data: CaseMotionRecord[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
+
+export async function getCasePetitionsForReview(
+  caseId: number,
+): Promise<SupabaseQueryResult<CasePetitionForReviewRecord[]>> {
+  return runSupabaseQuery(
+    "getCasePetitionsForReview",
+    "case_petitions_for_review" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return (await supabase
+        .from("case_petitions_for_review" as never)
+        .select(
+          "id, case_id, petition_title, handling_prosecutor_text, date_received, date_received_raw, filed_by, petition_status, date_resolved, date_resolved_raw, date_approved, date_approved_raw, remarks",
+        )
+        .eq("case_id" as never, caseId)
+        .order("date_received" as never, { ascending: false, nullsFirst: false })) as {
+        data: CasePetitionForReviewRecord[] | null;
         error: unknown;
       };
     },

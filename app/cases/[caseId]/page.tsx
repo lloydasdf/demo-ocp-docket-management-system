@@ -31,11 +31,13 @@ import {
   getCaseDetailsById,
   getCaseMotions,
   getCaseParticipants,
+  getCasePetitionsForReview,
   getCaseTimelineEvents,
   type CaseCourtRecord,
   type CaseDetailsRecord,
   type CaseMotionRecord,
   type CaseParticipantRecord,
+  type CasePetitionForReviewRecord,
   type CaseTimelineEventRecord,
 } from "@/lib/supabase/queries";
 import type {
@@ -50,6 +52,7 @@ type CaseDetailsState = {
   timeline: CaseTimelineEventRecord[];
   courts: CaseCourtRecord[];
   motions: CaseMotionRecord[];
+  petitionsForReview: CasePetitionForReviewRecord[];
   attachments: SupabaseTableRow<"case_attachment_index">[];
   warnings: string[];
 };
@@ -65,6 +68,13 @@ function formatDate(value: string | null | undefined) {
   }
 
   return parsedDate.toLocaleDateString();
+}
+
+function formatOptionalDate(
+  value: string | null | undefined,
+  rawValue?: string | null,
+) {
+  return firstDisplayValue(rawValue, value ? formatDate(value) : null);
 }
 
 
@@ -208,7 +218,22 @@ function isCourtSourceEvent(event: CaseTimelineEventRecord) {
   return eventSourceTable(event).includes("case_courts");
 }
 
+function isPetitionForReviewEvent(event: CaseTimelineEventRecord) {
+  return event.event_type_code === "PETITION_FOR_REVIEW";
+}
+
+function isPetitionForReviewSourceEvent(event: CaseTimelineEventRecord) {
+  return (
+    isPetitionForReviewEvent(event) &&
+    eventSourceTable(event) === "case_petitions_for_review"
+  );
+}
+
 function timelineDetailItems(event: CaseTimelineEventRecord) {
+  if (isPetitionForReviewEvent(event)) {
+    return [];
+  }
+
   if (event.event_type_code === "CASE_RECEIVED") {
     return [{ label: "Date", value: formatDate(event.event_date) }];
   }
@@ -239,7 +264,7 @@ function timelineDetailItems(event: CaseTimelineEventRecord) {
 }
 
 function visibleEventDetails(event: CaseTimelineEventRecord) {
-  if (!event.details_jsonb || typeof event.details_jsonb !== "object") {
+  if (isPetitionForReviewEvent(event) || !event.details_jsonb || typeof event.details_jsonb !== "object") {
     return [];
   }
 
@@ -318,6 +343,103 @@ function eventMotionDetails(event: CaseTimelineEventRecord, motions: CaseMotionR
       return nameMatches || dateMatches;
     }) ??
     (motions.length === 1 ? motions[0] : null)
+  );
+}
+
+function eventPetitionForReviewDetails(
+  event: CaseTimelineEventRecord,
+  petitionsForReview: CasePetitionForReviewRecord[],
+) {
+  if (!isPetitionForReviewSourceEvent(event)) {
+    return null;
+  }
+
+  return petitionsForReview.find((petition) => sourceIdMatches(event, petition.id)) ?? null;
+}
+
+function petitionTitle(
+  event: CaseTimelineEventRecord,
+  petition: CasePetitionForReviewRecord | null,
+) {
+  return firstDisplayValue(
+    petition?.petition_title,
+    event.title,
+    event.event_type_label,
+    "Petition for Review",
+  );
+}
+
+function petitionSubtitle(petition: CasePetitionForReviewRecord | null) {
+  if (!petition) {
+    return null;
+  }
+
+  const dateReceived = formatOptionalDate(petition.date_received, petition.date_received_raw);
+  const dateResolved = formatOptionalDate(petition.date_resolved, petition.date_resolved_raw);
+  const dateApproved = formatOptionalDate(petition.date_approved, petition.date_approved_raw);
+  const parts = [
+    petition.filed_by ? `Filed by ${petition.filed_by}` : null,
+    petition.petition_status,
+    dateReceived ? `Received ${dateReceived}` : null,
+    dateResolved ? `Resolved ${dateResolved}` : null,
+    dateApproved ? `Approved ${dateApproved}` : null,
+  ].filter((part): part is string => Boolean(part));
+
+  return parts.length > 0 ? parts.join(" • ") : null;
+}
+
+function timelineTitle(
+  event: CaseTimelineEventRecord,
+  petition: CasePetitionForReviewRecord | null,
+) {
+  if (isPetitionForReviewEvent(event)) {
+    return petitionTitle(event, petition);
+  }
+
+  return event.title ?? event.event_type_label ?? "Untitled event";
+}
+
+function timelineSubtitle(
+  event: CaseTimelineEventRecord,
+  petition: CasePetitionForReviewRecord | null,
+) {
+  if (isPetitionForReviewEvent(event)) {
+    return petitionSubtitle(petition) ?? event.description ?? "Petition for Review";
+  }
+
+  return event.description ?? "No description provided.";
+}
+
+function PetitionForReviewEventDetails({
+  petition,
+}: {
+  petition: CasePetitionForReviewRecord;
+}) {
+  const details = [
+    { label: "Handling Prosecutor", value: petition.handling_prosecutor_text },
+    { label: "Filed By", value: petition.filed_by },
+    { label: "Status", value: petition.petition_status },
+    { label: "Date Received", value: formatOptionalDate(petition.date_received, petition.date_received_raw) },
+    { label: "Date Resolved", value: formatOptionalDate(petition.date_resolved, petition.date_resolved_raw) },
+    { label: "Date Approved", value: formatOptionalDate(petition.date_approved, petition.date_approved_raw) },
+    { label: "Remarks", value: petition.remarks },
+  ].filter((detail) => hasDetailValue(detail.value));
+
+  if (details.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-md border bg-background p-3">
+      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Petition for review details
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {details.map((detail) => (
+          <DetailItem key={detail.label} label={detail.label} value={detail.value} />
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -415,6 +537,7 @@ export default function CaseDetailsPage() {
         timeline,
         courts,
         motions,
+        petitionsForReview,
       ] = await Promise.all([
         getCaseCompactById(caseId),
         getCaseDetailsById(caseId),
@@ -423,6 +546,7 @@ export default function CaseDetailsPage() {
         getCaseTimelineEvents(caseId),
         getCaseCourtDetails(caseId),
         getCaseMotions(caseId),
+        getCasePetitionsForReview(caseId),
       ]);
 
       if (!isMounted) {
@@ -444,6 +568,7 @@ export default function CaseDetailsPage() {
         timeline,
         courts,
         motions,
+        petitionsForReview,
       ]
         .map((result) => result.error?.message)
         .filter((message): message is string => Boolean(message));
@@ -456,6 +581,7 @@ export default function CaseDetailsPage() {
         timeline: timeline.data ?? [],
         courts: courts.data ?? [],
         motions: motions.data ?? [],
+        petitionsForReview: petitionsForReview.data ?? [],
         warnings,
       });
       setIsLoading(false);
@@ -685,6 +811,11 @@ export default function CaseDetailsPage() {
                               {events.map((event) => {
                                 const courtDetails = eventCourtDetails(event, data.courts);
                                 const motionDetails = eventMotionDetails(event, data.motions);
+                                const petitionDetails = eventPetitionForReviewDetails(
+                                  event,
+                                  data.petitionsForReview,
+                                );
+                                const detailItems = timelineDetailItems(event);
 
                                 return (
                                   <div key={event.case_event_id} className="relative">
@@ -702,24 +833,26 @@ export default function CaseDetailsPage() {
                                         <div className="flex w-full items-start justify-between gap-3">
                                           <div className="min-w-0">
                                             <p className="truncate font-medium">
-                                              {event.title ?? event.event_type_label ?? "Untitled event"}
+                                              {timelineTitle(event, petitionDetails)}
                                             </p>
                                             <p className="line-clamp-2 text-xs text-muted-foreground">
-                                              {event.description ?? "No description provided."}
+                                              {timelineSubtitle(event, petitionDetails)}
                                             </p>
                                           </div>
                                         </div>
                                       </AccordionTrigger>
                                       <AccordionContent className="space-y-3 pb-3">
-                                        <div className="grid gap-3 sm:grid-cols-2">
-                                          {timelineDetailItems(event).map((detail) => (
-                                            <OptionalDetailItem
-                                              key={detail.label}
-                                              label={detail.label}
-                                              value={detail.value}
-                                            />
-                                          ))}
-                                        </div>
+                                        {detailItems.length > 0 ? (
+                                          <div className="grid gap-3 sm:grid-cols-2">
+                                            {detailItems.map((detail) => (
+                                              <OptionalDetailItem
+                                                key={detail.label}
+                                                label={detail.label}
+                                                value={detail.value}
+                                              />
+                                            ))}
+                                          </div>
+                                        ) : null}
                                         {visibleEventDetails(event).length > 0 ? (
                                           <div className="rounded-md border bg-background p-3">
                                             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -738,6 +871,9 @@ export default function CaseDetailsPage() {
                                         ) : null}
                                         {courtDetails ? <CourtEventDetails court={courtDetails} /> : null}
                                         {motionDetails ? <MotionEventDetails motion={motionDetails} /> : null}
+                                        {petitionDetails ? (
+                                          <PetitionForReviewEventDetails petition={petitionDetails} />
+                                        ) : null}
                                       </AccordionContent>
                                     </AccordionItem>
                                   </div>
