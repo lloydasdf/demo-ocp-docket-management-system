@@ -5,7 +5,6 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   FileText,
-  Plus,
   Search,
   PanelLeftClose,
   PanelLeftOpen,
@@ -16,12 +15,6 @@ const SIDEBAR_AUTO_COLLAPSE_QUERY = '(max-width: 1024px)';
 const SIDEBAR_HIDE_QUERY = '(max-width: 768px)';
 
 const navigation = [
-  {
-    name: 'New Docket Entry',
-    href: '/new-docket',
-    icon: Plus,
-    description: 'Create new docket',
-  },
   {
     name: 'Cases',
     href: '/cases',

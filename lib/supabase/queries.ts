@@ -303,6 +303,87 @@ export async function getCases(
   );
 }
 
+
+export type CasesTableRecord = TableRow<"cases"> & {
+  docket_types: Pick<TableRow<"docket_types">, "name" | "prefix"> | null;
+  case_violations:
+    | (Pick<TableRow<"case_violations">, "raw_violation_text" | "violation_order"> & {
+        violations: Pick<
+          TableRow<"violations">,
+          "canonical_title" | "short_label" | "title"
+        > | null;
+      })[]
+    | null;
+  case_assignments:
+    | (Pick<TableRow<"case_assignments">, "assigned_at" | "unassigned_at"> & {
+        prosecutors: Pick<TableRow<"prosecutors">, "full_name" | "short_name"> | null;
+      })[]
+    | null;
+  case_status_history:
+    | (Pick<TableRow<"case_status_history">, "changed_at" | "status_date"> & {
+        to_status: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
+      })[]
+    | null;
+};
+
+export async function getCasesFromTable(
+  params: CasesCompactQueryParams = {},
+): Promise<SupabaseQueryResult<CasesTableRecord[]>> {
+  const { docketType, docketYear, limit } = params;
+
+  return runSupabaseQuery(
+    "getCasesFromTable",
+    "cases",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      let query = supabase
+        .from("cases")
+        .select(
+          `*,
+          docket_types:docket_types!cases_docket_type_id_fkey (name, prefix),
+          case_violations:case_violations!case_violations_case_id_fkey (
+            raw_violation_text, violation_order,
+            violations:violations!case_violations_violation_id_fkey (canonical_title, short_label, title)
+          ),
+          case_assignments:case_assignments!case_assignments_case_id_fkey (
+            assigned_at, unassigned_at,
+            prosecutors:prosecutors!case_assignments_prosecutor_id_fkey (full_name, short_name)
+          ),
+          case_status_history:case_status_history!case_status_history_case_id_fkey (
+            changed_at, status_date,
+            to_status:case_statuses!case_status_history_to_status_id_fkey (code, display_label)
+          )`,
+        )
+        .order("created_at", { ascending: false });
+
+      if (docketYear !== undefined) {
+        query = query.eq("docket_year", docketYear);
+      }
+
+      if (limit !== undefined) {
+        query = query.limit(normalizeLimit(limit, 50, 250));
+      }
+
+      const response = (await query) as unknown as {
+        data: CasesTableRecord[] | null;
+        error: unknown;
+      };
+
+      if (response.error || !docketType || docketType === "All") {
+        return response;
+      }
+
+      return {
+        data: (response.data ?? []).filter(
+          (caseRecord) => caseRecord.docket_types?.prefix === docketType,
+        ),
+        error: null,
+      };
+    },
+    [],
+  );
+}
+
 export async function getCasesCompact(
   params: CasesCompactQueryParams = {},
 ): Promise<SupabaseQueryResult<ViewRow<"v_cases_display">[]>> {

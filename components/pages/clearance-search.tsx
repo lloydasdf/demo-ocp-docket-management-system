@@ -10,7 +10,6 @@ import { Badge } from "@/components/ui/badge";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -55,6 +54,13 @@ function normalizeStatusForBadge(status: string) {
   return "Pending";
 }
 
+
+function visibleMatchDetails(matchDetails: string) {
+  return matchDetails.toLowerCase().startsWith("phonetic token match:")
+    ? null
+    : matchDetails;
+}
+
 function groupResults(results: ClearanceSearchResult[]) {
   return results.reduce<
     Record<keyof typeof confidenceGroups, ClearanceSearchResult[]>
@@ -95,61 +101,67 @@ function ResultGroup({ label, results }: ResultGroupProps) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {results.map((result) => (
-          <Link
-            key={result.id}
-            href={`/persons/${result.personId}`}
-            className={`block p-4 bg-white border rounded-lg transition-colors ${config.itemClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
-          >
-            <div className="flex items-start justify-between gap-4 mb-2">
-              <div className="flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="font-semibold text-lg">
-                    {result.respondentName}
-                    {result.age ? (
-                      <span className="ml-2 text-base font-medium text-muted-foreground">
-                        {result.age}
-                      </span>
-                    ) : null}
+        {results.map((result) => {
+          const matchDetails = visibleMatchDetails(result.matchDetails);
+
+          return (
+            <Link
+              key={result.id}
+              href={`/persons/${result.personId}`}
+              className={`block p-4 bg-white border rounded-lg transition-colors ${config.itemClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
+            >
+              <div className="flex items-start justify-between gap-4 mb-2">
+                <div className="flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold text-lg">
+                      {result.respondentName}
+                      {result.age ? (
+                        <span className="ml-2 text-base font-medium text-muted-foreground">
+                          {result.age}
+                        </span>
+                      ) : null}
+                    </p>
+                    <Badge variant="outline" className="text-xs">
+                      {result.roleLabel}
+                    </Badge>
+                    <Badge variant="secondary" className="text-xs capitalize">
+                      {result.matchType}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Violations: {result.violations || "—"} | Docket:{" "}
+                    {result.docketNumber} | Status: {result.status || "—"}
                   </p>
-                  <Badge variant="outline" className="text-xs">
-                    {result.roleLabel}
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs capitalize">
-                    {result.matchType}
-                  </Badge>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Violations: {result.violations || "—"} | Docket:{" "}
-                  {result.docketNumber} | Status: {result.status || "—"}
+                <Badge className={`${config.badgeClass} font-bold text-white`}>
+                  {result.confidenceScore}%
+                </Badge>
+              </div>
+              {matchDetails ? (
+                <p className="mb-3 text-sm text-muted-foreground">
+                  {matchDetails}
                 </p>
+              ) : null}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge
+                    status={normalizeStatusForBadge(result.status) as any}
+                    size="sm"
+                  />
+                  {result.respondentAliases.length > 0 && (
+                    <Badge variant="outline" className="text-xs">
+                      Aliases: {result.respondentAliases.slice(0, 3).join(", ")}
+                      {result.respondentAliases.length > 3 ? "…" : ""}
+                    </Badge>
+                  )}
+                </div>
+                <span className="text-sm font-medium text-primary">
+                  View person details
+                </span>
               </div>
-              <Badge className={`${config.badgeClass} font-bold text-white`}>
-                {result.confidenceScore}%
-              </Badge>
-            </div>
-            <p className="text-sm text-muted-foreground mb-3">
-              {result.matchDetails}
-            </p>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusBadge
-                  status={normalizeStatusForBadge(result.status) as any}
-                  size="sm"
-                />
-                {result.respondentAliases.length > 0 && (
-                  <Badge variant="outline" className="text-xs">
-                    Aliases: {result.respondentAliases.slice(0, 3).join(", ")}
-                    {result.respondentAliases.length > 3 ? "…" : ""}
-                  </Badge>
-                )}
-              </div>
-              <span className="text-sm font-medium text-primary">
-                View person details
-              </span>
-            </div>
-          </Link>
-        ))}
+            </Link>
+          );
+        })}
       </CardContent>
     </Card>
   );
@@ -221,21 +233,10 @@ export default function ClearanceSearch() {
             Live PostgreSQL
           </Badge>
         </div>
-        <p className="text-muted-foreground mt-1">
-          Searches live Supabase PostgreSQL records using pg_trgm similarity,
-          alias matching, and phonetic fuzzy matching.
-        </p>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Search Records</CardTitle>
-          <CardDescription>
-            Enter a name or alias to search respondent and participant records
-            across all live dockets.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4 pt-6">
           <div>
             <Label htmlFor="search-query">Search Query</Label>
             <div className="relative mt-1">

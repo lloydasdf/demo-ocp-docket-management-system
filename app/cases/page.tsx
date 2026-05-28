@@ -10,10 +10,9 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/compon
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { dockets } from '@/lib/dummy-data';
-import { getCaseParticipantsForCases, getCasesCompact, type CaseParticipantRecord } from '@/lib/supabase/queries';
-import type { ViewRow } from '@/lib/supabase/types';
+import { getCaseParticipantsForCases, getCasesFromTable, type CaseParticipantRecord, type CasesTableRecord } from '@/lib/supabase/queries';
 
-type CompactCase = ViewRow<'v_cases_display'>;
+type CompactCase = CasesTableRecord;
 type DocketTypeFilter = 'All' | 'INV' | 'INQ' | 'PE' | 'DC20';
 type DocketYearFilter = 'All' | '2022';
 
@@ -42,12 +41,44 @@ function getInitialColumnWidths(): ColumnWidths {
   }, {} as ColumnWidths);
 }
 
-function formatDisplayDocketNumber(docketNumber: string | null) {
-  return docketNumber?.replace(/^IV-31-/i, '') ?? '—';
+function formatDisplayDocketNumber(caseDetail: CompactCase) {
+  const prefix = caseDetail.docket_types?.prefix ?? 'Case';
+  const month = caseDetail.docket_month_code ? `-${caseDetail.docket_month_code}` : '';
+  return `${prefix}-${caseDetail.docket_year}${month}-${String(caseDetail.docket_number).padStart(6, '0')}`;
+}
+
+function caseViolations(caseDetail: CompactCase) {
+  const violations = (caseDetail.case_violations ?? [])
+    .slice()
+    .sort((left, right) => (left.violation_order ?? 0) - (right.violation_order ?? 0))
+    .map((violation) =>
+      violation.raw_violation_text?.trim() ||
+      violation.violations?.short_label ||
+      violation.violations?.canonical_title ||
+      violation.violations?.title ||
+      '',
+    )
+    .filter(Boolean);
+
+  return violations.length > 0 ? violations.join(', ') : caseDetail.summary_text;
+}
+
+function currentAssignment(caseDetail: CompactCase) {
+  return (caseDetail.case_assignments ?? [])
+    .filter((assignment) => !assignment.unassigned_at)
+    .sort((left, right) => (right.assigned_at ?? '').localeCompare(left.assigned_at ?? ''))[0];
+}
+
+function currentStatus(caseDetail: CompactCase) {
+  return (caseDetail.case_status_history ?? [])
+    .slice()
+    .sort((left, right) =>
+      (right.status_date ?? right.changed_at ?? '').localeCompare(left.status_date ?? left.changed_at ?? ''),
+    )[0]?.to_status;
 }
 
 function getCaseKey(caseDetail: CompactCase) {
-  return `${caseDetail.id ?? 'case'}-${caseDetail.docket_display_number ?? 'docket'}`;
+  return `${caseDetail.id ?? 'case'}-${formatDisplayDocketNumber(caseDetail)}`;
 }
 
 function personName(participant: CaseParticipantRecord) {
@@ -88,8 +119,6 @@ function buildPartyNamesByCase(participants: CaseParticipantRecord[]) {
 function getFallbackCases(): CompactCase[] {
   return dockets.flatMap((docket) =>
     docket.cases.map((caseDetail) => ({
-      prosecutor_full_name: caseDetail.prosecutor ?? null,
-      prosecutor_short_name: caseDetail.prosecutor ?? null,
       id: Number.parseInt(caseDetail.id.replace(/\D/g, ''), 10) || null,
       summary_text:
         caseDetail.complainants.length > 0
@@ -98,20 +127,39 @@ function getFallbackCases(): CompactCase[] {
             }`
           : null,
       created_at: docket.createdDate,
-      current_status_label: caseDetail.status,
-      current_status_code: caseDetail.status,
+      created_by_user_id: 0,
       date_received: caseDetail.dateOfIncident,
       docket_month_code: null,
-      docket_display_number: docket.docketNumber,
-      docket_number: Number.parseInt(docket.docketNumber.match(/\d+$/)?.[0] ?? '', 10) || null,
-      docket_type_prefix: docket.docketNumber.split('-')[0] ?? null,
-      docket_type_name: docket.docketNumber.split('-')[0] ?? null,
-      docket_year: Number.parseInt(docket.docketNumber.match(/\d{4}/)?.[0] ?? '', 10) || null,
-      updated_at: null,
-      violations:
-        caseDetail.violations.length > 0
-          ? caseDetail.violations.map((violation) => violation.statute).join(', ')
-          : null,
+      docket_number: Number.parseInt(docket.docketNumber.match(/\d+$/)?.[0] ?? '', 10) || 0,
+      docket_type_id: 0,
+      docket_types: { name: docket.docketNumber.split('-')[0] ?? '', prefix: docket.docketNumber.split('-')[0] ?? '' },
+      docket_year: Number.parseInt(docket.docketNumber.match(/\d{4}/)?.[0] ?? '', 10) || 0,
+      gdrive_folder_id: null,
+      gdrive_folder_last_scanned_at: null,
+      gdrive_folder_link: null,
+      gdrive_folder_name: null,
+      gdrive_folder_status: '',
+      is_archived: false,
+      is_summary_procedure: null,
+      legacy_raw_json: null,
+      legacy_row_number: null,
+      legacy_source_file: null,
+      legacy_source_sheet: null,
+      region_code: null,
+      source: null,
+      updated_at: docket.createdDate,
+      updated_by_user_id: null,
+      case_violations: caseDetail.violations.map((violation, index) => ({
+        raw_violation_text: violation.statute,
+        violation_order: index + 1,
+        violations: null,
+      })),
+      case_assignments: caseDetail.prosecutor
+        ? [{ assigned_at: null, unassigned_at: null, prosecutors: { full_name: caseDetail.prosecutor, short_name: caseDetail.prosecutor } }]
+        : [],
+      case_status_history: caseDetail.status
+        ? [{ changed_at: docket.createdDate, status_date: null, to_status: { code: caseDetail.status, display_label: caseDetail.status } }]
+        : [],
     })) as CompactCase[],
   );
 }
@@ -135,7 +183,7 @@ export default function CasesPage() {
 
     async function loadCases() {
       setIsLoading(true);
-      const result = await getCasesCompact({
+      const result = await getCasesFromTable({
         docketType: selectedDocketType === 'All' ? undefined : selectedDocketType,
         docketYear: selectedDocketYear === 'All' ? undefined : Number(selectedDocketYear),
       });
@@ -148,7 +196,7 @@ export default function CasesPage() {
         setErrorMessage(result.error.message);
         setCases(
           fallbackCases.filter((caseDetail) => {
-            const matchesType = selectedDocketType === 'All' || caseDetail.docket_type_prefix === selectedDocketType;
+            const matchesType = selectedDocketType === 'All' || caseDetail.docket_types?.prefix === selectedDocketType;
             const matchesYear = selectedDocketYear === 'All' || caseDetail.docket_year === Number(selectedDocketYear);
             return matchesType && matchesYear;
           }),
@@ -192,12 +240,12 @@ export default function CasesPage() {
     return cases.filter((caseDetail) => {
       const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
       const searchableText = [
-        formatDisplayDocketNumber(caseDetail.docket_display_number),
+        formatDisplayDocketNumber(caseDetail),
         casePartyNames?.complainants ?? '',
         casePartyNames?.respondents ?? '',
-        caseDetail.violations ?? '',
-        caseDetail.prosecutor_full_name ?? caseDetail.prosecutor_short_name ?? '',
-        caseDetail.current_status_label ?? '',
+        caseViolations(caseDetail) ?? '',
+        currentAssignment(caseDetail)?.prosecutors?.full_name ?? currentAssignment(caseDetail)?.prosecutors?.short_name ?? '',
+        currentStatus(caseDetail)?.display_label ?? currentStatus(caseDetail)?.code ?? '',
       ]
         .join(' ')
         .toLowerCase();
@@ -210,8 +258,8 @@ export default function CasesPage() {
     () =>
       [...filteredCases].sort((left, right) =>
         docketNumberCollator.compare(
-          formatDisplayDocketNumber(left.docket_display_number),
-          formatDisplayDocketNumber(right.docket_display_number),
+          formatDisplayDocketNumber(left),
+          formatDisplayDocketNumber(right),
         ),
       ),
     [filteredCases],
@@ -399,7 +447,7 @@ export default function CasesPage() {
                             }}
                           >
                             <TableCell className="truncate font-medium text-primary">
-                              {formatDisplayDocketNumber(caseDetail.docket_display_number)}
+                              {formatDisplayDocketNumber(caseDetail)}
                             </TableCell>
                             <TableCell className="truncate text-sm">
                               {caseDetail.id ? partyNamesByCase[caseDetail.id]?.complainants ?? '—' : '—'}
@@ -407,10 +455,10 @@ export default function CasesPage() {
                             <TableCell className="truncate text-sm">
                               {caseDetail.id ? partyNamesByCase[caseDetail.id]?.respondents ?? '—' : '—'}
                             </TableCell>
-                            <TableCell className="truncate text-sm">{caseDetail.violations ?? '—'}</TableCell>
-                            <TableCell className="truncate text-sm">{caseDetail.prosecutor_full_name ?? caseDetail.prosecutor_short_name ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{caseViolations(caseDetail) ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{currentAssignment(caseDetail)?.prosecutors?.full_name ?? currentAssignment(caseDetail)?.prosecutors?.short_name ?? '—'}</TableCell>
                             <TableCell>
-                              <Badge variant="outline">{caseDetail.current_status_label ?? '—'}</Badge>
+                              <Badge variant="outline">{currentStatus(caseDetail)?.display_label ?? currentStatus(caseDetail)?.code ?? '—'}</Badge>
                             </TableCell>
                           </TableRow>
                         );

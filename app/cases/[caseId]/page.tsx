@@ -4,7 +4,7 @@ import type React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ExternalLink, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ExternalLink } from "lucide-react";
 
 import { Sidebar } from "@/components/sidebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -24,35 +24,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  getCaseAssignments,
   getCaseAttachmentsIndex,
   getCaseCompactById,
-  getCaseCourtDetails,
   getCaseDetailsById,
-  getCaseMotions,
   getCaseParticipants,
-  getCaseStatusHistory,
   getCaseTimelineEvents,
-  createCaseEvent,
-  voidCaseEvent,
-  type CaseAssignmentRecord,
-  type CaseCourtRecord,
   type CaseDetailsRecord,
   type CaseParticipantRecord,
-  type CaseStatusHistoryRecord,
   type CaseTimelineEventRecord,
 } from "@/lib/supabase/queries";
 import type {
@@ -60,33 +39,14 @@ import type {
   ViewRow,
 } from "@/lib/supabase/types";
 
-const SUPPORTED_DOCKET_TYPES = new Set(["INV", "INQ"]);
-const SUPPORTED_DOCKET_YEAR = 2022;
-
 type CaseDetailsState = {
   compact: ViewRow<"v_cases_display"> | null;
   details: CaseDetailsRecord | null;
   participants: CaseParticipantRecord[];
-  assignments: CaseAssignmentRecord[];
-  courtDetails: CaseCourtRecord[];
-  statusHistory: CaseStatusHistoryRecord[];
-  motions: SupabaseTableRow<"case_motions">[];
   timeline: CaseTimelineEventRecord[];
   attachments: SupabaseTableRow<"case_attachment_index">[];
   warnings: string[];
 };
-const EVENT_TYPE_CODES = [
-  "CASE_RECEIVED",
-  "CASE_RAFFLED",
-  "STATUS_CHANGE",
-  "COURT_FILING",
-  "COURT_UPDATE",
-  "MOTION",
-  "PETITION_FOR_REVIEW",
-  "CUSTOM",
-] as const;
-type EventDetailField = { id: string; key: string; value: string };
-
 function formatDate(value: string | null | undefined) {
   if (!value) {
     return "—";
@@ -101,19 +61,6 @@ function formatDate(value: string | null | undefined) {
   return parsedDate.toLocaleDateString();
 }
 
-function formatDateTime(value: string | null | undefined) {
-  if (!value) {
-    return "—";
-  }
-
-  const parsedDate = new Date(value);
-
-  if (Number.isNaN(parsedDate.getTime())) {
-    return value;
-  }
-
-  return parsedDate.toLocaleString();
-}
 
 function formatFileSize(bytes: number | null) {
   if (bytes === null) {
@@ -151,16 +98,14 @@ function roleLabel(participant: CaseParticipantRecord) {
 
 function formatPersonDemographics(participant: CaseParticipantRecord) {
   const attributes = participant.case_participant_attributes;
-  const age = displayValue(
-    attributes?.age_text ?? attributes?.age_years ?? participant.persons?.age,
-  );
-  const gender =
-    attributes?.gender_text ??
-    attributes?.gender_normalized ??
-    participant.persons?.gender ??
-    "Gender not recorded";
+  const age = attributes?.age_text ?? attributes?.age_years;
+  const gender = attributes?.gender_text ?? attributes?.gender_normalized;
+  const parts = [
+    age ? `Age at case: ${age}` : null,
+    gender ?? null,
+  ].filter((part): part is string => Boolean(part));
 
-  return `Case age: ${age} • ${gender}`;
+  return parts.join(" • ");
 }
 
 function caseSpecificFlags(participant: CaseParticipantRecord) {
@@ -171,7 +116,7 @@ function caseSpecificFlags(participant: CaseParticipantRecord) {
     attributes?.is_pwd_at_case ? "PWD" : null,
   ].filter((flag): flag is string => Boolean(flag));
 
-  return flags.length > 0 ? flags.join(", ") : "—";
+  return flags.length > 0 ? flags.join(", ") : null;
 }
 
 function formatAddress(
@@ -201,31 +146,92 @@ function primaryAddress(participant: CaseParticipantRecord) {
   const addresses = participant.persons?.person_addresses ?? [];
   const preferredAddress =
     addresses.find((address) => address.is_primary) ?? addresses[0];
-  return formatAddress(preferredAddress?.addresses ?? null) ?? "—";
+  return formatAddress(preferredAddress?.addresses ?? null);
 }
 
-function joinedValues(values: Array<string | null | undefined>) {
-  const uniqueValues = Array.from(
-    new Set(
-      values
-        .map((value) => value?.trim())
-        .filter((value): value is string => Boolean(value)),
-    ),
-  );
-  return uniqueValues.length > 0 ? uniqueValues.join(", ") : "—";
-}
-
-function joinedDates(values: Array<string | null | undefined>) {
-  return joinedValues(
-    values.map((value) => (value ? formatDate(value) : null)),
-  );
-}
 
 function SectionEmpty({ children = "No records yet." }: { children?: string }) {
   return (
     <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
       {children}
     </p>
+  );
+}
+
+function hasDetailValue(value: React.ReactNode) {
+  return value !== null && value !== undefined && value !== "" && value !== "—";
+}
+
+function OptionalDetailItem({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  if (!hasDetailValue(value)) {
+    return null;
+  }
+
+  return <DetailItem label={label} value={value} />;
+}
+
+function isMotionForReconsideration(event: CaseTimelineEventRecord) {
+  const text = `${event.title ?? ""} ${event.event_type_label ?? ""} ${event.event_type_code ?? ""}`.toLowerCase();
+  return text.includes("motion for reconsideration");
+}
+
+function eventRemarks(event: CaseTimelineEventRecord) {
+  if (event.details_jsonb && typeof event.details_jsonb === "object") {
+    const details = event.details_jsonb as Record<string, unknown>;
+    const remarks = details.remarks ?? details.remark ?? details.notes;
+
+    if (remarks !== null && remarks !== undefined && String(remarks).trim()) {
+      return String(remarks);
+    }
+  }
+
+  return event.description;
+}
+
+function timelineDetailItems(event: CaseTimelineEventRecord) {
+  if (event.event_type_code === "CASE_RECEIVED") {
+    return [{ label: "Date", value: formatDate(event.event_date) }];
+  }
+
+  if (event.event_type_code === "CASE_RAFFLED") {
+    return [
+      { label: "Prosecutor", value: event.prosecutor_short_name },
+      { label: "Date", value: formatDate(event.event_date) },
+      { label: "Remarks", value: eventRemarks(event) },
+    ];
+  }
+
+  if (isMotionForReconsideration(event)) {
+    return [{ label: "Date", value: formatDate(event.event_date) }];
+  }
+
+  return [
+    { label: "Date", value: formatDate(event.event_date) },
+    { label: "Status", value: event.status_label },
+    { label: "Prosecutor", value: event.prosecutor_short_name },
+    { label: "Court", value: event.court_name },
+  ];
+}
+
+function visibleEventDetails(event: CaseTimelineEventRecord) {
+  if (!event.details_jsonb || typeof event.details_jsonb !== "object") {
+    return [];
+  }
+
+  const hiddenKeys = event.event_type_code === "CASE_RECEIVED"
+    ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
+    : isMotionForReconsideration(event)
+      ? new Set(["status", "status_label", "prosecutor", "prosecutor_short_name", "court", "court_name"])
+      : new Set<string>();
+
+  return Object.entries(event.details_jsonb as Record<string, unknown>).filter(
+    ([key, value]) => !hiddenKeys.has(key) && hasDetailValue(value === null || value === undefined ? null : String(value)),
   );
 }
 
@@ -252,15 +258,6 @@ export default function CaseDetailsPage() {
   const [data, setData] = useState<CaseDetailsState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isSavingEvent, setIsSavingEvent] = useState(false);
-  const [eventTypeCode, setEventTypeCode] = useState<string>("CUSTOM");
-  const [eventDate, setEventDate] = useState<string>("");
-  const [eventTitle, setEventTitle] = useState<string>("");
-  const [eventDescription, setEventDescription] = useState<string>("");
-  const [eventDetailFields, setEventDetailFields] = useState<EventDetailField[]>([
-    { id: crypto.randomUUID(), key: "", value: "" },
-  ]);
-
   useEffect(() => {
     let isMounted = true;
 
@@ -278,20 +275,12 @@ export default function CaseDetailsPage() {
         compact,
         details,
         participants,
-        assignments,
-        courtDetails,
-        statusHistory,
-        motions,
         attachments,
         timeline,
       ] = await Promise.all([
         getCaseCompactById(caseId),
         getCaseDetailsById(caseId),
         getCaseParticipants(caseId),
-        getCaseAssignments(caseId),
-        getCaseCourtDetails(caseId),
-        getCaseStatusHistory(caseId),
-        getCaseMotions(caseId),
         getCaseAttachmentsIndex(caseId),
         getCaseTimelineEvents(caseId),
       ]);
@@ -311,10 +300,6 @@ export default function CaseDetailsPage() {
 
       const warnings = [
         participants,
-        assignments,
-        courtDetails,
-        statusHistory,
-        motions,
         attachments,
         timeline,
       ]
@@ -325,10 +310,6 @@ export default function CaseDetailsPage() {
         compact: compact.data,
         details: details.data,
         participants: participants.data ?? [],
-        assignments: assignments.data ?? [],
-        courtDetails: courtDetails.data ?? [],
-        statusHistory: statusHistory.data ?? [],
-        motions: motions.data ?? [],
         attachments: attachments.data ?? [],
         timeline: timeline.data ?? [],
         warnings,
@@ -343,88 +324,7 @@ export default function CaseDetailsPage() {
     };
   }, [caseId]);
 
-  async function refreshTimeline() {
-    const timeline = await getCaseTimelineEvents(caseId);
-    if (timeline.error) {
-      setErrorMessage(timeline.error.message);
-      return;
-    }
-    setData((previous) =>
-      previous ? { ...previous, timeline: timeline.data ?? [] } : previous,
-    );
-  }
 
-  async function handleAddEvent() {
-    if (!eventDate || !eventTitle.trim()) {
-      setErrorMessage("Event date and title are required.");
-      return;
-    }
-    const parsedDetails = eventDetailFields.reduce<Record<string, string>>(
-      (details, field) => {
-        const key = field.key.trim();
-        if (key) {
-          details[key] = field.value.trim();
-        }
-        return details;
-      },
-      {},
-    );
-    setIsSavingEvent(true);
-    setErrorMessage(null);
-    const created = await createCaseEvent({
-      caseId,
-      eventTypeCode,
-      eventDate,
-      title: eventTitle.trim(),
-      description: eventDescription.trim(),
-      detailsJson: parsedDetails as never,
-    });
-    setIsSavingEvent(false);
-    if (created.error) {
-      setErrorMessage(created.error.message);
-      return;
-    }
-    setEventTitle("");
-    setEventDescription("");
-    setEventDetailFields([{ id: crypto.randomUUID(), key: "", value: "" }]);
-    await refreshTimeline();
-  }
-
-  async function handleVoidEvent(caseEventId: number) {
-    const reason = window.prompt("Void reason (required):");
-    if (!reason?.trim()) return;
-    const result = await voidCaseEvent(caseEventId, reason.trim());
-    if (result.error) {
-      setErrorMessage(result.error.message);
-      return;
-    }
-    await refreshTimeline();
-  }
-
-  function upsertDetailField(
-    id: string,
-    field: "key" | "value",
-    value: string,
-  ) {
-    setEventDetailFields((current) =>
-      current.map((detail) =>
-        detail.id === id ? { ...detail, [field]: value } : detail,
-      ),
-    );
-  }
-
-  function addDetailField() {
-    setEventDetailFields((current) => [
-      ...current,
-      { id: crypto.randomUUID(), key: "", value: "" },
-    ]);
-  }
-
-  function removeDetailField(id: string) {
-    setEventDetailFields((current) =>
-      current.length === 1 ? current : current.filter((field) => field.id !== id),
-    );
-  }
 
   const timelineGroupedByDate = useMemo(() => {
     const grouped = new Map<string, CaseTimelineEventRecord[]>();
@@ -448,11 +348,6 @@ export default function CaseDetailsPage() {
     return Array.from(grouped.entries());
   }, [data?.participants]);
 
-  const isSupportedFocus = Boolean(
-    data?.compact?.docket_type_prefix &&
-    SUPPORTED_DOCKET_TYPES.has(data.compact.docket_type_prefix) &&
-    data.compact.docket_year === SUPPORTED_DOCKET_YEAR,
-  );
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -487,15 +382,7 @@ export default function CaseDetailsPage() {
             </Card>
           ) : (
             <>
-              {!isSupportedFocus ? (
-                <Alert>
-                  <AlertTitle>Outside first implementation focus</AlertTitle>
-                  <AlertDescription>
-                    This details page is currently optimized for INV and INQ
-                    2022 cases. Available schema-backed data is still shown.
-                  </AlertDescription>
-                </Alert>
-              ) : null}
+
 
               {data.warnings.length > 0 ? (
                 <Alert>
@@ -553,10 +440,6 @@ export default function CaseDetailsPage() {
                   <Card>
                     <CardHeader className="p-4 sm:p-6">
                       <CardTitle>Parties</CardTitle>
-                      <CardDescription>
-                        Complainants, respondents, and any other schema-backed
-                        participant roles.
-                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">
                       {partiesByRole.length === 0 ? (
@@ -585,31 +468,31 @@ export default function CaseDetailsPage() {
                                           {personName(participant)}
                                         </p>
                                       )}
-                                      <p className="text-sm text-muted-foreground">
-                                        {formatPersonDemographics(participant)}
-                                      </p>
+                                      {formatPersonDemographics(participant) ? (
+                                        <p className="text-sm text-muted-foreground">
+                                          {formatPersonDemographics(participant)}
+                                        </p>
+                                      ) : null}
                                     </div>
                                   </div>
                                   <Separator className="my-3" />
                                   <div className="grid gap-2 text-sm sm:grid-cols-2">
                                     <DetailItem label="Role" value={role} />
-                                    <DetailItem
+                                    <OptionalDetailItem
                                       label="Birthdate"
-                                      value={formatDate(
-                                        participant.persons?.birth_date,
-                                      )}
+                                      value={participant.persons?.birth_date ? formatDate(participant.persons.birth_date) : null}
                                     />
-                                    <DetailItem
+                                    <OptionalDetailItem
                                       label="Address"
                                       value={primaryAddress(participant)}
                                     />
-                                    <DetailItem
+                                    <OptionalDetailItem
                                       label="Case flags"
                                       value={caseSpecificFlags(participant)}
                                     />
-                                    <DetailItem
+                                    <OptionalDetailItem
                                       label="Remarks"
-                                      value={participant.remarks ?? "—"}
+                                      value={participant.remarks}
                                     />
                                   </div>
                                 </div>
@@ -644,67 +527,8 @@ export default function CaseDetailsPage() {
                   <Card>
                     <CardHeader>
                       <CardTitle>Timeline</CardTitle>
-                      <CardDescription>
-                        Canonical case timeline from v_case_timeline. Expand an
-                        event to review complete details.
-                      </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="rounded-lg border bg-muted/20 p-4">
-                        <h4 className="mb-3 font-medium">Log custom event</h4>
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <Label htmlFor="event-date">Event date</Label>
-                            <Input id="event-date" value={eventDate} onChange={(event) => setEventDate(event.target.value)} type="date" />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Event type</Label>
-                            <Select value={eventTypeCode} onValueChange={setEventTypeCode}>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {EVENT_TYPE_CODES.map((code) => (
-                                  <SelectItem key={code} value={code}>
-                                    {code}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-2 md:col-span-2">
-                            <Label htmlFor="event-title">Title</Label>
-                            <Input id="event-title" placeholder="e.g. Follow-up conference scheduled" value={eventTitle} onChange={(event) => setEventTitle(event.target.value)} />
-                          </div>
-                          <div className="space-y-2 md:col-span-2">
-                            <Label htmlFor="event-description">Description</Label>
-                            <Textarea id="event-description" placeholder="Short timeline summary..." value={eventDescription} onChange={(event) => setEventDescription(event.target.value)} />
-                          </div>
-                          <div className="space-y-3 md:col-span-2">
-                            <div className="flex items-center justify-between">
-                              <Label>Custom details (key-value)</Label>
-                              <Button variant="outline" size="sm" onClick={addDetailField}>
-                                <Plus className="mr-2 h-4 w-4" />
-                                Add detail
-                              </Button>
-                            </div>
-                            <div className="space-y-2">
-                              {eventDetailFields.map((field) => (
-                                <div key={field.id} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                                  <Input placeholder="Field name (e.g. hearing_room)" value={field.key} onChange={(event) => upsertDetailField(field.id, "key", event.target.value)} />
-                                  <Input placeholder="Value" value={field.value} onChange={(event) => upsertDetailField(field.id, "value", event.target.value)} />
-                                  <Button variant="ghost" size="icon" onClick={() => removeDetailField(field.id)} aria-label="Remove detail row">
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                        <Button className="mt-3" onClick={handleAddEvent} disabled={isSavingEvent}>
-                          {isSavingEvent ? "Saving..." : "Add Event"}
-                        </Button>
-                      </div>
                       {timelineGroupedByDate.length === 0 ? (
                         <SectionEmpty>No timeline events found.</SectionEmpty>
                       ) : (
@@ -725,41 +549,24 @@ export default function CaseDetailsPage() {
                                             {event.description ?? "No description provided."}
                                           </p>
                                         </div>
-                                        <div className="flex shrink-0 flex-wrap items-center gap-2">
-                                          <Badge variant="outline">{event.event_type_label ?? event.event_type_code ?? "Event"}</Badge>
-                                          {event.needs_review ? <Badge variant="destructive">Needs review</Badge> : null}
-                                        </div>
                                       </div>
                                     </AccordionTrigger>
                                     <AccordionContent className="space-y-3 pb-3">
                                       <div className="grid gap-3 sm:grid-cols-2">
-                                        <DetailItem label="Date" value={formatDate(event.event_date)} />
-                                        <DetailItem label="Status" value={event.status_label ?? "—"} />
-                                        <DetailItem label="Prosecutor" value={event.prosecutor_short_name ?? "—"} />
-                                        <DetailItem label="Court" value={event.court_name ?? "—"} />
+                                        {timelineDetailItems(event).map((detail) => (
+                                          <OptionalDetailItem key={detail.label} label={detail.label} value={detail.value} />
+                                        ))}
                                       </div>
-                                      {event.details_jsonb && typeof event.details_jsonb === "object" ? (
+                                      {visibleEventDetails(event).length > 0 ? (
                                         <div className="rounded-md border bg-background p-3">
                                           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Event details</p>
                                           <div className="grid gap-2 sm:grid-cols-2">
-                                            {Object.entries(event.details_jsonb as Record<string, unknown>).map(([key, value]) => (
-                                              <DetailItem key={key} label={key.replace(/_/g, " ")} value={String(value ?? "—")} />
+                                            {visibleEventDetails(event).map(([key, value]) => (
+                                              <DetailItem key={key} label={key.replace(/_/g, " ")} value={String(value)} />
                                             ))}
                                           </div>
                                         </div>
                                       ) : null}
-                                      <div className="flex items-center justify-between">
-                                        {event.is_voided ? (
-                                          <p className="text-xs font-medium text-amber-600">Voided event</p>
-                                        ) : (
-                                          <Button variant="outline" size="sm" onClick={() => handleVoidEvent(event.case_event_id)}>
-                                            Void event
-                                          </Button>
-                                        )}
-                                        <p className="text-xs text-muted-foreground">
-                                          Source: {event.source_table ?? event.source ?? "—"}
-                                        </p>
-                                      </div>
                                     </AccordionContent>
                                   </AccordionItem>
                                 ))}
@@ -770,194 +577,9 @@ export default function CaseDetailsPage() {
                       )}
                     </CardContent>
                   </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Status history</CardTitle>
-                      <CardDescription>
-                        Current status and recorded prior movements.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <div className="rounded-lg border p-4">
-                        <DetailItem
-                          label="Current status"
-                          value={
-                            data.compact.current_status_label ??
-                            data.compact.current_status_code ??
-                            "—"
-                          }
-                        />
-                      </div>
-                      {data.statusHistory.length === 0 ? (
-                        <SectionEmpty />
-                      ) : (
-                        <div className="overflow-hidden rounded-lg border">
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead>Changed at</TableHead>
-                                <TableHead>From</TableHead>
-                                <TableHead>To</TableHead>
-                                <TableHead>Notes</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {data.statusHistory.map((history) => (
-                                <TableRow key={history.id}>
-                                  <TableCell>
-                                    {formatDateTime(history.changed_at)}
-                                  </TableCell>
-                                  <TableCell>
-                                    {history.from_status?.display_label ?? "—"}
-                                  </TableCell>
-                                  <TableCell>
-                                    {history.to_status?.display_label ?? "—"}
-                                  </TableCell>
-                                  <TableCell>
-                                    {history.remarks ?? "—"}
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Motions</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      {data.motions.length === 0 ? (
-                        <SectionEmpty />
-                      ) : (
-                        <div className="overflow-hidden rounded-lg border">
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead>Motion received</TableHead>
-                                <TableHead>Date received</TableHead>
-                                <TableHead>Filed by</TableHead>
-                                <TableHead>Status</TableHead>
-                                <TableHead>Remarks</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {data.motions.map((motion) => (
-                                <TableRow key={motion.id}>
-                                  <TableCell>{motion.motion_name}</TableCell>
-                                  <TableCell>
-                                    {formatDate(motion.date_received)}
-                                  </TableCell>
-                                  <TableCell>
-                                    {motion.filed_by ?? "—"}
-                                  </TableCell>
-                                  <TableCell>
-                                    {motion.motion_status ?? "—"}
-                                  </TableCell>
-                                  <TableCell>{motion.remarks ?? "—"}</TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
                 </div>
 
                 <div className="space-y-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Prosecutor assignment</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <DetailItem
-                        label="Current prosecutor"
-                        value={
-                          data.compact.prosecutor_full_name ??
-                          data.compact.prosecutor_short_name ??
-                          "—"
-                        }
-                      />
-                      <DetailItem
-                        label="Date assigned"
-                        value={formatDate(data.compact.current_assigned_at)}
-                      />
-                      {data.assignments.length === 0 ? (
-                        <SectionEmpty />
-                      ) : (
-                        <div className="space-y-3">
-                          {data.assignments.map((assignment) => (
-                            <div
-                              key={assignment.id}
-                              className="rounded-lg border p-3 text-sm"
-                            >
-                              <p className="font-medium">
-                                {assignment.prosecutors?.full_name ??
-                                  "Unrecorded prosecutor"}
-                              </p>
-                              <p className="text-muted-foreground">
-                                Assigned{" "}
-                                {formatDateTime(assignment.assigned_at)}
-                              </p>
-                              <p className="text-muted-foreground">
-                                Staff: {assignment.staff?.full_name ?? "—"}
-                              </p>
-                              {assignment.unassigned_at ? (
-                                <p className="text-muted-foreground">
-                                  Unassigned{" "}
-                                  {formatDateTime(assignment.unassigned_at)}
-                                </p>
-                              ) : null}
-                              {assignment.remarks ? (
-                                <p className="mt-2">{assignment.remarks}</p>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Court / criminal case info</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <DetailItem
-                        label="Court"
-                        value={data.compact.court_codes ?? "—"}
-                      />
-                      <DetailItem
-                        label="Criminal case #"
-                        value={data.compact.criminal_case_numbers ?? "—"}
-                      />
-                      <DetailItem
-                        label="Charge filed"
-                        value={joinedValues(
-                          data.courtDetails.map((court) => court.charge_filed),
-                        )}
-                      />
-                      <DetailItem
-                        label="Date filed in court"
-                        value={joinedDates(
-                          data.courtDetails.map(
-                            (court) => court.date_filed_in_court,
-                          ),
-                        )}
-                      />
-                      <DetailItem
-                        label="Court review"
-                        value={
-                          data.compact.court_needs_review ? "Needs review" : "—"
-                        }
-                      />
-                    </CardContent>
-                  </Card>
 
                   <Card>
                     <CardHeader>

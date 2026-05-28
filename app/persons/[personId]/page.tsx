@@ -53,33 +53,18 @@ function displayValue(value: string | number | null | undefined) {
     : String(value);
 }
 
-function formatAddress(
-  address: NonNullable<
-    NonNullable<PersonDetailsRecord["person_addresses"]>[number]["addresses"]
-  >,
-) {
-  const parts = [
-    address.line1,
-    address.line2,
-    address.barangay ? `Brgy. ${address.barangay}` : null,
-    address.city,
-    address.province,
-    address.region,
-    address.zip_code,
-    address.country,
-  ].filter((part): part is string => Boolean(part?.trim()));
-
-  return parts.length > 0 ? parts.join(", ") : null;
+function hasDisplayValue(value: string | number | boolean | null | undefined) {
+  return value !== null && value !== undefined && value !== "";
 }
 
-function primaryAddress(person: PersonDetailsRecord) {
-  const addresses = person.person_addresses ?? [];
-  const preferredAddress =
-    addresses.find((address) => address.is_primary) ?? addresses[0];
-  return preferredAddress?.addresses
-    ? (formatAddress(preferredAddress.addresses) ?? "—")
-    : "—";
+function booleanDisplay(value: boolean | null | undefined) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  return value ? "Yes" : "No";
 }
+
 
 function roleLabel(participant: CaseParticipantRecord) {
   return (
@@ -189,6 +174,18 @@ export default function PersonDetailsPage() {
     return grouped;
   }, [data?.participants]);
 
+  const participantAttributes = data?.participants.find(
+    (participant) => participant.case_participant_attributes,
+  )?.case_participant_attributes;
+
+  const personDetails = [
+    { label: "Age", value: participantAttributes?.age_text ?? participantAttributes?.age_years },
+    { label: "Gender", value: participantAttributes?.gender_text ?? participantAttributes?.gender_normalized },
+    { label: "Minor", value: booleanDisplay(participantAttributes?.is_minor_at_case) },
+    { label: "Senior citizen", value: booleanDisplay(participantAttributes?.is_senior_at_case) },
+    { label: "PWD", value: booleanDisplay(participantAttributes?.is_pwd_at_case) },
+  ].filter((detail) => hasDisplayValue(detail.value));
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
@@ -230,98 +227,51 @@ export default function PersonDetailsPage() {
               ) : null}
 
               <Card>
-                <CardHeader className="gap-5 p-4 sm:p-6">
+                <CardHeader className="gap-4 p-4 sm:p-6">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-3">
                       <CardTitle className="text-2xl sm:text-3xl">
                         {data.person.full_name}
                       </CardTitle>
-                      {data.person.is_active ? (
-                        <Badge>Active</Badge>
-                      ) : (
-                        <Badge variant="secondary">Inactive</Badge>
-                      )}
                     </div>
-                    <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
-                      {displayValue(data.person.person_descriptor)}
-                    </CardDescription>
                   </div>
 
-                  <div className="grid gap-3 border-t pt-4 sm:grid-cols-3 sm:gap-x-10">
-                    <DetailItem
-                      label="Age"
-                      value={displayValue(data.person.age)}
-                    />
-                    <DetailItem
-                      label="Birthdate"
-                      value={formatDate(data.person.birth_date)}
-                    />
-                    <DetailItem
-                      label="Gender"
-                      value={displayValue(data.person.gender)}
-                    />
+                  {personDetails.length > 0 ? (
+                    <div className="grid gap-3 border-t pt-4 sm:grid-cols-2 lg:grid-cols-5">
+                      {personDetails.map((detail) => (
+                        <DetailItem
+                          key={detail.label}
+                          label={detail.label}
+                          value={displayValue(detail.value as string | number)}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div className="border-t pt-4">
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Aliases
+                    </p>
+                    {(data.person.person_aliases ?? []).length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No aliases recorded.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {(data.person.person_aliases ?? []).map((alias) => (
+                          <Badge
+                            key={`${alias.alias_name}-${alias.alias_type}`}
+                            variant={alias.is_active ? "outline" : "secondary"}
+                          >
+                            {alias.alias_name}{" "}
+                            {alias.alias_type ? `(${alias.alias_type})` : null}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </CardHeader>
               </Card>
 
-              <div className="grid gap-6 xl:grid-cols-[1fr_2fr]">
-                <div className="space-y-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Person details</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <DetailItem
-                        label="Primary address"
-                        value={primaryAddress(data.person)}
-                      />
-                      <DetailItem
-                        label="Minor"
-                        value={data.person.is_minor ? "Yes" : "No"}
-                      />
-                      <DetailItem
-                        label="Senior citizen"
-                        value={data.person.is_senior ? "Yes" : "No"}
-                      />
-                      <DetailItem
-                        label="PWD"
-                        value={data.person.is_pwd ? "Yes" : "No"}
-                      />
-                      <DetailItem
-                        label="Notes"
-                        value={displayValue(data.person.notes)}
-                      />
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Aliases</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      {(data.person.person_aliases ?? []).length === 0 ? (
-                        <SectionEmpty>No aliases recorded.</SectionEmpty>
-                      ) : (
-                        <div className="flex flex-wrap gap-2">
-                          {(data.person.person_aliases ?? []).map((alias) => (
-                            <Badge
-                              key={`${alias.alias_name}-${alias.alias_type}`}
-                              variant={
-                                alias.is_active ? "outline" : "secondary"
-                              }
-                            >
-                              {alias.alias_name}{" "}
-                              {alias.alias_type
-                                ? `(${alias.alias_type})`
-                                : null}
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
-
+              <div className="grid gap-6">
                 <Card>
                   <CardHeader>
                     <CardTitle>Associated cases</CardTitle>
@@ -348,8 +298,6 @@ export default function PersonDetailsPage() {
                               </p>
                               <p className="mt-1 text-sm text-muted-foreground">
                                 Violations: {caseRecord.violations ?? "—"} |
-                                Docket:{" "}
-                                {caseRecord.docket_display_number ?? "—"} |
                                 Status:{" "}
                                 {caseRecord.current_status_label ??
                                   caseRecord.current_status_code ??
