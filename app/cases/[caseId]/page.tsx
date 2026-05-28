@@ -204,6 +204,10 @@ function eventRemarks(event: CaseTimelineEventRecord) {
   return event.description;
 }
 
+function isCourtSourceEvent(event: CaseTimelineEventRecord) {
+  return eventSourceTable(event).includes("case_courts");
+}
+
 function timelineDetailItems(event: CaseTimelineEventRecord) {
   if (event.event_type_code === "CASE_RECEIVED") {
     return [{ label: "Date", value: formatDate(event.event_date) }];
@@ -221,12 +225,17 @@ function timelineDetailItems(event: CaseTimelineEventRecord) {
     return [{ label: "Date", value: formatDate(event.event_date) }];
   }
 
-  return [
+  const details = [
     { label: "Date", value: formatDate(event.event_date) },
     { label: "Status", value: event.status_label },
     { label: "Prosecutor", value: event.prosecutor_short_name },
-    { label: "Court", value: event.court_name },
   ];
+
+  if (!isCourtSourceEvent(event)) {
+    details.push({ label: "Court", value: event.court_name });
+  }
+
+  return details;
 }
 
 function visibleEventDetails(event: CaseTimelineEventRecord) {
@@ -262,9 +271,7 @@ function sameDate(left: string | null | undefined, right: string | null | undefi
 }
 
 function eventCourtDetails(event: CaseTimelineEventRecord, courts: CaseCourtRecord[]) {
-  const sourceTable = eventSourceTable(event);
-
-  if (!sourceTable.includes("case_courts")) {
+  if (!isCourtSourceEvent(event)) {
     return null;
   }
 
@@ -324,9 +331,7 @@ function CourtEventDetails({ court }: { court: CaseCourtRecord }) {
         {court.needs_review ? <Badge variant="secondary">Needs review</Badge> : null}
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <OptionalDetailItem label="Court" value={firstDisplayValue(court.courts?.name, court.raw_court_text)} />
         <OptionalDetailItem label="Court code" value={court.courts?.code} />
-        <OptionalDetailItem label="Court type" value={court.courts?.court_type} />
         <OptionalDetailItem label="Branch" value={court.court_branch} />
         <OptionalDetailItem label="Criminal case no." value={court.criminal_case_number} />
         <OptionalDetailItem label="Charge filed" value={court.charge_filed} />
