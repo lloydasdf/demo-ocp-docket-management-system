@@ -36,6 +36,52 @@ type CaseTableColumnKey = (typeof CASE_TABLE_COLUMNS)[number]['key'];
 type ColumnWidths = Record<CaseTableColumnKey, number>;
 type CasePartyNames = { complainants: string | null; respondents: string | null };
 
+type CasesPageCache = {
+  cases: CompactCase[];
+  partyNamesByCase: Record<number, CasePartyNames>;
+  selectedDocketYear: DocketYearFilter;
+  hasAllCases: boolean;
+};
+
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v1';
+let casesPageMemoryCache: CasesPageCache | null = null;
+
+function readCasesPageCache() {
+  if (casesPageMemoryCache) {
+    return casesPageMemoryCache;
+  }
+
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const cachedValue = window.sessionStorage.getItem(CASES_PAGE_CACHE_KEY);
+    if (!cachedValue) {
+      return null;
+    }
+
+    casesPageMemoryCache = JSON.parse(cachedValue) as CasesPageCache;
+    return casesPageMemoryCache;
+  } catch {
+    return null;
+  }
+}
+
+function writeCasesPageCache(cache: CasesPageCache) {
+  casesPageMemoryCache = cache;
+
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.sessionStorage.setItem(CASES_PAGE_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    window.sessionStorage.removeItem(CASES_PAGE_CACHE_KEY);
+  }
+}
+
 function getInitialColumnWidths(): ColumnWidths {
   return CASE_TABLE_COLUMNS.reduce((widths, column) => {
     widths[column.key] = column.initialWidth;
@@ -137,19 +183,33 @@ function buildPartyNamesByCase(participants: CaseParticipantRecord[]) {
 
 export default function CasesPage() {
   const router = useRouter();
-  const [cases, setCases] = useState<CompactCase[]>([]);
+  const [cachedInitialState] = useState(() => readCasesPageCache());
+  const [cases, setCases] = useState<CompactCase[]>(cachedInitialState?.cases ?? []);
   const [selectedDocketType, setSelectedDocketType] = useState<DocketTypeFilter>(DEFAULT_DOCKET_TYPE);
-  const [selectedDocketYear, setSelectedDocketYear] = useState<DocketYearFilter>('All');
+  const [selectedDocketYear, setSelectedDocketYear] = useState<DocketYearFilter>(cachedInitialState?.selectedDocketYear ?? 'All');
   const [searchTerm, setSearchTerm] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(!cachedInitialState);
   const [isLoadingAllCases, setIsLoadingAllCases] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedCaseKey, setSelectedCaseKey] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(() => getInitialColumnWidths());
-  const [partyNamesByCase, setPartyNamesByCase] = useState<Record<number, CasePartyNames>>({});
+  const [partyNamesByCase, setPartyNamesByCase] = useState<Record<number, CasePartyNames>>(cachedInitialState?.partyNamesByCase ?? {});
 
   useEffect(() => {
     let isMounted = true;
+
+    function cacheCasesPageState(
+      nextCases: CompactCase[],
+      nextPartyNamesByCase: Record<number, CasePartyNames>,
+      options: { selectedYear?: DocketYearFilter; hasAllCases?: boolean } = {},
+    ) {
+      writeCasesPageCache({
+        cases: nextCases,
+        partyNamesByCase: nextPartyNamesByCase,
+        selectedDocketYear: options.selectedYear ?? readCasesPageCache()?.selectedDocketYear ?? selectedDocketYear,
+        hasAllCases: options.hasAllCases ?? readCasesPageCache()?.hasAllCases ?? false,
+      });
+    }
 
     async function loadPartyNamesForCases(
       nextCases: CompactCase[],
@@ -164,9 +224,12 @@ export default function CasesPage() {
       }
 
       if (!participantResult.error) {
-        setPartyNamesByCase(buildPartyNamesByCase(participantResult.data));
+        const nextPartyNamesByCase = buildPartyNamesByCase(participantResult.data);
+        setPartyNamesByCase(nextPartyNamesByCase);
+        cacheCasesPageState(nextCases, nextPartyNamesByCase);
       } else if (options.clearOnError) {
         setPartyNamesByCase({});
+        cacheCasesPageState(nextCases, {});
       }
     }
 
@@ -185,10 +248,21 @@ export default function CasesPage() {
       }
 
       setCases(allCasesResult.data);
+      cacheCasesPageState(allCasesResult.data, partyNamesByCase, { hasAllCases: true });
       await loadPartyNamesForCases(allCasesResult.data);
     }
 
     async function loadCases() {
+      if (cachedInitialState) {
+        setIsLoading(false);
+
+        if (!cachedInitialState.hasAllCases) {
+          void loadAllCasesInBackground();
+        }
+
+        return;
+      }
+
       setIsLoading(true);
       const latestYearResult = await getLatestCaseDocketYear(DEFAULT_DOCKET_TYPE);
 
@@ -223,6 +297,7 @@ export default function CasesPage() {
       } else {
         setErrorMessage(null);
         setCases(initialCasesResult.data);
+        cacheCasesPageState(initialCasesResult.data, {}, { selectedYear: defaultDocketYear ? String(defaultDocketYear) : 'All' });
         await loadPartyNamesForCases(initialCasesResult.data, { clearOnError: true });
       }
 
@@ -239,7 +314,6 @@ export default function CasesPage() {
 
     return () => {
       isMounted = false;
-      setIsLoadingAllCases(false);
     };
   }, []);
 
