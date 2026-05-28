@@ -27,10 +27,14 @@ import { Separator } from "@/components/ui/separator";
 import {
   getCaseAttachmentsIndex,
   getCaseCompactById,
+  getCaseCourtDetails,
   getCaseDetailsById,
+  getCaseMotions,
   getCaseParticipants,
   getCaseTimelineEvents,
+  type CaseCourtRecord,
   type CaseDetailsRecord,
+  type CaseMotionRecord,
   type CaseParticipantRecord,
   type CaseTimelineEventRecord,
 } from "@/lib/supabase/queries";
@@ -44,6 +48,8 @@ type CaseDetailsState = {
   details: CaseDetailsRecord | null;
   participants: CaseParticipantRecord[];
   timeline: CaseTimelineEventRecord[];
+  courts: CaseCourtRecord[];
+  motions: CaseMotionRecord[];
   attachments: SupabaseTableRow<"case_attachment_index">[];
   warnings: string[];
 };
@@ -76,6 +82,10 @@ function formatFileSize(bytes: number | null) {
   }
 
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function firstDisplayValue(...values: (string | number | null | undefined)[]) {
+  return values.find((value) => value !== null && value !== undefined && String(value).trim() !== "");
 }
 
 function displayValue(value: string | number | null | undefined) {
@@ -277,12 +287,16 @@ export default function CaseDetailsPage() {
         participants,
         attachments,
         timeline,
+        courts,
+        motions,
       ] = await Promise.all([
         getCaseCompactById(caseId),
         getCaseDetailsById(caseId),
         getCaseParticipants(caseId),
         getCaseAttachmentsIndex(caseId),
         getCaseTimelineEvents(caseId),
+        getCaseCourtDetails(caseId),
+        getCaseMotions(caseId),
       ]);
 
       if (!isMounted) {
@@ -302,6 +316,8 @@ export default function CaseDetailsPage() {
         participants,
         attachments,
         timeline,
+        courts,
+        motions,
       ]
         .map((result) => result.error?.message)
         .filter((message): message is string => Boolean(message));
@@ -312,6 +328,8 @@ export default function CaseDetailsPage() {
         participants: participants.data ?? [],
         attachments: attachments.data ?? [],
         timeline: timeline.data ?? [],
+        courts: courts.data ?? [],
+        motions: motions.data ?? [],
         warnings,
       });
       setIsLoading(false);
@@ -427,8 +445,29 @@ export default function CaseDetailsPage() {
                         <Badge variant="outline">
                           {data.details.current_status?.display_label ??
                             data.details.current_status?.code ??
+                            data.details.current_status_raw ??
                             "—"}
                         </Badge>
+                      }
+                    />
+                    <OptionalDetailItem
+                      label="Status date"
+                      value={formatDate(data.details.current_status_date ?? data.compact.current_status_date)}
+                    />
+                    <OptionalDetailItem
+                      label="Status approved date"
+                      value={firstDisplayValue(data.details.status_approved_date_raw, formatDate(data.details.status_approved_date))}
+                    />
+                    <OptionalDetailItem
+                      label="Status remarks"
+                      value={data.details.current_status_remarks}
+                    />
+                    <OptionalDetailItem
+                      label="Classification"
+                      value={
+                        data.details.case_classifications?.display_label ??
+                        data.details.case_classifications?.name ??
+                        data.details.case_classifications?.code
                       }
                     />
                   </div>
@@ -573,6 +612,72 @@ export default function CaseDetailsPage() {
                           </div>
                         ))}
                       </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Court Details</CardTitle>
+                    <CardDescription>Structured court records from case_courts.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {data.courts.length === 0 ? (
+                      <SectionEmpty>No court records found.</SectionEmpty>
+                    ) : (
+                      data.courts.map((court) => (
+                        <div key={court.id} className="rounded-lg border p-4">
+                          <div className="mb-3 flex flex-wrap items-center gap-2">
+                            <p className="font-medium">
+                              {firstDisplayValue(court.courts?.name, court.raw_court_text, `Court record #${court.court_order}`)}
+                            </p>
+                            {court.needs_review ? <Badge variant="secondary">Needs review</Badge> : null}
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <OptionalDetailItem label="Court code" value={court.courts?.code} />
+                            <OptionalDetailItem label="Court type" value={court.courts?.court_type} />
+                            <OptionalDetailItem label="Branch" value={court.court_branch} />
+                            <OptionalDetailItem label="Criminal case no." value={court.criminal_case_number} />
+                            <OptionalDetailItem label="Charge filed" value={court.charge_filed} />
+                            <OptionalDetailItem label="Court status" value={court.court_status} />
+                            <OptionalDetailItem label="Date filed in court" value={formatDate(court.date_filed_in_court)} />
+                            <OptionalDetailItem label="Actual filing date" value={formatDate(court.actual_filing_date)} />
+                            <OptionalDetailItem label="Information count" value={court.information_count} />
+                            <OptionalDetailItem label="Remarks" value={court.court_remarks} />
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Motion Details</CardTitle>
+                    <CardDescription>Structured motion records from case_motions.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {data.motions.length === 0 ? (
+                      <SectionEmpty>No motion records found.</SectionEmpty>
+                    ) : (
+                      data.motions.map((motion) => (
+                        <div key={motion.id} className="rounded-lg border p-4">
+                          <div className="mb-3 flex flex-wrap items-center gap-2">
+                            <p className="font-medium">{motion.motion_name}</p>
+                            {firstDisplayValue(motion.motion_status_raw, motion.motion_status) ? (
+                              <Badge variant="outline">{firstDisplayValue(motion.motion_status_raw, motion.motion_status)}</Badge>
+                            ) : null}
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <OptionalDetailItem label="Motion order" value={motion.motion_order} />
+                            <OptionalDetailItem label="Date received" value={firstDisplayValue(motion.date_received_raw, formatDate(motion.date_received))} />
+                            <OptionalDetailItem label="Date resolved" value={firstDisplayValue(motion.date_resolved_raw, formatDate(motion.date_resolved))} />
+                            <OptionalDetailItem label="Date approved" value={firstDisplayValue(motion.date_approved_raw, formatDate(motion.date_approved))} />
+                            <OptionalDetailItem label="Filed by" value={firstDisplayValue(motion.filed_by_raw, motion.filed_by)} />
+                            <OptionalDetailItem label="Remarks" value={firstDisplayValue(motion.remarks_raw, motion.remarks)} />
+                          </div>
+                        </div>
+                      ))
                     )}
                   </CardContent>
                 </Card>

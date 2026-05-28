@@ -305,7 +305,17 @@ export async function getCases(
 
 
 export type CasesTableRecord = TableRow<"cases"> & {
+  docket_display_number?: string | null;
+  current_status_date?: string | null;
+  current_status_raw?: string | null;
+  current_status_remarks?: string | null;
+  status_approved_date?: string | null;
+  status_approved_date_raw?: string | null;
+  case_classification_id?: number | null;
   docket_types: Pick<TableRow<"docket_types">, "name" | "prefix"> | null;
+  case_classifications:
+    | { code?: string | null; display_label?: string | null; name?: string | null }
+    | null;
   case_violations:
     | (Pick<TableRow<"case_violations">, "raw_violation_text" | "violation_order"> & {
         violations: Pick<
@@ -338,6 +348,7 @@ export async function getCasesFromTable(
         .select(
           `*,
           docket_types:docket_types!cases_docket_type_id_fkey (name, prefix),
+          case_classifications:case_classifications!cases_case_classification_id_fkey (display_label),
           case_violations:case_violations!case_violations_case_id_fkey (
             raw_violation_text, violation_order,
             violations:violations!case_violations_violation_id_fkey (canonical_title, short_label, title)
@@ -423,8 +434,17 @@ export async function getCompactCases(
 
 export type CaseDetailsRecord = TableRow<"cases"> & {
   current_status_id?: number | null;
+  current_status_date?: string | null;
+  current_status_raw?: string | null;
+  current_status_remarks?: string | null;
+  status_approved_date?: string | null;
+  status_approved_date_raw?: string | null;
+  case_classification_id?: number | null;
   current_status: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
   docket_types: Pick<TableRow<"docket_types">, "name" | "prefix"> | null;
+  case_classifications:
+    | { code?: string | null; display_label?: string | null; name?: string | null }
+    | null;
 };
 
 export type PersonAddressRecord = Pick<
@@ -657,7 +677,8 @@ export async function getCaseDetailsById(
         .select(
           `*,
           current_status:case_statuses!cases_current_status_id_fkey (code, display_label),
-          docket_types:docket_types!cases_docket_type_id_fkey (name, prefix)`,
+          docket_types:docket_types!cases_docket_type_id_fkey (name, prefix),
+          case_classifications:case_classifications!cases_case_classification_id_fkey (display_label)`,
         )
         .eq("id", caseId)
         .maybeSingle();
@@ -1051,20 +1072,36 @@ export async function getCaseCourtDetails(
   );
 }
 
+export type CaseMotionRecord = TableRow<"case_motions"> & {
+  motion_order?: number | null;
+  date_received_raw?: string | null;
+  date_resolved?: string | null;
+  date_resolved_raw?: string | null;
+  date_approved?: string | null;
+  date_approved_raw?: string | null;
+  filed_by_raw?: string | null;
+  motion_status_raw?: string | null;
+  remarks_raw?: string | null;
+};
+
 export async function getCaseMotions(
   caseId: number,
-): Promise<SupabaseQueryResult<TableRow<"case_motions">[]>> {
+): Promise<SupabaseQueryResult<CaseMotionRecord[]>> {
   return runSupabaseQuery(
     "getCaseMotions",
     "case_motions",
     async () => {
       const supabase = await getSupabaseBrowserClient();
-      return supabase
+      return (await supabase
         .from("case_motions")
         .select("*")
         .eq("case_id", caseId)
+        .order("motion_order", { ascending: true, nullsFirst: false })
         .order("date_received", { ascending: false, nullsFirst: false })
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })) as {
+        data: CaseMotionRecord[] | null;
+        error: unknown;
+      };
     },
     [],
   );
@@ -1093,7 +1130,7 @@ export async function getCaseTimelineEvents(
 ): Promise<SupabaseQueryResult<CaseTimelineEventRecord[]>> {
   return runSupabaseQuery(
     "getCaseTimelineEvents",
-    "cases",
+    "v_case_timeline" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
       return (await supabase

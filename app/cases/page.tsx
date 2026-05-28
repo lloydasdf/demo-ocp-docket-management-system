@@ -9,25 +9,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { dockets } from '@/lib/dummy-data';
 import { getCaseParticipantsForCases, getCasesFromTable, type CaseParticipantRecord, type CasesTableRecord } from '@/lib/supabase/queries';
 
 type CompactCase = CasesTableRecord;
-type DocketTypeFilter = 'All' | 'INV' | 'INQ' | 'PE' | 'DC20';
-type DocketYearFilter = 'All' | '2022';
-
-const DOCKET_TYPE_FILTERS: DocketTypeFilter[] = ['All', 'INV', 'INQ', 'PE', 'DC20'];
-const DOCKET_YEAR_FILTERS: DocketYearFilter[] = ['2022', 'All'];
+type DocketTypeFilter = string;
+type DocketYearFilter = string;
 
 const docketNumberCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 const CASE_TABLE_COLUMNS = [
   { key: 'docketNumber', label: 'Docket number', initialWidth: 220, minWidth: 160 },
+  { key: 'docketType', label: 'Docket type', initialWidth: 150, minWidth: 120 },
+  { key: 'docketYear', label: 'Year', initialWidth: 100, minWidth: 80 },
   { key: 'complainant', label: 'Complainant', initialWidth: 300, minWidth: 200 },
   { key: 'respondent', label: 'Respondent', initialWidth: 300, minWidth: 200 },
   { key: 'violation', label: 'Violation', initialWidth: 260, minWidth: 180 },
+  { key: 'classification', label: 'Classification', initialWidth: 180, minWidth: 140 },
   { key: 'assignedProsecutor', label: 'Assigned Prosecutor', initialWidth: 240, minWidth: 180 },
   { key: 'currentStatus', label: 'Current Status', initialWidth: 180, minWidth: 150 },
+  { key: 'dateReceived', label: 'Date Received', initialWidth: 150, minWidth: 120 },
 ] as const;
 
 type CaseTableColumnKey = (typeof CASE_TABLE_COLUMNS)[number]['key'];
@@ -44,7 +44,10 @@ function getInitialColumnWidths(): ColumnWidths {
 function formatDisplayDocketNumber(caseDetail: CompactCase) {
   const prefix = caseDetail.docket_types?.prefix ?? 'Case';
   const month = caseDetail.docket_month_code ? `-${caseDetail.docket_month_code}` : '';
-  return `${prefix}-${caseDetail.docket_year}${month}-${String(caseDetail.docket_number).padStart(6, '0')}`;
+  return (
+    caseDetail.docket_display_number ||
+    `${prefix}-${caseDetail.docket_year}${month}-${String(caseDetail.docket_number).padStart(6, '0')}`
+  );
 }
 
 function caseViolations(caseDetail: CompactCase) {
@@ -71,6 +74,24 @@ function currentAssignment(caseDetail: CompactCase) {
 
 function currentStatus(caseDetail: CompactCase) {
   return caseDetail.current_status;
+}
+
+function caseClassification(caseDetail: CompactCase) {
+  return (
+    caseDetail.case_classifications?.display_label ??
+    caseDetail.case_classifications?.name ??
+    caseDetail.case_classifications?.code ??
+    '—'
+  );
+}
+
+function formatDate(value: string | null | undefined) {
+  if (!value) {
+    return '—';
+  }
+
+  const parsedDate = new Date(value);
+  return Number.isNaN(parsedDate.getTime()) ? value : parsedDate.toLocaleDateString();
 }
 
 function getCaseKey(caseDetail: CompactCase) {
@@ -112,63 +133,14 @@ function buildPartyNamesByCase(participants: CaseParticipantRecord[]) {
   }, {} as Record<number, CasePartyNames>);
 }
 
-function getFallbackCases(): CompactCase[] {
-  return dockets.flatMap((docket) =>
-    docket.cases.map((caseDetail) => ({
-      id: Number.parseInt(caseDetail.id.replace(/\D/g, ''), 10) || null,
-      summary_text:
-        caseDetail.complainants.length > 0
-          ? `Complainant: ${caseDetail.complainants[0].firstName} ${caseDetail.complainants[0].lastName}${
-              caseDetail.complainants.length > 1 ? ' et al.' : ''
-            }`
-          : null,
-      created_at: docket.createdDate,
-      created_by_user_id: 0,
-      date_received: caseDetail.dateOfIncident,
-      docket_month_code: null,
-      docket_number: Number.parseInt(docket.docketNumber.match(/\d+$/)?.[0] ?? '', 10) || 0,
-      docket_type_id: 0,
-      docket_types: { name: docket.docketNumber.split('-')[0] ?? '', prefix: docket.docketNumber.split('-')[0] ?? '' },
-      docket_year: Number.parseInt(docket.docketNumber.match(/\d{4}/)?.[0] ?? '', 10) || 0,
-      gdrive_folder_id: null,
-      gdrive_folder_last_scanned_at: null,
-      gdrive_folder_link: null,
-      gdrive_folder_name: null,
-      gdrive_folder_status: '',
-      is_archived: false,
-      is_summary_procedure: null,
-      legacy_raw_json: null,
-      legacy_row_number: null,
-      legacy_source_file: null,
-      legacy_source_sheet: null,
-      region_code: null,
-      source: null,
-      updated_at: docket.createdDate,
-      updated_by_user_id: null,
-      case_violations: caseDetail.violations.map((violation, index) => ({
-        raw_violation_text: violation.statute,
-        violation_order: index + 1,
-        violations: null,
-      })),
-      case_assignments: caseDetail.prosecutor
-        ? [{ assigned_at: null, unassigned_at: null, prosecutors: { full_name: caseDetail.prosecutor, short_name: caseDetail.prosecutor } }]
-        : [],
-      current_status_id: null,
-      current_status: caseDetail.status ? { code: caseDetail.status, display_label: caseDetail.status } : null,
-    })) as CompactCase[],
-  );
-}
-
 export default function CasesPage() {
   const router = useRouter();
-  const fallbackCases = useMemo(getFallbackCases, []);
   const [cases, setCases] = useState<CompactCase[]>([]);
   const [selectedDocketType, setSelectedDocketType] = useState<DocketTypeFilter>('All');
-  const [selectedDocketYear, setSelectedDocketYear] = useState<DocketYearFilter>('2022');
+  const [selectedDocketYear, setSelectedDocketYear] = useState<DocketYearFilter>('All');
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isUsingFallback, setIsUsingFallback] = useState(false);
   const [selectedCaseKey, setSelectedCaseKey] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(() => getInitialColumnWidths());
   const [partyNamesByCase, setPartyNamesByCase] = useState<Record<number, CasePartyNames>>({});
@@ -189,19 +161,11 @@ export default function CasesPage() {
 
       if (result.error) {
         setErrorMessage(result.error.message);
-        setCases(
-          fallbackCases.filter((caseDetail) => {
-            const matchesType = selectedDocketType === 'All' || caseDetail.docket_types?.prefix === selectedDocketType;
-            const matchesYear = selectedDocketYear === 'All' || caseDetail.docket_year === Number(selectedDocketYear);
-            return matchesType && matchesYear;
-          }),
-        );
+        setCases([]);
         setPartyNamesByCase({});
-        setIsUsingFallback(true);
       } else {
         setErrorMessage(null);
         setCases(result.data);
-        setIsUsingFallback(false);
 
         const participantResult = await getCaseParticipantsForCases(
           result.data.map((caseDetail) => caseDetail.id).filter((caseId): caseId is number => Number.isFinite(caseId)),
@@ -224,7 +188,7 @@ export default function CasesPage() {
     return () => {
       isMounted = false;
     };
-  }, [fallbackCases, selectedDocketType, selectedDocketYear]);
+  }, [selectedDocketType, selectedDocketYear]);
 
   const filteredCases = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -240,7 +204,8 @@ export default function CasesPage() {
         casePartyNames?.respondents ?? '',
         caseViolations(caseDetail) ?? '',
         currentAssignment(caseDetail)?.prosecutors?.full_name ?? currentAssignment(caseDetail)?.prosecutors?.short_name ?? '',
-        currentStatus(caseDetail)?.display_label ?? currentStatus(caseDetail)?.code ?? '',
+        caseClassification(caseDetail),
+        currentStatus(caseDetail)?.display_label ?? currentStatus(caseDetail)?.code ?? caseDetail.current_status_raw ?? '',
       ]
         .join(' ')
         .toLowerCase();
@@ -259,6 +224,20 @@ export default function CasesPage() {
       ),
     [filteredCases],
   );
+
+  const docketTypeFilters = useMemo(() => {
+    const values = Array.from(
+      new Set(cases.map((caseDetail) => caseDetail.docket_types?.prefix).filter((value): value is string => Boolean(value))),
+    ).sort();
+    return ['All', ...values];
+  }, [cases]);
+
+  const docketYearFilters = useMemo(() => {
+    const values = Array.from(
+      new Set(cases.map((caseDetail) => caseDetail.docket_year).filter((value): value is number => Number.isFinite(value))),
+    ).sort((left, right) => right - left);
+    return ['All', ...values.map(String)];
+  }, [cases]);
 
   const tableWidth = useMemo(
     () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0),
@@ -300,7 +279,7 @@ export default function CasesPage() {
           {errorMessage ? (
             <Alert variant="destructive" className="shrink-0">
               <AlertTitle>Unable to load live Supabase cases</AlertTitle>
-              <AlertDescription>{errorMessage} Showing fallback dummy data.</AlertDescription>
+              <AlertDescription>{errorMessage}</AlertDescription>
             </Alert>
           ) : null}
 
@@ -311,9 +290,7 @@ export default function CasesPage() {
                 <CardDescription>
                   {isLoading
                     ? 'Loading live cases from Supabase...'
-                    : isUsingFallback
-                      ? `${cases.length} fallback cases`
-                      : `${cases.length} total cases`}
+                    : `${sortedCases.length} of ${cases.length} cases found`}
                 </CardDescription>
               </div>
 
@@ -342,7 +319,7 @@ export default function CasesPage() {
                       <SelectValue placeholder="Filter by docket type" />
                     </SelectTrigger>
                     <SelectContent>
-                      {DOCKET_TYPE_FILTERS.map((docketType) => (
+                      {docketTypeFilters.map((docketType) => (
                         <SelectItem key={docketType} value={docketType}>
                           {docketType}
                         </SelectItem>
@@ -363,7 +340,7 @@ export default function CasesPage() {
                       <SelectValue placeholder="Filter by docket year" />
                     </SelectTrigger>
                     <SelectContent>
-                      {DOCKET_YEAR_FILTERS.map((docketYear) => (
+                      {docketYearFilters.map((docketYear) => (
                         <SelectItem key={docketYear} value={docketYear}>
                           {docketYear === 'All' ? 'All years' : docketYear}
                         </SelectItem>
@@ -444,6 +421,8 @@ export default function CasesPage() {
                             <TableCell className="truncate font-medium text-primary">
                               {formatDisplayDocketNumber(caseDetail)}
                             </TableCell>
+                            <TableCell className="truncate text-sm">{caseDetail.docket_types?.name ?? caseDetail.docket_types?.prefix ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{caseDetail.docket_year ?? '—'}</TableCell>
                             <TableCell className="truncate text-sm">
                               {caseDetail.id ? partyNamesByCase[caseDetail.id]?.complainants ?? '—' : '—'}
                             </TableCell>
@@ -451,10 +430,12 @@ export default function CasesPage() {
                               {caseDetail.id ? partyNamesByCase[caseDetail.id]?.respondents ?? '—' : '—'}
                             </TableCell>
                             <TableCell className="truncate text-sm">{caseViolations(caseDetail) ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{caseClassification(caseDetail)}</TableCell>
                             <TableCell className="truncate text-sm">{currentAssignment(caseDetail)?.prosecutors?.full_name ?? currentAssignment(caseDetail)?.prosecutors?.short_name ?? '—'}</TableCell>
                             <TableCell>
-                              <Badge variant="outline">{currentStatus(caseDetail)?.display_label ?? currentStatus(caseDetail)?.code ?? '—'}</Badge>
+                              <Badge variant="outline">{currentStatus(caseDetail)?.display_label ?? currentStatus(caseDetail)?.code ?? caseDetail.current_status_raw ?? '—'}</Badge>
                             </TableCell>
+                            <TableCell className="truncate text-sm">{formatDate(caseDetail.date_received)}</TableCell>
                           </TableRow>
                         );
                       })}
