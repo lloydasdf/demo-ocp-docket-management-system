@@ -3,12 +3,11 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 
 import { Sidebar } from "@/components/sidebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -220,13 +219,6 @@ export default function PersonDetailsPage() {
       <Sidebar />
       <main className="min-w-0 flex-1 overflow-y-auto p-3 pt-16 md:p-8">
         <div className="flex w-full max-w-[960px] flex-col gap-4 md:gap-6">
-          <Button variant="outline" size="sm" asChild className="w-fit">
-            <Link href="/clearance-search">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to clearance search
-            </Link>
-          </Button>
-
           {isLoading ? (
             <Card>
               <CardContent className="py-10 text-center text-sm text-muted-foreground">

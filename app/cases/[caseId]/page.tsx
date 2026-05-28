@@ -4,7 +4,7 @@ import type React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 
 import { Sidebar } from "@/components/sidebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -493,15 +493,6 @@ export default function CaseDetailsPage() {
       <Sidebar />
       <main className="min-w-0 flex-1 overflow-y-auto p-3 pt-16 md:p-8">
         <div className="flex w-full max-w-[824px] flex-col gap-4 md:gap-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <Button variant="outline" size="sm" asChild className="w-fit">
-              <Link href="/cases">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Back to cases
-              </Link>
-            </Button>
-          </div>
-
           {isLoading ? (
             <Card>
               <CardContent className="py-10 text-center text-sm text-muted-foreground">
