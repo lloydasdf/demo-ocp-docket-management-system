@@ -245,6 +245,127 @@ function visibleEventDetails(event: CaseTimelineEventRecord) {
   );
 }
 
+function eventSourceTable(event: CaseTimelineEventRecord) {
+  return (event.source_table ?? "").toLowerCase();
+}
+
+function sourceIdMatches(event: CaseTimelineEventRecord, id: number) {
+  return event.source_id !== null && event.source_id !== undefined && Number(event.source_id) === Number(id);
+}
+
+function eventText(event: CaseTimelineEventRecord) {
+  return `${event.title ?? ""} ${event.description ?? ""} ${event.event_type_label ?? ""}`.toLowerCase();
+}
+
+function sameDate(left: string | null | undefined, right: string | null | undefined) {
+  return Boolean(left && right && left === right);
+}
+
+function eventCourtDetails(event: CaseTimelineEventRecord, courts: CaseCourtRecord[]) {
+  const sourceTable = eventSourceTable(event);
+
+  if (!sourceTable.includes("case_courts")) {
+    return null;
+  }
+
+  const exactSourceCourt = courts.find((court) => sourceIdMatches(event, court.id));
+
+  if (exactSourceCourt) {
+    return exactSourceCourt;
+  }
+
+  return (
+    courts.find(
+      (court) =>
+        sameDate(court.date_filed_in_court, event.event_date) ||
+        sameDate(court.actual_filing_date, event.event_date),
+    ) ??
+    (courts.length === 1 ? courts[0] : null)
+  );
+}
+
+function eventMotionDetails(event: CaseTimelineEventRecord, motions: CaseMotionRecord[]) {
+  const sourceTable = eventSourceTable(event);
+
+  if (!sourceTable.includes("case_motions") && !isMotionForReconsideration(event)) {
+    return null;
+  }
+
+  const exactSourceMotion = motions.find((motion) => sourceIdMatches(event, motion.id));
+
+  if (exactSourceMotion) {
+    return exactSourceMotion;
+  }
+
+  const text = eventText(event);
+
+  return (
+    motions.find((motion) => {
+      const motionName = motion.motion_name.toLowerCase();
+      const nameMatches = text.includes(motionName) || motionName.includes(text.trim());
+      const dateMatches =
+        sameDate(motion.date_received, event.event_date) ||
+        sameDate(motion.date_resolved, event.event_date) ||
+        sameDate(motion.date_approved, event.event_date);
+
+      return nameMatches || dateMatches;
+    }) ??
+    (motions.length === 1 ? motions[0] : null)
+  );
+}
+
+function CourtEventDetails({ court }: { court: CaseCourtRecord }) {
+  return (
+    <div className="rounded-md border bg-background p-3">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Court source details
+        </p>
+        {court.needs_review ? <Badge variant="secondary">Needs review</Badge> : null}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <OptionalDetailItem label="Court" value={firstDisplayValue(court.courts?.name, court.raw_court_text)} />
+        <OptionalDetailItem label="Court code" value={court.courts?.code} />
+        <OptionalDetailItem label="Court type" value={court.courts?.court_type} />
+        <OptionalDetailItem label="Branch" value={court.court_branch} />
+        <OptionalDetailItem label="Criminal case no." value={court.criminal_case_number} />
+        <OptionalDetailItem label="Charge filed" value={court.charge_filed} />
+        <OptionalDetailItem label="Court status" value={court.court_status} />
+        <OptionalDetailItem label="Date filed in court" value={formatDate(court.date_filed_in_court)} />
+        <OptionalDetailItem label="Actual filing date" value={formatDate(court.actual_filing_date)} />
+        <OptionalDetailItem label="Information count" value={court.information_count} />
+        <OptionalDetailItem label="Remarks" value={court.court_remarks} />
+      </div>
+    </div>
+  );
+}
+
+function MotionEventDetails({ motion }: { motion: CaseMotionRecord }) {
+  return (
+    <div className="rounded-md border bg-background p-3">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Motion source details
+        </p>
+        {firstDisplayValue(motion.motion_status_raw, motion.motion_status) ? (
+          <Badge variant="outline">
+            {firstDisplayValue(motion.motion_status_raw, motion.motion_status)}
+          </Badge>
+        ) : null}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <OptionalDetailItem label="Motion" value={motion.motion_name} />
+        <OptionalDetailItem label="Motion order" value={motion.motion_order} />
+        <OptionalDetailItem label="Date received" value={firstDisplayValue(motion.date_received_raw, formatDate(motion.date_received))} />
+        <OptionalDetailItem label="Date resolved" value={firstDisplayValue(motion.date_resolved_raw, formatDate(motion.date_resolved))} />
+        <OptionalDetailItem label="Date approved" value={firstDisplayValue(motion.date_approved_raw, formatDate(motion.date_approved))} />
+        <OptionalDetailItem label="Filed by" value={firstDisplayValue(motion.filed_by_raw, motion.filed_by)} />
+        <OptionalDetailItem label="Remarks" value={firstDisplayValue(motion.remarks_raw, motion.remarks)} />
+      </div>
+    </div>
+  );
+}
+
 function DetailItem({
   label,
   value,
@@ -560,124 +681,76 @@ export default function CaseDetailsPage() {
                             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                               {dateLabel}
                             </p>
-                            <Accordion type="single" collapsible className="space-y-2">
-                              {events.map((event) => (
-                                <AccordionItem
-                                  key={event.case_event_id}
-                                  value={`event-${event.case_event_id}`}
-                                  className={`rounded-lg border px-3 ${event.is_voided ? "opacity-60" : ""}`}
-                                >
-                                  <AccordionTrigger className="py-3 text-left hover:no-underline">
-                                    <div className="flex w-full items-start justify-between gap-3">
-                                      <div className="min-w-0">
-                                        <p className="truncate font-medium">
-                                          {event.title ?? event.event_type_label ?? "Untitled event"}
-                                        </p>
-                                        <p className="line-clamp-2 text-xs text-muted-foreground">
-                                          {event.description ?? "No description provided."}
-                                        </p>
-                                      </div>
-                                    </div>
-                                  </AccordionTrigger>
-                                  <AccordionContent className="space-y-3 pb-3">
-                                    <div className="grid gap-3 sm:grid-cols-2">
-                                      {timelineDetailItems(event).map((detail) => (
-                                        <OptionalDetailItem
-                                          key={detail.label}
-                                          label={detail.label}
-                                          value={detail.value}
-                                        />
-                                      ))}
-                                    </div>
-                                    {visibleEventDetails(event).length > 0 ? (
-                                      <div className="rounded-md border bg-background p-3">
-                                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                          Event details
-                                        </p>
-                                        <div className="grid gap-2 sm:grid-cols-2">
-                                          {visibleEventDetails(event).map(([key, value]) => (
-                                            <DetailItem
-                                              key={key}
-                                              label={key.replace(/_/g, " ")}
-                                              value={String(value)}
+                            <Accordion
+                              type="single"
+                              collapsible
+                              className="relative ml-2 space-y-3 border-l border-border pl-6"
+                            >
+                              {events.map((event) => {
+                                const courtDetails = eventCourtDetails(event, data.courts);
+                                const motionDetails = eventMotionDetails(event, data.motions);
+
+                                return (
+                                  <div key={event.case_event_id} className="relative">
+                                    <span
+                                      aria-hidden="true"
+                                      className="absolute -left-[33px] top-4 flex h-5 w-5 items-center justify-center rounded-full border-2 border-primary bg-background shadow-sm"
+                                    >
+                                      <span className="h-2 w-2 rounded-full bg-primary" />
+                                    </span>
+                                    <AccordionItem
+                                      value={`event-${event.case_event_id}`}
+                                      className={`rounded-lg border px-3 ${event.is_voided ? "opacity-60" : ""}`}
+                                    >
+                                      <AccordionTrigger className="py-3 text-left hover:no-underline">
+                                        <div className="flex w-full items-start justify-between gap-3">
+                                          <div className="min-w-0">
+                                            <p className="truncate font-medium">
+                                              {event.title ?? event.event_type_label ?? "Untitled event"}
+                                            </p>
+                                            <p className="line-clamp-2 text-xs text-muted-foreground">
+                                              {event.description ?? "No description provided."}
+                                            </p>
+                                          </div>
+                                        </div>
+                                      </AccordionTrigger>
+                                      <AccordionContent className="space-y-3 pb-3">
+                                        <div className="grid gap-3 sm:grid-cols-2">
+                                          {timelineDetailItems(event).map((detail) => (
+                                            <OptionalDetailItem
+                                              key={detail.label}
+                                              label={detail.label}
+                                              value={detail.value}
                                             />
                                           ))}
                                         </div>
-                                      </div>
-                                    ) : null}
-                                  </AccordionContent>
-                                </AccordionItem>
-                              ))}
+                                        {visibleEventDetails(event).length > 0 ? (
+                                          <div className="rounded-md border bg-background p-3">
+                                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                              Event details
+                                            </p>
+                                            <div className="grid gap-2 sm:grid-cols-2">
+                                              {visibleEventDetails(event).map(([key, value]) => (
+                                                <DetailItem
+                                                  key={key}
+                                                  label={key.replace(/_/g, " ")}
+                                                  value={String(value)}
+                                                />
+                                              ))}
+                                            </div>
+                                          </div>
+                                        ) : null}
+                                        {courtDetails ? <CourtEventDetails court={courtDetails} /> : null}
+                                        {motionDetails ? <MotionEventDetails motion={motionDetails} /> : null}
+                                      </AccordionContent>
+                                    </AccordionItem>
+                                  </div>
+                                );
+                              })}
                             </Accordion>
                           </div>
                         ))}
                       </div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Court Details</CardTitle>
-                    <CardDescription>Structured court records from case_courts.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {data.courts.length === 0 ? (
-                      <SectionEmpty>No court records found.</SectionEmpty>
-                    ) : (
-                      data.courts.map((court) => (
-                        <div key={court.id} className="rounded-lg border p-4">
-                          <div className="mb-3 flex flex-wrap items-center gap-2">
-                            <p className="font-medium">
-                              {firstDisplayValue(court.courts?.name, court.raw_court_text, `Court record #${court.court_order}`)}
-                            </p>
-                            {court.needs_review ? <Badge variant="secondary">Needs review</Badge> : null}
-                          </div>
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <OptionalDetailItem label="Court code" value={court.courts?.code} />
-                            <OptionalDetailItem label="Court type" value={court.courts?.court_type} />
-                            <OptionalDetailItem label="Branch" value={court.court_branch} />
-                            <OptionalDetailItem label="Criminal case no." value={court.criminal_case_number} />
-                            <OptionalDetailItem label="Charge filed" value={court.charge_filed} />
-                            <OptionalDetailItem label="Court status" value={court.court_status} />
-                            <OptionalDetailItem label="Date filed in court" value={formatDate(court.date_filed_in_court)} />
-                            <OptionalDetailItem label="Actual filing date" value={formatDate(court.actual_filing_date)} />
-                            <OptionalDetailItem label="Information count" value={court.information_count} />
-                            <OptionalDetailItem label="Remarks" value={court.court_remarks} />
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Motion Details</CardTitle>
-                    <CardDescription>Structured motion records from case_motions.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {data.motions.length === 0 ? (
-                      <SectionEmpty>No motion records found.</SectionEmpty>
-                    ) : (
-                      data.motions.map((motion) => (
-                        <div key={motion.id} className="rounded-lg border p-4">
-                          <div className="mb-3 flex flex-wrap items-center gap-2">
-                            <p className="font-medium">{motion.motion_name}</p>
-                            {firstDisplayValue(motion.motion_status_raw, motion.motion_status) ? (
-                              <Badge variant="outline">{firstDisplayValue(motion.motion_status_raw, motion.motion_status)}</Badge>
-                            ) : null}
-                          </div>
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <OptionalDetailItem label="Motion order" value={motion.motion_order} />
-                            <OptionalDetailItem label="Date received" value={firstDisplayValue(motion.date_received_raw, formatDate(motion.date_received))} />
-                            <OptionalDetailItem label="Date resolved" value={firstDisplayValue(motion.date_resolved_raw, formatDate(motion.date_resolved))} />
-                            <OptionalDetailItem label="Date approved" value={firstDisplayValue(motion.date_approved_raw, formatDate(motion.date_approved))} />
-                            <OptionalDetailItem label="Filed by" value={firstDisplayValue(motion.filed_by_raw, motion.filed_by)} />
-                            <OptionalDetailItem label="Remarks" value={firstDisplayValue(motion.remarks_raw, motion.remarks)} />
-                          </div>
-                        </div>
-                      ))
                     )}
                   </CardContent>
                 </Card>
