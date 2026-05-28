@@ -15,6 +15,8 @@ type CompactCase = CasesTableRecord;
 type DocketTypeFilter = string;
 type DocketYearFilter = string;
 
+const DEFAULT_DOCKET_TYPE = 'INV';
+
 const docketNumberCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 const CASE_TABLE_COLUMNS = [
@@ -98,6 +100,21 @@ function getCaseKey(caseDetail: CompactCase) {
   return `${caseDetail.id ?? 'case'}-${formatDisplayDocketNumber(caseDetail)}`;
 }
 
+function latestDocketYear(cases: CompactCase[], docketType: DocketTypeFilter) {
+  const years = cases
+    .filter((caseDetail) =>
+      docketType === 'All' || caseDetail.docket_types?.prefix === docketType,
+    )
+    .map((caseDetail) => caseDetail.docket_year)
+    .filter((year): year is number => Number.isFinite(year));
+
+  if (years.length === 0) {
+    return null;
+  }
+
+  return String(Math.max(...years));
+}
+
 function personName(participant: CaseParticipantRecord) {
   return participant.persons?.full_name?.trim() || 'Unnamed participant';
 }
@@ -136,7 +153,7 @@ function buildPartyNamesByCase(participants: CaseParticipantRecord[]) {
 export default function CasesPage() {
   const router = useRouter();
   const [cases, setCases] = useState<CompactCase[]>([]);
-  const [selectedDocketType, setSelectedDocketType] = useState<DocketTypeFilter>('All');
+  const [selectedDocketType, setSelectedDocketType] = useState<DocketTypeFilter>(DEFAULT_DOCKET_TYPE);
   const [selectedDocketYear, setSelectedDocketYear] = useState<DocketYearFilter>('All');
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -163,6 +180,7 @@ export default function CasesPage() {
       } else {
         setErrorMessage(null);
         setCases(result.data);
+        setSelectedDocketYear(latestDocketYear(result.data, DEFAULT_DOCKET_TYPE) ?? 'All');
 
         const participantResult = await getCaseParticipantsForCases(
           result.data.map((caseDetail) => caseDetail.id).filter((caseId): caseId is number => Number.isFinite(caseId)),
