@@ -43,7 +43,7 @@ type CasesPageCache = {
   hasAllCases: boolean;
 };
 
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v1';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v2';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -165,6 +165,24 @@ function summarizePartyNames(participants: CaseParticipantRecord[], roleName: 'c
   return names.length > 2 ? `${names.slice(0, 2).join(', ')} et al.` : names.join(', ');
 }
 
+function caseIdsForCases(casesToCheck: CompactCase[]) {
+  return casesToCheck
+    .map((caseDetail) => caseDetail.id)
+    .filter((caseId): caseId is number => Number.isFinite(caseId));
+}
+
+function shouldRefreshCachedPartyNames(
+  cachedCases: CompactCase[],
+  cachedPartyNamesByCase: Record<number, CasePartyNames>,
+) {
+  const cachedCaseIds = caseIdsForCases(cachedCases);
+
+  return (
+    cachedCaseIds.length > 0 &&
+    cachedCaseIds.some((caseId) => !(caseId in cachedPartyNamesByCase))
+  );
+}
+
 function buildPartyNamesByCase(participants: CaseParticipantRecord[]) {
   const grouped = new Map<number, CaseParticipantRecord[]>();
 
@@ -215,9 +233,7 @@ export default function CasesPage() {
       nextCases: CompactCase[],
       options: { clearOnError?: boolean } = {},
     ) {
-      const participantResult = await getCaseParticipantsForCases(
-        nextCases.map((caseDetail) => caseDetail.id).filter((caseId): caseId is number => Number.isFinite(caseId)),
-      );
+      const participantResult = await getCaseParticipantsForCases(caseIdsForCases(nextCases));
 
       if (!isMounted) {
         return;
@@ -248,13 +264,21 @@ export default function CasesPage() {
       }
 
       setCases(allCasesResult.data);
-      cacheCasesPageState(allCasesResult.data, partyNamesByCase, { hasAllCases: true });
+      cacheCasesPageState(
+        allCasesResult.data,
+        readCasesPageCache()?.partyNamesByCase ?? partyNamesByCase,
+        { hasAllCases: true },
+      );
       await loadPartyNamesForCases(allCasesResult.data);
     }
 
     async function loadCases() {
       if (cachedInitialState) {
         setIsLoading(false);
+
+        if (shouldRefreshCachedPartyNames(cachedInitialState.cases, cachedInitialState.partyNamesByCase)) {
+          void loadPartyNamesForCases(cachedInitialState.cases);
+        }
 
         if (!cachedInitialState.hasAllCases) {
           void loadAllCasesInBackground();
