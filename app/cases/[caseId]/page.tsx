@@ -401,6 +401,42 @@ export default function CaseDetailsPage() {
     await refreshTimeline();
   }
 
+  function upsertDetailField(
+    id: string,
+    field: "key" | "value",
+    value: string,
+  ) {
+    setEventDetailFields((current) =>
+      current.map((detail) =>
+        detail.id === id ? { ...detail, [field]: value } : detail,
+      ),
+    );
+  }
+
+  function addDetailField() {
+    setEventDetailFields((current) => [
+      ...current,
+      { id: crypto.randomUUID(), key: "", value: "" },
+    ]);
+  }
+
+  function removeDetailField(id: string) {
+    setEventDetailFields((current) =>
+      current.length === 1 ? current : current.filter((field) => field.id !== id),
+    );
+  }
+
+  const timelineGroupedByDate = useMemo(() => {
+    const grouped = new Map<string, CaseTimelineEventRecord[]>();
+
+    for (const event of data?.timeline ?? []) {
+      const dateLabel = event.event_date ? formatDate(event.event_date) : "No date";
+      grouped.set(dateLabel, [...(grouped.get(dateLabel) ?? []), event]);
+    }
+
+    return Array.from(grouped.entries());
+  }, [data?.timeline]);
+
   const partiesByRole = useMemo(() => {
     const grouped = new Map<string, CaseParticipantRecord[]>();
 
@@ -994,38 +1030,3 @@ export default function CaseDetailsPage() {
     </div>
   );
 }
-  function upsertDetailField(
-    id: string,
-    field: "key" | "value",
-    value: string,
-  ) {
-    setEventDetailFields((current) =>
-      current.map((detail) =>
-        detail.id === id ? { ...detail, [field]: value } : detail,
-      ),
-    );
-  }
-
-  function addDetailField() {
-    setEventDetailFields((current) => [
-      ...current,
-      { id: crypto.randomUUID(), key: "", value: "" },
-    ]);
-  }
-
-  function removeDetailField(id: string) {
-    setEventDetailFields((current) =>
-      current.length === 1 ? current : current.filter((field) => field.id !== id),
-    );
-  }
-
-  const timelineGroupedByDate = useMemo(() => {
-    const grouped = new Map<string, CaseTimelineEventRecord[]>();
-
-    for (const event of data?.timeline ?? []) {
-      const dateLabel = event.event_date ? formatDate(event.event_date) : "No date";
-      grouped.set(dateLabel, [...(grouped.get(dateLabel) ?? []), event]);
-    }
-
-    return Array.from(grouped.entries());
-  }, [data?.timeline]);

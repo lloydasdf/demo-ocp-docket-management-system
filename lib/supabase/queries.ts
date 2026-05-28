@@ -3,6 +3,7 @@ import {
   getSupabaseEnvironmentStatus,
 } from "@/lib/supabase/client";
 import type {
+  Json,
   RelationName,
   SupabaseQueryError,
   SupabaseQueryResult,
