@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { Sidebar } from '@/components/sidebar';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -292,16 +292,7 @@ export default function CasesPage() {
           ) : null}
 
           <Card className="min-h-0 flex-1 gap-4 overflow-hidden py-4">
-            <CardHeader className="shrink-0 gap-4 px-4 md:px-6">
-              <div>
-                <CardTitle>Cases List</CardTitle>
-                <CardDescription>
-                  {isLoading
-                    ? 'Loading live cases from Supabase...'
-                    : `${sortedCases.length} of ${cases.length} cases found`}
-                </CardDescription>
-              </div>
-
+            <CardHeader className="shrink-0 px-4 md:px-6">
               <div className="grid gap-4 sm:max-w-xl sm:grid-cols-2">
                 <div className="flex flex-col gap-2 sm:col-span-2">
                   <label className="text-sm font-medium text-foreground" htmlFor="case-search">
