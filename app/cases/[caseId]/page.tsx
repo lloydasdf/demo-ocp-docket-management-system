@@ -4,12 +4,18 @@ import type React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ArrowLeft, ExternalLink, Plus, Trash2 } from "lucide-react";
 
 import { Sidebar } from "@/components/sidebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import {
   Card,
   CardContent,
@@ -18,6 +24,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -26,6 +35,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import {
   getCaseAssignments,
   getCaseAttachmentsIndex,
@@ -75,6 +85,7 @@ const EVENT_TYPE_CODES = [
   "PETITION_FOR_REVIEW",
   "CUSTOM",
 ] as const;
+type EventDetailField = { id: string; key: string; value: string };
 
 function formatDate(value: string | null | undefined) {
   if (!value) {
@@ -246,7 +257,9 @@ export default function CaseDetailsPage() {
   const [eventDate, setEventDate] = useState<string>("");
   const [eventTitle, setEventTitle] = useState<string>("");
   const [eventDescription, setEventDescription] = useState<string>("");
-  const [eventDetails, setEventDetails] = useState<string>("{}");
+  const [eventDetailFields, setEventDetailFields] = useState<EventDetailField[]>([
+    { id: crypto.randomUUID(), key: "", value: "" },
+  ]);
 
   useEffect(() => {
     let isMounted = true;
@@ -346,13 +359,16 @@ export default function CaseDetailsPage() {
       setErrorMessage("Event date and title are required.");
       return;
     }
-    let parsedDetails: unknown = {};
-    try {
-      parsedDetails = eventDetails.trim() ? JSON.parse(eventDetails) : {};
-    } catch {
-      setErrorMessage("Details JSON is invalid.");
-      return;
-    }
+    const parsedDetails = eventDetailFields.reduce<Record<string, string>>(
+      (details, field) => {
+        const key = field.key.trim();
+        if (key) {
+          details[key] = field.value.trim();
+        }
+        return details;
+      },
+      {},
+    );
     setIsSavingEvent(true);
     setErrorMessage(null);
     const created = await createCaseEvent({
@@ -370,7 +386,7 @@ export default function CaseDetailsPage() {
     }
     setEventTitle("");
     setEventDescription("");
-    setEventDetails("{}");
+    setEventDetailFields([{ id: crypto.randomUUID(), key: "", value: "" }]);
     await refreshTimeline();
   }
 
@@ -593,58 +609,125 @@ export default function CaseDetailsPage() {
                     <CardHeader>
                       <CardTitle>Timeline</CardTitle>
                       <CardDescription>
-                        Canonical case timeline from v_case_timeline.
+                        Canonical case timeline from v_case_timeline. Expand an
+                        event to review complete details.
                       </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="rounded-lg border p-4">
-                        <h4 className="mb-3 font-medium">Add Event</h4>
-                        <div className="grid gap-2 md:grid-cols-2">
-                          <input className="rounded border p-2 text-sm" value={eventDate} onChange={(event) => setEventDate(event.target.value)} type="date" />
-                          <select className="rounded border p-2 text-sm" value={eventTypeCode} onChange={(event) => setEventTypeCode(event.target.value)}>
-                            {EVENT_TYPE_CODES.map((code) => (
-                              <option key={code} value={code}>
-                                {code}
-                              </option>
-                            ))}
-                          </select>
-                          <input className="rounded border p-2 text-sm md:col-span-2" placeholder="Event title" value={eventTitle} onChange={(event) => setEventTitle(event.target.value)} />
-                          <textarea className="rounded border p-2 text-sm md:col-span-2" placeholder="Description" value={eventDescription} onChange={(event) => setEventDescription(event.target.value)} />
-                          <textarea className="rounded border p-2 font-mono text-xs md:col-span-2" rows={4} placeholder='{"key":"value"}' value={eventDetails} onChange={(event) => setEventDetails(event.target.value)} />
+                      <div className="rounded-lg border bg-muted/20 p-4">
+                        <h4 className="mb-3 font-medium">Log custom event</h4>
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label htmlFor="event-date">Event date</Label>
+                            <Input id="event-date" value={eventDate} onChange={(event) => setEventDate(event.target.value)} type="date" />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Event type</Label>
+                            <Select value={eventTypeCode} onValueChange={setEventTypeCode}>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {EVENT_TYPE_CODES.map((code) => (
+                                  <SelectItem key={code} value={code}>
+                                    {code}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <Label htmlFor="event-title">Title</Label>
+                            <Input id="event-title" placeholder="e.g. Follow-up conference scheduled" value={eventTitle} onChange={(event) => setEventTitle(event.target.value)} />
+                          </div>
+                          <div className="space-y-2 md:col-span-2">
+                            <Label htmlFor="event-description">Description</Label>
+                            <Textarea id="event-description" placeholder="Short timeline summary..." value={eventDescription} onChange={(event) => setEventDescription(event.target.value)} />
+                          </div>
+                          <div className="space-y-3 md:col-span-2">
+                            <div className="flex items-center justify-between">
+                              <Label>Custom details (key-value)</Label>
+                              <Button variant="outline" size="sm" onClick={addDetailField}>
+                                <Plus className="mr-2 h-4 w-4" />
+                                Add detail
+                              </Button>
+                            </div>
+                            <div className="space-y-2">
+                              {eventDetailFields.map((field) => (
+                                <div key={field.id} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                                  <Input placeholder="Field name (e.g. hearing_room)" value={field.key} onChange={(event) => upsertDetailField(field.id, "key", event.target.value)} />
+                                  <Input placeholder="Value" value={field.value} onChange={(event) => upsertDetailField(field.id, "value", event.target.value)} />
+                                  <Button variant="ghost" size="icon" onClick={() => removeDetailField(field.id)} aria-label="Remove detail row">
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                         <Button className="mt-3" onClick={handleAddEvent} disabled={isSavingEvent}>
                           {isSavingEvent ? "Saving..." : "Add Event"}
                         </Button>
                       </div>
-                      {data.timeline.length === 0 ? (
+                      {timelineGroupedByDate.length === 0 ? (
                         <SectionEmpty>No timeline events found.</SectionEmpty>
                       ) : (
-                        <div className="space-y-3">
-                          {data.timeline.map((event) => (
-                            <div key={event.case_event_id} className={`rounded-lg border p-3 ${event.is_voided ? "opacity-60" : ""}`}>
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <p className="font-medium">{event.title ?? event.event_type_label ?? "Untitled event"}</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {formatDate(event.event_date)} • {event.event_type_code ?? "—"}
-                                  </p>
-                                </div>
-                                {event.needs_review ? <Badge variant="destructive">Needs review</Badge> : null}
-                              </div>
-                              {event.description ? <p className="mt-2 text-sm">{event.description}</p> : null}
-                              <p className="mt-2 text-xs text-muted-foreground">
-                                Status: {event.status_label ?? "—"} • Prosecutor: {event.prosecutor_short_name ?? "—"} • Court: {event.court_name ?? "—"}
-                              </p>
-                              {event.details_jsonb ? (
-                                <pre className="mt-2 overflow-auto rounded bg-muted p-2 text-xs">{JSON.stringify(event.details_jsonb, null, 2)}</pre>
-                              ) : null}
-                              {!event.is_voided ? (
-                                <Button variant="outline" size="sm" className="mt-2" onClick={() => handleVoidEvent(event.case_event_id)}>
-                                  Void event
-                                </Button>
-                              ) : (
-                                <p className="mt-2 text-xs font-medium text-amber-600">Voided event</p>
-                              )}
+                        <div className="space-y-4">
+                          {timelineGroupedByDate.map(([dateLabel, events]) => (
+                            <div key={dateLabel}>
+                              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{dateLabel}</p>
+                              <Accordion type="single" collapsible className="space-y-2">
+                                {events.map((event) => (
+                                  <AccordionItem key={event.case_event_id} value={`event-${event.case_event_id}`} className={`rounded-lg border px-3 ${event.is_voided ? "opacity-60" : ""}`}>
+                                    <AccordionTrigger className="py-3 text-left hover:no-underline">
+                                      <div className="flex w-full items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <p className="truncate font-medium">
+                                            {event.title ?? event.event_type_label ?? "Untitled event"}
+                                          </p>
+                                          <p className="line-clamp-2 text-xs text-muted-foreground">
+                                            {event.description ?? "No description provided."}
+                                          </p>
+                                        </div>
+                                        <div className="flex shrink-0 flex-wrap items-center gap-2">
+                                          <Badge variant="outline">{event.event_type_label ?? event.event_type_code ?? "Event"}</Badge>
+                                          {event.needs_review ? <Badge variant="destructive">Needs review</Badge> : null}
+                                        </div>
+                                      </div>
+                                    </AccordionTrigger>
+                                    <AccordionContent className="space-y-3 pb-3">
+                                      <div className="grid gap-3 sm:grid-cols-2">
+                                        <DetailItem label="Date" value={formatDate(event.event_date)} />
+                                        <DetailItem label="Status" value={event.status_label ?? "—"} />
+                                        <DetailItem label="Prosecutor" value={event.prosecutor_short_name ?? "—"} />
+                                        <DetailItem label="Court" value={event.court_name ?? "—"} />
+                                      </div>
+                                      {event.details_jsonb && typeof event.details_jsonb === "object" ? (
+                                        <div className="rounded-md border bg-background p-3">
+                                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Event details</p>
+                                          <div className="grid gap-2 sm:grid-cols-2">
+                                            {Object.entries(event.details_jsonb as Record<string, unknown>).map(([key, value]) => (
+                                              <DetailItem key={key} label={key.replace(/_/g, " ")} value={String(value ?? "—")} />
+                                            ))}
+                                          </div>
+                                        </div>
+                                      ) : null}
+                                      <div className="flex items-center justify-between">
+                                        {event.is_voided ? (
+                                          <p className="text-xs font-medium text-amber-600">Voided event</p>
+                                        ) : (
+                                          <Button variant="outline" size="sm" onClick={() => handleVoidEvent(event.case_event_id)}>
+                                            Void event
+                                          </Button>
+                                        )}
+                                        <p className="text-xs text-muted-foreground">
+                                          Source: {event.source_table ?? event.source ?? "—"}
+                                        </p>
+                                      </div>
+                                    </AccordionContent>
+                                  </AccordionItem>
+                                ))}
+                              </Accordion>
                             </div>
                           ))}
                         </div>
@@ -911,3 +994,38 @@ export default function CaseDetailsPage() {
     </div>
   );
 }
+  function upsertDetailField(
+    id: string,
+    field: "key" | "value",
+    value: string,
+  ) {
+    setEventDetailFields((current) =>
+      current.map((detail) =>
+        detail.id === id ? { ...detail, [field]: value } : detail,
+      ),
+    );
+  }
+
+  function addDetailField() {
+    setEventDetailFields((current) => [
+      ...current,
+      { id: crypto.randomUUID(), key: "", value: "" },
+    ]);
+  }
+
+  function removeDetailField(id: string) {
+    setEventDetailFields((current) =>
+      current.length === 1 ? current : current.filter((field) => field.id !== id),
+    );
+  }
+
+  const timelineGroupedByDate = useMemo(() => {
+    const grouped = new Map<string, CaseTimelineEventRecord[]>();
+
+    for (const event of data?.timeline ?? []) {
+      const dateLabel = event.event_date ? formatDate(event.event_date) : "No date";
+      grouped.set(dateLabel, [...(grouped.get(dateLabel) ?? []), event]);
+    }
+
+    return Array.from(grouped.entries());
+  }, [data?.timeline]);
