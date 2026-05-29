@@ -303,6 +303,204 @@ export async function getCases(
   );
 }
 
+export type CasesDisplayRecord = Pick<
+  ViewRow<"v_cases_display">,
+  | "id"
+  | "docket_type_id"
+  | "docket_year"
+  | "docket_number"
+  | "docket_month_code"
+  | "docket_display_number"
+  | "docket_type_prefix"
+  | "docket_type_name"
+  | "date_received"
+  | "summary_text"
+  | "current_status_code"
+  | "current_status_label"
+  | "prosecutor_full_name"
+  | "prosecutor_short_name"
+  | "violations"
+  | "created_at"
+>;
+
+const CASES_DISPLAY_COLUMNS =
+  "id, docket_type_id, docket_year, docket_number, docket_month_code, docket_display_number, docket_type_prefix, docket_type_name, date_received, summary_text, current_status_code, current_status_label, prosecutor_full_name, prosecutor_short_name, violations, created_at";
+
+export async function getCasesDisplay(
+  params: CasesCompactQueryParams = {},
+): Promise<SupabaseQueryResult<CasesDisplayRecord[]>> {
+  const { docketType, docketYear, limit } = params;
+
+  return runSupabaseQuery(
+    "getCasesDisplay",
+    "v_cases_display",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      const pageSize = limit === undefined ? 1000 : normalizeLimit(limit, 50, 500);
+      const shouldFetchAllPages = limit === undefined;
+      const allCases: CasesDisplayRecord[] = [];
+
+      for (let start = 0; ; start += pageSize) {
+        let query = supabase
+          .from("v_cases_display")
+          .select(CASES_DISPLAY_COLUMNS)
+          .order("created_at", { ascending: false, nullsFirst: false })
+          .range(start, start + pageSize - 1);
+
+        if (docketType && docketType !== "All") {
+          query = query.eq("docket_type_prefix", docketType);
+        }
+
+        if (docketYear !== undefined) {
+          query = query.eq("docket_year", docketYear);
+        }
+
+        const response = (await query) as unknown as {
+          data: CasesDisplayRecord[] | null;
+          error: unknown;
+        };
+
+        if (response.error) {
+          return response;
+        }
+
+        const page = response.data ?? [];
+        allCases.push(...page);
+
+        if (!shouldFetchAllPages || page.length < pageSize) {
+          break;
+        }
+      }
+
+      return { data: allCases, error: null };
+    },
+    [],
+  );
+}
+
+export type CasePartyParticipantRecord = Pick<TableRow<"case_participants">, "case_id"> & {
+  participant_roles: Pick<TableRow<"participant_roles">, "code" | "display_label"> | null;
+  persons: Pick<TableRow<"persons">, "full_name"> | null;
+};
+
+export async function getCasePartyParticipantsForCases(
+  caseIds: number[],
+): Promise<SupabaseQueryResult<CasePartyParticipantRecord[]>> {
+  const safeCaseIds = Array.from(
+    new Set(caseIds.filter((caseId) => Number.isFinite(caseId))),
+  );
+  const caseIdChunkSize = 500;
+
+  if (safeCaseIds.length === 0) {
+    return ok([]);
+  }
+
+  return runSupabaseQuery(
+    "getCasePartyParticipantsForCases",
+    "case_participants",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      const chunks = [] as Promise<{
+        data: CasePartyParticipantRecord[] | null;
+        error: unknown;
+      }>[];
+
+      for (let start = 0; start < safeCaseIds.length; start += caseIdChunkSize) {
+        const caseIdChunk = safeCaseIds.slice(start, start + caseIdChunkSize);
+        const query = supabase
+          .from("case_participants")
+          .select(
+            `case_id,
+             participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
+             persons:persons!case_participants_person_id_fkey (full_name)`,
+          )
+          .in("case_id", caseIdChunk)
+          .order("case_id", { ascending: true })
+          .order("participant_order", { ascending: true, nullsFirst: false })
+          .order("id", { ascending: true }) as unknown as Promise<{
+            data: CasePartyParticipantRecord[] | null;
+            error: unknown;
+          }>;
+
+        chunks.push(query);
+      }
+
+      const responses = await Promise.all(chunks);
+      const allParticipants: CasePartyParticipantRecord[] = [];
+
+      for (const response of responses) {
+        if (response.error) {
+          return { data: null, error: response.error };
+        }
+
+        allParticipants.push(...(response.data ?? []));
+      }
+
+      return { data: allParticipants, error: null };
+    },
+    [],
+  );
+}
+
+export type CaseClassificationSummaryRecord = Pick<TableRow<"cases">, "id"> & {
+  case_classifications:
+    | Pick<TableRow<"case_classifications">, "display_label">
+    | null;
+};
+
+export async function getCaseClassificationsForCases(
+  caseIds: number[],
+): Promise<SupabaseQueryResult<CaseClassificationSummaryRecord[]>> {
+  const safeCaseIds = Array.from(
+    new Set(caseIds.filter((caseId) => Number.isFinite(caseId))),
+  );
+  const caseIdChunkSize = 1000;
+
+  if (safeCaseIds.length === 0) {
+    return ok([]);
+  }
+
+  return runSupabaseQuery(
+    "getCaseClassificationsForCases",
+    "cases",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      const chunks = [] as Promise<{
+        data: CaseClassificationSummaryRecord[] | null;
+        error: unknown;
+      }>[];
+
+      for (let start = 0; start < safeCaseIds.length; start += caseIdChunkSize) {
+        const caseIdChunk = safeCaseIds.slice(start, start + caseIdChunkSize);
+        const query = supabase
+          .from("cases")
+          .select(
+            "id, case_classifications:case_classifications!cases_case_classification_id_fkey (display_label)",
+          )
+          .in("id", caseIdChunk) as unknown as Promise<{
+            data: CaseClassificationSummaryRecord[] | null;
+            error: unknown;
+          }>;
+
+        chunks.push(query);
+      }
+
+      const responses = await Promise.all(chunks);
+      const classifications: CaseClassificationSummaryRecord[] = [];
+
+      for (const response of responses) {
+        if (response.error) {
+          return { data: null, error: response.error };
+        }
+
+        classifications.push(...(response.data ?? []));
+      }
+
+      return { data: classifications, error: null };
+    },
+    [],
+  );
+}
 
 export type CasesTableRecord = TableRow<"cases"> & {
   docket_display_number?: string | null;

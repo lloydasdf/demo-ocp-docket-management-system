@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sidebar } from '@/components/sidebar';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -9,13 +9,24 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { getCaseParticipantsForCases, getCasesFromTable, getLatestCaseDocketYear, type CaseParticipantRecord, type CasesTableRecord } from '@/lib/supabase/queries';
+import {
+  getCaseClassificationsForCases,
+  getCasePartyParticipantsForCases,
+  getCasesDisplay,
+  getLatestCaseDocketYear,
+  type CaseClassificationSummaryRecord,
+  type CasePartyParticipantRecord,
+  type CasesDisplayRecord,
+} from '@/lib/supabase/queries';
 
-type CompactCase = CasesTableRecord;
+type CompactCase = CasesDisplayRecord;
 type DocketTypeFilter = string;
 type DocketYearFilter = string;
 
 const DEFAULT_DOCKET_TYPE = 'INV';
+const INITIAL_CASE_LIMIT = 500;
+const CASE_ROW_HEIGHT = 49;
+const VIRTUAL_ROW_OVERSCAN = 12;
 
 const docketNumberCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
@@ -35,15 +46,17 @@ const CASE_TABLE_COLUMNS = [
 type CaseTableColumnKey = (typeof CASE_TABLE_COLUMNS)[number]['key'];
 type ColumnWidths = Record<CaseTableColumnKey, number>;
 type CasePartyNames = { complainants: string | null; respondents: string | null };
+type CaseClassificationByCase = Record<number, string>;
 
 type CasesPageCache = {
   cases: CompactCase[];
   partyNamesByCase: Record<number, CasePartyNames>;
+  classificationsByCase: CaseClassificationByCase;
   selectedDocketYear: DocketYearFilter;
   hasAllCases: boolean;
 };
 
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v2';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v3';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -90,7 +103,7 @@ function getInitialColumnWidths(): ColumnWidths {
 }
 
 function formatDisplayDocketNumber(caseDetail: CompactCase) {
-  const prefix = caseDetail.docket_types?.prefix ?? 'Case';
+  const prefix = caseDetail.docket_type_prefix ?? 'Case';
   const month = caseDetail.docket_month_code ? `-${caseDetail.docket_month_code}` : '';
   return (
     caseDetail.docket_display_number ||
@@ -99,38 +112,15 @@ function formatDisplayDocketNumber(caseDetail: CompactCase) {
 }
 
 function caseViolations(caseDetail: CompactCase) {
-  const violations = (caseDetail.case_violations ?? [])
-    .slice()
-    .sort((left, right) => (left.violation_order ?? 0) - (right.violation_order ?? 0))
-    .map((violation) =>
-      violation.raw_violation_text?.trim() ||
-      violation.violations?.short_label ||
-      violation.violations?.canonical_title ||
-      violation.violations?.title ||
-      '',
-    )
-    .filter(Boolean);
-
-  return violations.length > 0 ? violations.join(', ') : caseDetail.summary_text;
+  return caseDetail.violations || caseDetail.summary_text;
 }
 
-function currentAssignment(caseDetail: CompactCase) {
-  return (caseDetail.case_assignments ?? [])
-    .filter((assignment) => !assignment.unassigned_at)
-    .sort((left, right) => (right.assigned_at ?? '').localeCompare(left.assigned_at ?? ''))[0];
+function assignedProsecutor(caseDetail: CompactCase) {
+  return caseDetail.prosecutor_full_name || caseDetail.prosecutor_short_name;
 }
 
-function currentStatus(caseDetail: CompactCase) {
-  return caseDetail.current_status;
-}
-
-function caseClassification(caseDetail: CompactCase) {
-  return (
-    caseDetail.case_classifications?.display_label ??
-    caseDetail.case_classifications?.name ??
-    caseDetail.case_classifications?.code ??
-    '—'
-  );
+function currentStatusLabel(caseDetail: CompactCase) {
+  return caseDetail.current_status_label || caseDetail.current_status_code;
 }
 
 function formatDate(value: string | null | undefined) {
@@ -146,16 +136,16 @@ function getCaseKey(caseDetail: CompactCase) {
   return `${caseDetail.id ?? 'case'}-${formatDisplayDocketNumber(caseDetail)}`;
 }
 
-function personName(participant: CaseParticipantRecord) {
+function personName(participant: CasePartyParticipantRecord) {
   return participant.persons?.full_name?.trim() || 'Unnamed participant';
 }
 
-function participantMatchesRole(participant: CaseParticipantRecord, roleName: 'complainant' | 'respondent') {
+function participantMatchesRole(participant: CasePartyParticipantRecord, roleName: 'complainant' | 'respondent') {
   const roleText = `${participant.participant_roles?.code ?? ''} ${participant.participant_roles?.display_label ?? ''}`.toLowerCase();
   return roleText.includes(roleName);
 }
 
-function summarizePartyNames(participants: CaseParticipantRecord[], roleName: 'complainant' | 'respondent') {
+function summarizePartyNames(participants: CasePartyParticipantRecord[], roleName: 'complainant' | 'respondent') {
   const names = participants.filter((participant) => participantMatchesRole(participant, roleName)).map(personName);
 
   if (names.length === 0) {
@@ -183,8 +173,23 @@ function shouldRefreshCachedPartyNames(
   );
 }
 
-function buildPartyNamesByCase(participants: CaseParticipantRecord[]) {
-  const grouped = new Map<number, CaseParticipantRecord[]>();
+function classificationLabel(classification: CaseClassificationSummaryRecord["case_classifications"]) {
+  return classification?.display_label || null;
+}
+
+function buildClassificationsByCase(classifications: CaseClassificationSummaryRecord[]) {
+  return classifications.reduce((classificationByCase, classification) => {
+    const caseId = classification.id;
+    if (Number.isFinite(caseId)) {
+      classificationByCase[caseId] = classificationLabel(classification.case_classifications) ?? '—';
+    }
+
+    return classificationByCase;
+  }, {} as CaseClassificationByCase);
+}
+
+function buildPartyNamesByCase(participants: CasePartyParticipantRecord[]) {
+  const grouped = new Map<number, CasePartyParticipantRecord[]>();
 
   for (const participant of participants) {
     grouped.set(participant.case_id, [...(grouped.get(participant.case_id) ?? []), participant]);
@@ -201,6 +206,7 @@ function buildPartyNamesByCase(participants: CaseParticipantRecord[]) {
 
 export default function CasesPage() {
   const router = useRouter();
+  const tableContainerRef = useRef<HTMLDivElement | null>(null);
   const [cachedInitialState] = useState(() => readCasesPageCache());
   const [cases, setCases] = useState<CompactCase[]>(cachedInitialState?.cases ?? []);
   const [selectedDocketType, setSelectedDocketType] = useState<DocketTypeFilter>(DEFAULT_DOCKET_TYPE);
@@ -212,6 +218,9 @@ export default function CasesPage() {
   const [selectedCaseKey, setSelectedCaseKey] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(() => getInitialColumnWidths());
   const [partyNamesByCase, setPartyNamesByCase] = useState<Record<number, CasePartyNames>>(cachedInitialState?.partyNamesByCase ?? {});
+  const [classificationsByCase, setClassificationsByCase] = useState<CaseClassificationByCase>(cachedInitialState?.classificationsByCase ?? {});
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(640);
 
   useEffect(() => {
     let isMounted = true;
@@ -224,6 +233,7 @@ export default function CasesPage() {
       writeCasesPageCache({
         cases: nextCases,
         partyNamesByCase: nextPartyNamesByCase,
+        classificationsByCase: readCasesPageCache()?.classificationsByCase ?? classificationsByCase,
         selectedDocketYear: options.selectedYear ?? readCasesPageCache()?.selectedDocketYear ?? selectedDocketYear,
         hasAllCases: options.hasAllCases ?? readCasesPageCache()?.hasAllCases ?? false,
       });
@@ -233,7 +243,7 @@ export default function CasesPage() {
       nextCases: CompactCase[],
       options: { clearOnError?: boolean } = {},
     ) {
-      const participantResult = await getCaseParticipantsForCases(caseIdsForCases(nextCases));
+      const participantResult = await getCasePartyParticipantsForCases(caseIdsForCases(nextCases));
 
       if (!isMounted) {
         return;
@@ -249,9 +259,27 @@ export default function CasesPage() {
       }
     }
 
+    async function loadClassificationsForCases(nextCases: CompactCase[]) {
+      const classificationResult = await getCaseClassificationsForCases(caseIdsForCases(nextCases));
+
+      if (!isMounted || classificationResult.error) {
+        return;
+      }
+
+      const nextClassificationsByCase = buildClassificationsByCase(classificationResult.data);
+      setClassificationsByCase(nextClassificationsByCase);
+      writeCasesPageCache({
+        cases: nextCases,
+        partyNamesByCase: readCasesPageCache()?.partyNamesByCase ?? partyNamesByCase,
+        classificationsByCase: nextClassificationsByCase,
+        selectedDocketYear: readCasesPageCache()?.selectedDocketYear ?? selectedDocketYear,
+        hasAllCases: readCasesPageCache()?.hasAllCases ?? false,
+      });
+    }
+
     async function loadAllCasesInBackground() {
       setIsLoadingAllCases(true);
-      const allCasesResult = await getCasesFromTable();
+      const allCasesResult = await getCasesDisplay();
 
       if (!isMounted) {
         return;
@@ -269,7 +297,8 @@ export default function CasesPage() {
         readCasesPageCache()?.partyNamesByCase ?? partyNamesByCase,
         { hasAllCases: true },
       );
-      await loadPartyNamesForCases(allCasesResult.data);
+      void loadPartyNamesForCases(allCasesResult.data);
+      void loadClassificationsForCases(allCasesResult.data);
     }
 
     async function loadCases() {
@@ -278,6 +307,10 @@ export default function CasesPage() {
 
         if (shouldRefreshCachedPartyNames(cachedInitialState.cases, cachedInitialState.partyNamesByCase)) {
           void loadPartyNamesForCases(cachedInitialState.cases);
+        }
+
+        if (Object.keys(cachedInitialState.classificationsByCase ?? {}).length === 0) {
+          void loadClassificationsForCases(cachedInitialState.cases);
         }
 
         if (!cachedInitialState.hasAllCases) {
@@ -303,11 +336,13 @@ export default function CasesPage() {
       }
 
       const defaultDocketYear = latestYearResult.data ?? undefined;
-      setSelectedDocketYear(defaultDocketYear ? String(defaultDocketYear) : 'All');
+      const selectedYear = defaultDocketYear ? String(defaultDocketYear) : 'All';
+      setSelectedDocketYear(selectedYear);
 
-      const initialCasesResult = await getCasesFromTable({
+      const initialCasesResult = await getCasesDisplay({
         docketType: DEFAULT_DOCKET_TYPE,
         docketYear: defaultDocketYear,
+        limit: INITIAL_CASE_LIMIT,
       });
 
       if (!isMounted) {
@@ -321,16 +356,15 @@ export default function CasesPage() {
       } else {
         setErrorMessage(null);
         setCases(initialCasesResult.data);
-        cacheCasesPageState(initialCasesResult.data, {}, { selectedYear: defaultDocketYear ? String(defaultDocketYear) : 'All' });
-        await loadPartyNamesForCases(initialCasesResult.data, { clearOnError: true });
+        cacheCasesPageState(initialCasesResult.data, {}, { selectedYear });
+        void loadPartyNamesForCases(initialCasesResult.data, { clearOnError: true });
+        void loadClassificationsForCases(initialCasesResult.data);
       }
 
-      if (isMounted) {
-        setIsLoading(false);
+      setIsLoading(false);
 
-        if (!initialCasesResult.error) {
-          void loadAllCasesInBackground();
-        }
+      if (!initialCasesResult.error) {
+        void loadAllCasesInBackground();
       }
     }
 
@@ -341,11 +375,35 @@ export default function CasesPage() {
     };
   }, []);
 
+  useEffect(() => {
+    const container = tableContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    function syncViewport() {
+      setViewportHeight(container?.clientHeight || 640);
+      setScrollTop(container?.scrollTop || 0);
+    }
+
+    syncViewport();
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', syncViewport);
+      return () => window.removeEventListener('resize', syncViewport);
+    }
+
+    const resizeObserver = new ResizeObserver(syncViewport);
+    resizeObserver.observe(container);
+
+    return () => resizeObserver.disconnect();
+  }, [isLoading, cases.length]);
+
   const filteredCases = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
 
     return cases.filter((caseDetail) => {
-      if (selectedDocketType !== 'All' && caseDetail.docket_types?.prefix !== selectedDocketType) {
+      if (selectedDocketType !== 'All' && caseDetail.docket_type_prefix !== selectedDocketType) {
         return false;
       }
 
@@ -360,14 +418,13 @@ export default function CasesPage() {
       const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
       const searchableText = [
         formatDisplayDocketNumber(caseDetail),
-        caseDetail.docket_types?.prefix ?? '',
+        caseDetail.docket_type_prefix ?? '',
         String(caseDetail.docket_year ?? ''),
         casePartyNames?.complainants ?? '',
         casePartyNames?.respondents ?? '',
         caseViolations(caseDetail) ?? '',
-        currentAssignment(caseDetail)?.prosecutors?.full_name ?? currentAssignment(caseDetail)?.prosecutors?.short_name ?? '',
-        caseClassification(caseDetail),
-        currentStatus(caseDetail)?.display_label ?? currentStatus(caseDetail)?.code ?? caseDetail.current_status_raw ?? '',
+        assignedProsecutor(caseDetail) ?? '',
+        currentStatusLabel(caseDetail) ?? '',
       ]
         .join(' ')
         .toLowerCase();
@@ -389,7 +446,7 @@ export default function CasesPage() {
 
   const docketTypeFilters = useMemo(() => {
     const values = Array.from(
-      new Set(cases.map((caseDetail) => caseDetail.docket_types?.prefix).filter((value): value is string => Boolean(value))),
+      new Set(cases.map((caseDetail) => caseDetail.docket_type_prefix).filter((value): value is string => Boolean(value))),
     ).sort();
     return ['All', ...values];
   }, [cases]);
@@ -405,6 +462,18 @@ export default function CasesPage() {
     () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0),
     [columnWidths],
   );
+
+  const virtualRows = useMemo(() => {
+    const visibleCount = Math.ceil(viewportHeight / CASE_ROW_HEIGHT);
+    const startIndex = Math.max(0, Math.floor(scrollTop / CASE_ROW_HEIGHT) - VIRTUAL_ROW_OVERSCAN);
+    const endIndex = Math.min(sortedCases.length, startIndex + visibleCount + VIRTUAL_ROW_OVERSCAN * 2);
+
+    return {
+      rows: sortedCases.slice(startIndex, endIndex),
+      topPadding: startIndex * CASE_ROW_HEIGHT,
+      bottomPadding: Math.max(0, (sortedCases.length - endIndex) * CASE_ROW_HEIGHT),
+    };
+  }, [scrollTop, sortedCases, viewportHeight]);
 
   function handleColumnResize(columnKey: CaseTableColumnKey, startX: number) {
     const column = CASE_TABLE_COLUMNS.find((candidate) => candidate.key === columnKey);
@@ -511,8 +580,10 @@ export default function CasesPage() {
                 <div className="py-8 text-center text-sm text-muted-foreground">No cases found.</div>
               ) : (
                 <div
+                  ref={tableContainerRef}
                   className="h-full min-h-0 overflow-auto rounded-lg border border-border"
                   aria-label="Cases table with native horizontal and vertical scrollbars"
+                  onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
                 >
                   <table className="w-full caption-bottom table-fixed text-sm" style={{ width: tableWidth, minWidth: '100%' }}>
                     <colgroup>
@@ -539,7 +610,13 @@ export default function CasesPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {sortedCases.map((caseDetail) => {
+                      {virtualRows.topPadding > 0 ? (
+                        <TableRow aria-hidden="true">
+                          <TableCell colSpan={CASE_TABLE_COLUMNS.length} style={{ height: virtualRows.topPadding, padding: 0 }} />
+                        </TableRow>
+                      ) : null}
+
+                      {virtualRows.rows.map((caseDetail) => {
                         const caseKey = getCaseKey(caseDetail);
                         const isSelected = selectedCaseKey === caseKey;
 
@@ -547,7 +624,7 @@ export default function CasesPage() {
                           <TableRow
                             key={caseKey}
                             aria-selected={isSelected}
-                            className={`cursor-pointer ${isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-muted/50'}`}
+                            className={`h-12 cursor-pointer ${isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-muted/50'}`}
                             tabIndex={caseDetail.id ? 0 : -1}
                             onClick={() => setSelectedCaseKey(caseKey)}
                             onDoubleClick={() => {
@@ -574,7 +651,7 @@ export default function CasesPage() {
                             <TableCell className="truncate font-medium text-primary">
                               {formatDisplayDocketNumber(caseDetail)}
                             </TableCell>
-                            <TableCell className="truncate text-sm">{caseDetail.docket_types?.name ?? caseDetail.docket_types?.prefix ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{caseDetail.docket_type_name ?? caseDetail.docket_type_prefix ?? '—'}</TableCell>
                             <TableCell className="truncate text-sm">{caseDetail.docket_year ?? '—'}</TableCell>
                             <TableCell className="truncate text-sm">
                               {caseDetail.id ? partyNamesByCase[caseDetail.id]?.complainants ?? '—' : '—'}
@@ -583,15 +660,21 @@ export default function CasesPage() {
                               {caseDetail.id ? partyNamesByCase[caseDetail.id]?.respondents ?? '—' : '—'}
                             </TableCell>
                             <TableCell className="truncate text-sm">{caseViolations(caseDetail) ?? '—'}</TableCell>
-                            <TableCell className="truncate text-sm">{caseClassification(caseDetail)}</TableCell>
-                            <TableCell className="truncate text-sm">{currentAssignment(caseDetail)?.prosecutors?.full_name ?? currentAssignment(caseDetail)?.prosecutors?.short_name ?? '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{caseDetail.id ? classificationsByCase[caseDetail.id] ?? '—' : '—'}</TableCell>
+                            <TableCell className="truncate text-sm">{assignedProsecutor(caseDetail) ?? '—'}</TableCell>
                             <TableCell>
-                              <Badge variant="outline">{currentStatus(caseDetail)?.display_label ?? currentStatus(caseDetail)?.code ?? caseDetail.current_status_raw ?? '—'}</Badge>
+                              <Badge variant="outline">{currentStatusLabel(caseDetail) ?? '—'}</Badge>
                             </TableCell>
                             <TableCell className="truncate text-sm">{formatDate(caseDetail.date_received)}</TableCell>
                           </TableRow>
                         );
                       })}
+
+                      {virtualRows.bottomPadding > 0 ? (
+                        <TableRow aria-hidden="true">
+                          <TableCell colSpan={CASE_TABLE_COLUMNS.length} style={{ height: virtualRows.bottomPadding, padding: 0 }} />
+                        </TableRow>
+                      ) : null}
                     </TableBody>
                   </table>
                 </div>
