@@ -7,6 +7,8 @@ const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export type SupabaseBrowserClient = SupabaseClient<Database>;
 
+let browserClient: SupabaseBrowserClient | null = null;
+
 export function getSupabaseEnvironmentStatus() {
   return {
     hasUrl: Boolean(SUPABASE_URL),
@@ -16,19 +18,25 @@ export function getSupabaseEnvironmentStatus() {
 }
 
 export async function createSupabaseBrowserClient(): Promise<SupabaseBrowserClient> {
+  if (browserClient) {
+    return browserClient;
+  }
+
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     throw new Error(
       'Missing Supabase environment variables. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.',
     );
   }
 
-  return createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  browserClient = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
     },
   });
+
+  return browserClient;
 }
 
 export async function getSupabaseBrowserClient(): Promise<SupabaseBrowserClient> {

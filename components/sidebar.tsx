@@ -1,15 +1,18 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
+import type { User } from '@supabase/supabase-js';
 import {
   FileText,
   Search,
   PanelLeftClose,
   PanelLeftOpen,
+  LogOut,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 
 const SIDEBAR_AUTO_COLLAPSE_QUERY = '(max-width: 1024px)';
 const SIDEBAR_HIDE_QUERY = '(max-width: 768px)';
@@ -29,11 +32,84 @@ const navigation = [
   },
 ];
 
+function getLoginPath(pathname: string) {
+  const returnTo = pathname.startsWith('/') ? pathname : '/cases';
+  return `/login?returnTo=${encodeURIComponent(returnTo)}`;
+}
+
+function getUserInitials(user: User | null) {
+  const email = user?.email?.trim();
+
+  if (!email) {
+    return 'AU';
+  }
+
+  const [namePart] = email.split('@');
+  const parts = namePart.split(/[._-]+/).filter(Boolean);
+
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  }
+
+  return namePart.slice(0, 2).toUpperCase();
+}
+
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isCompactScreen, setIsCompactScreen] = useState(false);
   const [isCompactOpen, setIsCompactOpen] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function syncAuthState() {
+      const supabase = await getSupabaseBrowserClient();
+      const { data } = await supabase.auth.getSession();
+
+      if (!isMounted) {
+        return;
+      }
+
+      setUser(data.session?.user ?? null);
+
+      if (!data.session) {
+        router.replace(getLoginPath(pathname));
+      }
+    }
+
+    syncAuthState();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [pathname, router]);
+
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
+    async function subscribeToAuthChanges() {
+      const supabase = await getSupabaseBrowserClient();
+      const { data } = supabase.auth.onAuthStateChange((event, session) => {
+        setUser(session?.user ?? null);
+
+        if (event === 'SIGNED_OUT') {
+          router.replace(getLoginPath(pathname));
+        }
+      });
+
+      unsubscribe = () => data.subscription.unsubscribe();
+    }
+
+    subscribeToAuthChanges();
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [pathname, router]);
 
   useEffect(() => {
     const collapseQuery = window.matchMedia(SIDEBAR_AUTO_COLLAPSE_QUERY);
@@ -58,6 +134,7 @@ export function Sidebar() {
     };
   }, []);
 
+  const userInitials = useMemo(() => getUserInitials(user), [user]);
   const isIconOnly = !isCompactScreen && isCollapsed;
   const ToggleIcon = isCompactScreen || !isCollapsed ? PanelLeftClose : PanelLeftOpen;
   const toggleLabel = isCompactScreen ? 'Hide sidebar' : isCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
@@ -69,6 +146,14 @@ export function Sidebar() {
     }
 
     setIsCollapsed((current) => !current);
+  }
+
+  async function handleSignOut() {
+    setIsSigningOut(true);
+    const supabase = await getSupabaseBrowserClient();
+    await supabase.auth.signOut();
+    setIsSigningOut(false);
+    router.replace('/login');
   }
 
   return (
@@ -165,15 +250,33 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-sidebar-border">
+      <div className="space-y-3 border-t border-sidebar-border p-4">
         {isIconOnly ? (
-          <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full border border-sidebar-border text-sm font-semibold text-sidebar-foreground">
-            AU
-          </div>
+          <button
+            type="button"
+            className="mx-auto flex h-9 w-9 items-center justify-center rounded-full border border-sidebar-border text-sm font-semibold text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+            onClick={handleSignOut}
+            disabled={isSigningOut}
+            aria-label="Sign out"
+            title="Sign out"
+          >
+            {isSigningOut ? <LogOut className="h-4 w-4" /> : userInitials}
+          </button>
         ) : (
-          <div className="text-xs text-sidebar-foreground/60 text-center">
-            <p>Logged in as</p>
-            <p className="font-medium text-sidebar-foreground">Admin User</p>
+          <div className="space-y-3 text-center text-xs text-sidebar-foreground/60">
+            <div>
+              <p>Logged in as</p>
+              <p className="truncate font-medium text-sidebar-foreground">{user?.email ?? 'Checking session...'}</p>
+            </div>
+            <button
+              type="button"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-sidebar-border px-3 py-2 text-xs font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={handleSignOut}
+              disabled={isSigningOut}
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              {isSigningOut ? 'Signing out...' : 'Sign out'}
+            </button>
           </div>
         )}
       </div>
