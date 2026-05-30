@@ -627,7 +627,7 @@ export default function CaseDetailsPage() {
           {isLoading ? (
             <Card>
               <CardContent className="py-10 text-center text-sm text-muted-foreground">
-                Loading case details from Supabase...
+                Loading case details...
               </CardContent>
             </Card>
           ) : errorMessage ? (

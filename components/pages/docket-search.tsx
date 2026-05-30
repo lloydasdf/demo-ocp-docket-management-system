@@ -197,7 +197,7 @@ export default function DocketSearch() {
           <CardTitle>Search Results</CardTitle>
           <CardDescription>
             {isLoading
-              ? 'Loading live cases from Supabase...'
+              ? 'Loading live cases...'
               : filteredCases.length === 0
                 ? 'No cases found matching your criteria'
                 : `Showing ${filteredCases.length} case${filteredCases.length === 1 ? '' : 's'}${

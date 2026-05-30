@@ -222,7 +222,7 @@ export default function PersonDetailsPage() {
           {isLoading ? (
             <Card>
               <CardContent className="py-10 text-center text-sm text-muted-foreground">
-                Loading person details from Supabase...
+                Loading person details...
               </CardContent>
             </Card>
           ) : errorMessage ? (

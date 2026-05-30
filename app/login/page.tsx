@@ -6,7 +6,7 @@ import { LockKeyhole, ShieldCheck } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { getSupabaseBrowserClient, getSupabaseEnvironmentStatus } from '@/lib/supabase/client';
@@ -102,18 +102,14 @@ export default function LoginPage() {
             <ShieldCheck className="h-7 w-7" />
           </div>
           <h1 className="mt-4 text-3xl font-bold tracking-tight text-foreground">OCP Docket System</h1>
-          <p className="mt-2 text-sm text-muted-foreground">Sign in with your Supabase Auth account to access protected docket records.</p>
         </div>
 
         <Card className="shadow-lg">
-          <CardHeader>
+          <CardHeader className="gap-0">
             <CardTitle className="flex items-center gap-2">
               <LockKeyhole className="h-5 w-5" />
               Secure login
             </CardTitle>
-            <CardDescription>
-              Your account must be linked to an active OCP user record before RLS policies will allow data access.
-            </CardDescription>
           </CardHeader>
           <CardContent>
             {!supabaseStatus.isConfigured ? (
