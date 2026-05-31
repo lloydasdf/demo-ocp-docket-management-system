@@ -32,6 +32,10 @@ function getClearanceSearchRpcName(operation: string) {
     return "search_clearance_possible_matches";
   }
 
+  if (operation === "searchClearancePhoneticMatches") {
+    return "search_clearance_phonetic_matches";
+  }
+
   return null;
 }
 
@@ -173,7 +177,7 @@ export interface ClearanceSearchResult {
   lastUpdated: string;
   confidenceScore: number;
   matchDetails: string;
-  matchType: "exact" | "alias" | "possible";
+  matchType: "exact" | "alias" | "variant" | "fuzzy" | "phonetic";
   roleLabel: string;
 }
 
@@ -1675,8 +1679,14 @@ export async function getDashboardStats(): Promise<
 
 async function searchClearanceRpc(
   params: ClearanceSearchParams,
-  operation: "searchClearanceRecords" | "searchClearancePossibleMatches",
-  rpcName: "search_clearance_records" | "search_clearance_possible_matches",
+  operation:
+    | "searchClearanceRecords"
+    | "searchClearancePossibleMatches"
+    | "searchClearancePhoneticMatches",
+  rpcName:
+    | "search_clearance_records"
+    | "search_clearance_possible_matches"
+    | "search_clearance_phonetic_matches",
 ): Promise<SupabaseQueryResult<ClearanceSearchResult[]>> {
   const safeQuery = params.query.trim();
   const searchType = params.searchType ?? "all";
@@ -1782,6 +1792,15 @@ export async function searchClearancePossibleMatches(
   );
 }
 
+export async function searchClearancePhoneticMatches(
+  params: ClearanceSearchParams,
+): Promise<SupabaseQueryResult<ClearanceSearchResult[]>> {
+  return searchClearanceRpc(
+    params,
+    "searchClearancePhoneticMatches",
+    "search_clearance_phonetic_matches",
+  );
+}
 
 export async function getParticipantRoles(): Promise<
   SupabaseQueryResult<TableRow<"participant_roles">[]>
