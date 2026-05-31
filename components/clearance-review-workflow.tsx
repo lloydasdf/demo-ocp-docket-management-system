@@ -25,7 +25,7 @@ import { useState } from 'react';
 interface SearchMatch {
   docketNumber: string;
   respondentName: string;
-  matchType: 'exact' | 'alias' | 'fuzzy';
+  matchType: 'exact' | 'alias' | 'variant' | 'fuzzy' | 'phonetic';
   confidence: number;
   caseStatus: string;
 }
@@ -134,7 +134,9 @@ export function ClearanceReviewWorkflow({
                       <Badge variant="secondary" className="text-xs">
                         {match.matchType === 'exact' && 'Exact Match'}
                         {match.matchType === 'alias' && 'Alias Match'}
+                        {match.matchType === 'variant' && 'Name Variant'}
                         {match.matchType === 'fuzzy' && 'Similar Name'}
+                        {match.matchType === 'phonetic' && 'Sound-alike Name'}
                       </Badge>
                     </div>
                   </div>

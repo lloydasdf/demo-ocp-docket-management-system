@@ -25,6 +25,7 @@ import {
 import {
   type ClearanceSearchResult,
   type ClearanceSearchType,
+  searchClearancePhoneticMatches,
   searchClearancePossibleMatches,
   searchClearanceRecords,
 } from "@/lib/supabase/queries";
@@ -50,6 +51,34 @@ const confidenceGroups = {
   },
 } as const;
 
+const phoneticConfidenceGroups = {
+  High: {
+    cardClass: "border-slate-200 bg-slate-50/50",
+    itemClass: "border-slate-200 hover:bg-slate-50/50",
+    badgeClass: "bg-slate-500",
+  },
+  Medium: {
+    cardClass: "border-slate-200 bg-slate-50/40",
+    itemClass: "border-slate-200 hover:bg-slate-50/40",
+    badgeClass: "bg-slate-400",
+  },
+  Low: {
+    cardClass: "border-gray-200 bg-gray-50/40",
+    itemClass: "border-gray-200 hover:bg-gray-50/40",
+    badgeClass: "bg-gray-500",
+  },
+} satisfies Record<
+  keyof typeof confidenceGroups,
+  { cardClass: string; itemClass: string; badgeClass: string }
+>;
+
+function getSearchTokens(query: string) {
+  return query.trim().split(/\s+/).filter(Boolean);
+}
+
+function hasMultipleNameTokens(name: string) {
+  return getSearchTokens(name).length > 1;
+}
 
 function groupResults(results: ClearanceSearchResult[]) {
   return results.reduce<
@@ -73,14 +102,22 @@ function groupResults(results: ClearanceSearchResult[]) {
 interface ResultGroupProps {
   label: keyof typeof confidenceGroups;
   results: ClearanceSearchResult[];
+  confidenceTone?: "standard" | "phonetic";
 }
 
-function ResultGroup({ label, results }: ResultGroupProps) {
+function ResultGroup({
+  label,
+  results,
+  confidenceTone = "standard",
+}: ResultGroupProps) {
   if (results.length === 0) {
     return null;
   }
 
-  const config = confidenceGroups[label];
+  const config =
+    confidenceTone === "phonetic"
+      ? phoneticConfidenceGroups[label]
+      : confidenceGroups[label];
 
   return (
     <Card className={config.cardClass}>
@@ -172,6 +209,16 @@ export default function ClearanceSearch() {
   );
   const [hasSearchedPossibleMatches, setHasSearchedPossibleMatches] =
     useState(false);
+  const [phoneticMatchResults, setPhoneticMatchResults] = useState<
+    ClearanceSearchResult[]
+  >([]);
+  const [isSearchingPhoneticMatches, setIsSearchingPhoneticMatches] =
+    useState(false);
+  const [phoneticMatchError, setPhoneticMatchError] = useState<string | null>(
+    null,
+  );
+  const [hasSearchedPhoneticMatches, setHasSearchedPhoneticMatches] =
+    useState(false);
   const possibleMatchSearchIdRef = useRef(0);
 
   useEffect(() => {
@@ -183,6 +230,10 @@ export default function ClearanceSearch() {
     setPossibleMatchError(null);
     setHasSearchedPossibleMatches(false);
     setIsSearchingPossibleMatches(false);
+    setPhoneticMatchResults([]);
+    setPhoneticMatchError(null);
+    setHasSearchedPhoneticMatches(false);
+    setIsSearchingPhoneticMatches(false);
 
     if (!trimmedQuery) {
       setSearchResults([]);
@@ -237,6 +288,40 @@ export default function ClearanceSearch() {
 
       setHasSearchedPossibleMatches(true);
       setIsSearchingPossibleMatches(false);
+
+      const shouldSearchPhoneticMatches =
+        getSearchTokens(trimmedQuery).length > 1;
+
+      if (!shouldSearchPhoneticMatches) {
+        return;
+      }
+
+      setIsSearchingPhoneticMatches(true);
+
+      const phoneticResult = await searchClearancePhoneticMatches({
+        query: trimmedQuery,
+        searchType,
+        limit: 50,
+      });
+
+      if (!isCurrent || possibleMatchSearchIdRef.current !== searchId) {
+        return;
+      }
+
+      if (phoneticResult.error) {
+        setPhoneticMatchResults([]);
+        setPhoneticMatchError(phoneticResult.error.message);
+      } else {
+        setPhoneticMatchResults(
+          phoneticResult.data.filter((result) =>
+            hasMultipleNameTokens(result.respondentName),
+          ),
+        );
+        setPhoneticMatchError(null);
+      }
+
+      setHasSearchedPhoneticMatches(true);
+      setIsSearchingPhoneticMatches(false);
     }, 300);
 
     return () => {
@@ -253,6 +338,10 @@ export default function ClearanceSearch() {
     () => groupResults(possibleMatchResults),
     [possibleMatchResults],
   );
+  const groupedPhoneticMatchResults = useMemo(
+    () => groupResults(phoneticMatchResults),
+    [phoneticMatchResults],
+  );
   const trimmedSearchQuery = searchQuery.trim();
   const shouldShowPossibleMatches =
     !isSearching &&
@@ -261,6 +350,14 @@ export default function ClearanceSearch() {
       hasSearchedPossibleMatches ||
       Boolean(possibleMatchError) ||
       possibleMatchResults.length > 0);
+  const shouldShowPhoneticMatches =
+    !isSearching &&
+    !searchError &&
+    getSearchTokens(trimmedSearchQuery).length > 1 &&
+    (isSearchingPhoneticMatches ||
+      hasSearchedPhoneticMatches ||
+      Boolean(phoneticMatchError) ||
+      phoneticMatchResults.length > 0);
 
   return (
     <div className="p-8 space-y-6">
@@ -313,7 +410,8 @@ export default function ClearanceSearch() {
           </div>
           <p className="text-xs text-muted-foreground">
             Searches exact normalized names first, then automatically reviews
-            possible spelling variants and misspelled names separately.
+            possible spelling variants, misspelled names, and sound-alike names
+            separately.
           </p>
         </CardContent>
       </Card>
@@ -414,6 +512,69 @@ export default function ClearanceSearch() {
                         <CardContent className="text-center py-8">
                           <p className="text-muted-foreground">
                             No possible matches found for &quot;{searchQuery}&quot;
+                          </p>
+                        </CardContent>
+                      </Card>
+                    )
+                  )}
+                </section>
+              )}
+
+              {shouldShowPhoneticMatches && (
+                <section className="space-y-4">
+                  <div>
+                    <h2 className="text-2xl font-semibold">
+                      Sound-alike Matches — broad manual review required
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      These are phonetic/sound-alike results only. Verify
+                      carefully before making a clearance decision.
+                    </p>
+                  </div>
+
+                  {phoneticMatchError && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertTitle>Unable to run sound-alike search</AlertTitle>
+                      <AlertDescription>{phoneticMatchError}</AlertDescription>
+                    </Alert>
+                  )}
+
+                  {isSearchingPhoneticMatches && (
+                    <Card>
+                      <CardContent className="text-center py-8">
+                        <p className="text-muted-foreground">
+                          Searching phonetic sound-alike names…
+                        </p>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {phoneticMatchResults.length > 0 ? (
+                    <>
+                      <ResultGroup
+                        label="High"
+                        results={groupedPhoneticMatchResults.High}
+                        confidenceTone="phonetic"
+                      />
+                      <ResultGroup
+                        label="Medium"
+                        results={groupedPhoneticMatchResults.Medium}
+                        confidenceTone="phonetic"
+                      />
+                      <ResultGroup
+                        label="Low"
+                        results={groupedPhoneticMatchResults.Low}
+                        confidenceTone="phonetic"
+                      />
+                    </>
+                  ) : (
+                    hasSearchedPhoneticMatches &&
+                    !phoneticMatchError && (
+                      <Card>
+                        <CardContent className="text-center py-8">
+                          <p className="text-muted-foreground">
+                            No sound-alike matches found for &quot;{searchQuery}&quot;
                           </p>
                         </CardContent>
                       </Card>
