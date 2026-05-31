@@ -16,7 +16,15 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   type ClearanceSearchResult,
+  type ClearanceSearchType,
   searchClearanceRecords,
 } from "@/lib/supabase/queries";
 
@@ -41,25 +49,6 @@ const confidenceGroups = {
   },
 } as const;
 
-function normalizeStatusForBadge(status: string) {
-  const normalized = status.toLowerCase();
-
-  if (normalized.includes("file")) return "Filed";
-  if (normalized.includes("dismiss")) return "Dismissed";
-  if (normalized.includes("resolv") || normalized.includes("close"))
-    return "Resolved";
-  if (normalized.includes("rfi") || normalized.includes("information"))
-    return "RFI";
-
-  return "Pending";
-}
-
-
-function visibleMatchDetails(matchDetails: string) {
-  return matchDetails.toLowerCase().startsWith("phonetic token match:")
-    ? null
-    : matchDetails;
-}
 
 function groupResults(results: ClearanceSearchResult[]) {
   return results.reduce<
@@ -102,7 +91,7 @@ function ResultGroup({ label, results }: ResultGroupProps) {
       </CardHeader>
       <CardContent className="space-y-3">
         {results.map((result) => {
-          const matchDetails = visibleMatchDetails(result.matchDetails);
+          const matchDetails = result.matchDetails;
 
           return (
             <Link
@@ -144,10 +133,7 @@ function ResultGroup({ label, results }: ResultGroupProps) {
               ) : null}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <StatusBadge
-                    status={normalizeStatusForBadge(result.status) as any}
-                    size="sm"
-                  />
+                  <StatusBadge status={result.status} size="sm" />
                   {result.respondentAliases.length > 0 && (
                     <Badge variant="outline" className="text-xs">
                       Aliases: {result.respondentAliases.slice(0, 3).join(", ")}
@@ -169,6 +155,7 @@ function ResultGroup({ label, results }: ResultGroupProps) {
 
 export default function ClearanceSearch() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchType, setSearchType] = useState<ClearanceSearchType>("all");
   const [searchResults, setSearchResults] = useState<ClearanceSearchResult[]>(
     [],
   );
@@ -191,7 +178,7 @@ export default function ClearanceSearch() {
     const timer = window.setTimeout(async () => {
       const result = await searchClearanceRecords({
         query: trimmedQuery,
-        searchType: "all",
+        searchType,
         limit: 50,
       });
 
@@ -214,7 +201,7 @@ export default function ClearanceSearch() {
       isCurrent = false;
       window.clearTimeout(timer);
     };
-  }, [searchQuery]);
+  }, [searchQuery, searchType]);
 
   const groupedResults = useMemo(
     () => groupResults(searchResults),
@@ -230,31 +217,50 @@ export default function ClearanceSearch() {
           </h1>
           <Badge variant="secondary" className="gap-1">
             <Database className="h-3.5 w-3.5" />
-            Live PostgreSQL
+            Live Supabase
           </Badge>
         </div>
       </div>
 
       <Card>
         <CardContent className="space-y-4 pt-6">
-          <div>
-            <Label htmlFor="search-query">Search Query</Label>
-            <div className="relative mt-1">
-              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                id="search-query"
-                placeholder="Enter name or alias..."
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                className="pl-10 text-lg"
-              />
+          <div className="grid gap-4 md:grid-cols-[1fr_220px]">
+            <div>
+              <Label htmlFor="search-query">Search Query</Label>
+              <div className="relative mt-1">
+                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  id="search-query"
+                  placeholder="Enter name or alias..."
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  className="pl-10 text-lg"
+                />
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">
-              Exact full-name matches rank highest. Prefix, alias, fuzzy,
-              phonetic, and B/V sound-alike matches are included, but
-              single-token surname or phonetic matches stay in review ranges.
-            </p>
+            <div>
+              <Label htmlFor="search-type">Search Mode</Label>
+              <Select
+                value={searchType}
+                onValueChange={(value) =>
+                  setSearchType(value as ClearanceSearchType)
+                }
+              >
+                <SelectTrigger id="search-type" className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Names + aliases</SelectItem>
+                  <SelectItem value="name">Name only</SelectItem>
+                  <SelectItem value="alias">Alias only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Searches exact normalized name and alias matches. Possible
+            misspelled and sound-alike matches will be added later.
+          </p>
         </CardContent>
       </Card>
 
@@ -267,12 +273,8 @@ export default function ClearanceSearch() {
             <p>
               This means the app reached Supabase, but Supabase does not yet
               have the <code>search_clearance_records</code> RPC that powers the
-              live fuzzy search. Apply
-              <code>
-                {" "}
-                supabase/migrations/20260512000000_clearance_search_person_details.sql
-              </code>
-              , which enables pg_trgm/fuzzystrmatch and creates that function.
+              live exact normalized clearance search. Install the Phase 1
+              clearance search RPC, then refresh this page.
             </p>
           </AlertDescription>
         </Alert>
@@ -284,7 +286,7 @@ export default function ClearanceSearch() {
             <Card>
               <CardContent className="text-center py-8">
                 <p className="text-muted-foreground">
-                  Searching live PostgreSQL records…
+                  Searching live Supabase records…
                 </p>
               </CardContent>
             </Card>

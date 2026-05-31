@@ -157,7 +157,7 @@ export interface ClearanceSearchResult {
   lastUpdated: string;
   confidenceScore: number;
   matchDetails: string;
-  matchType: "exact" | "alias" | "fuzzy" | "phonetic";
+  matchType: "exact" | "alias";
   roleLabel: string;
 }
 
@@ -195,11 +195,11 @@ function normalizeClearanceSearchRow(
     respondentName: row.full_name ?? "Unknown person",
     respondentAliases: row.aliases ?? [],
     age: row.age,
-    status: row.status ?? "Pending",
+    status: row.status?.trim() || "Unknown",
     lastUpdated: row.last_updated ?? new Date(0).toISOString(),
     confidenceScore: Math.min(Math.max(confidence, 0), 100),
-    matchDetails: row.match_details ?? "Database fuzzy match",
-    matchType: row.match_type ?? "fuzzy",
+    matchDetails: row.match_details ?? "Exact normalized match",
+    matchType: row.match_type ?? "exact",
     roleLabel: row.role_label ?? "Participant",
   };
 }

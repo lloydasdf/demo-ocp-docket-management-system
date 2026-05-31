@@ -2,7 +2,7 @@ import { Badge } from '@/components/ui/badge';
 import { CaseStatus } from '@/lib/types';
 
 interface StatusBadgeProps {
-  status: CaseStatus;
+  status: CaseStatus | string | null | undefined;
   size?: 'sm' | 'md' | 'lg';
 }
 
@@ -34,8 +34,19 @@ const statusConfig: Record<CaseStatus, { bg: string; text: string; label: string
   },
 };
 
+function isKnownCaseStatus(status: string): status is CaseStatus {
+  return status in statusConfig;
+}
+
 export function StatusBadge({ status, size = 'md' }: StatusBadgeProps) {
-  const config = statusConfig[status];
+  const statusLabel = status?.trim() || 'Unknown';
+  const config = isKnownCaseStatus(statusLabel)
+    ? statusConfig[statusLabel]
+    : {
+        bg: 'bg-muted',
+        text: 'text-muted-foreground',
+        label: statusLabel,
+      };
   const sizeClasses = {
     sm: 'text-xs px-2 py-1',
     md: 'text-sm px-3 py-1.5',
