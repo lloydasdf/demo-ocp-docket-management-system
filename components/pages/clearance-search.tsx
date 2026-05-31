@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Database, Search as SearchIcon } from "lucide-react";
 
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -25,6 +26,7 @@ import {
 import {
   type ClearanceSearchResult,
   type ClearanceSearchType,
+  searchClearancePossibleMatches,
   searchClearanceRecords,
 } from "@/lib/supabase/queries";
 
@@ -161,9 +163,23 @@ export default function ClearanceSearch() {
   );
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [possibleMatchResults, setPossibleMatchResults] = useState<
+    ClearanceSearchResult[]
+  >([]);
+  const [isSearchingPossibleMatches, setIsSearchingPossibleMatches] =
+    useState(false);
+  const [possibleMatchError, setPossibleMatchError] = useState<string | null>(
+    null,
+  );
+  const possibleMatchSearchIdRef = useRef(0);
 
   useEffect(() => {
     const trimmedQuery = searchQuery.trim();
+
+    possibleMatchSearchIdRef.current += 1;
+    setPossibleMatchResults([]);
+    setPossibleMatchError(null);
+    setIsSearchingPossibleMatches(false);
 
     if (!trimmedQuery) {
       setSearchResults([]);
@@ -207,6 +223,48 @@ export default function ClearanceSearch() {
     () => groupResults(searchResults),
     [searchResults],
   );
+  const groupedPossibleMatchResults = useMemo(
+    () => groupResults(possibleMatchResults),
+    [possibleMatchResults],
+  );
+  const trimmedSearchQuery = searchQuery.trim();
+  const canSearchPossibleMatches =
+    Boolean(trimmedSearchQuery) &&
+    !isSearching &&
+    !searchError &&
+    searchResults.length === 0;
+
+  async function handlePossibleMatchSearch() {
+    if (!trimmedSearchQuery || isSearchingPossibleMatches) {
+      return;
+    }
+
+    const searchId = possibleMatchSearchIdRef.current + 1;
+    possibleMatchSearchIdRef.current = searchId;
+    setIsSearchingPossibleMatches(true);
+    setPossibleMatchError(null);
+    setPossibleMatchResults([]);
+
+    const result = await searchClearancePossibleMatches({
+      query: trimmedSearchQuery,
+      searchType,
+      limit: 50,
+    });
+
+    if (possibleMatchSearchIdRef.current !== searchId) {
+      return;
+    }
+
+    if (result.error) {
+      setPossibleMatchResults([]);
+      setPossibleMatchError(result.error.message);
+    } else {
+      setPossibleMatchResults(result.data);
+      setPossibleMatchError(null);
+    }
+
+    setIsSearchingPossibleMatches(false);
+  }
 
   return (
     <div className="p-8 space-y-6">
@@ -258,8 +316,8 @@ export default function ClearanceSearch() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Searches exact normalized name and alias matches. Possible
-            misspelled and sound-alike matches will be added later.
+            Searches exact normalized names while typing. Use possible-match
+            search to review possible spelling variants and misspelled names.
           </p>
         </CardContent>
       </Card>
@@ -280,7 +338,7 @@ export default function ClearanceSearch() {
         </Alert>
       )}
 
-      {searchQuery.trim() && (
+      {trimmedSearchQuery && (
         <div className="space-y-6">
           {isSearching && (
             <Card>
@@ -300,13 +358,77 @@ export default function ClearanceSearch() {
 
               {searchResults.length === 0 && (
                 <Card>
+                  <CardContent className="space-y-4 text-center py-8">
+                    <p className="text-muted-foreground">
+                      No exact live records found matching &quot;{searchQuery}&quot;
+                    </p>
+                    {canSearchPossibleMatches && (
+                      <Button
+                        type="button"
+                        onClick={handlePossibleMatchSearch}
+                        disabled={isSearchingPossibleMatches}
+                      >
+                        {isSearchingPossibleMatches
+                          ? "Searching possible misspelled names…"
+                          : "Search possible misspelled names"}
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {possibleMatchError && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Unable to run possible-match search</AlertTitle>
+                  <AlertDescription>{possibleMatchError}</AlertDescription>
+                </Alert>
+              )}
+
+              {isSearchingPossibleMatches && (
+                <Card>
                   <CardContent className="text-center py-8">
                     <p className="text-muted-foreground">
-                      No live records found matching &quot;{searchQuery}&quot;
+                      Searching possible misspelled names…
                     </p>
                   </CardContent>
                 </Card>
               )}
+
+              {possibleMatchResults.length > 0 && (
+                <section className="space-y-4">
+                  <div>
+                    <h2 className="text-2xl font-semibold">
+                      Possible Matches — manual review required
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      These results are separate from exact matches and require
+                      manual review before clearance decisions.
+                    </p>
+                  </div>
+                  <ResultGroup
+                    label="High"
+                    results={groupedPossibleMatchResults.High}
+                  />
+                  <ResultGroup
+                    label="Medium"
+                    results={groupedPossibleMatchResults.Medium}
+                  />
+                  <ResultGroup
+                    label="Low"
+                    results={groupedPossibleMatchResults.Low}
+                  />
+                </section>
+              )}
+
+              {!isSearchingPossibleMatches &&
+                !possibleMatchError &&
+                possibleMatchResults.length === 0 &&
+                canSearchPossibleMatches && (
+                  <p className="text-center text-sm text-muted-foreground">
+                    Possible-match search has not been run for this query.
+                  </p>
+                )}
             </>
           )}
         </div>

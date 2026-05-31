@@ -23,18 +23,35 @@ function isSupabaseErrorLike(error: unknown): error is SupabaseErrorLike {
   return typeof error === "object" && error !== null && "message" in error;
 }
 
+function getClearanceSearchRpcName(operation: string) {
+  if (operation === "searchClearanceRecords") {
+    return "search_clearance_records";
+  }
+
+  if (operation === "searchClearancePossibleMatches") {
+    return "search_clearance_possible_matches";
+  }
+
+  return null;
+}
+
 function isMissingClearanceSearchFunction(
   error: SupabaseErrorLike,
   operation: string,
 ) {
+  const rpcName = getClearanceSearchRpcName(operation);
+
+  if (!rpcName) {
+    return false;
+  }
+
   const message = error.message ?? "";
   const details = error.details ?? "";
 
   return (
-    operation === "searchClearanceRecords" &&
-    (error.code === "PGRST202" ||
-      message.includes("search_clearance_records") ||
-      details.includes("search_clearance_records"))
+    error.code === "PGRST202" ||
+    message.includes(rpcName) ||
+    details.includes(rpcName)
   );
 }
 
@@ -46,8 +63,7 @@ function toQueryError(
   if (isSupabaseErrorLike(error)) {
     if (isMissingClearanceSearchFunction(error, operation)) {
       return {
-        message:
-          "Database setup required: the live clearance search SQL function is not installed in Supabase yet. Run the clearance search migration, then refresh this page.",
+        message: `Database setup required: the ${getClearanceSearchRpcName(operation)} SQL function is not installed in Supabase yet. Run the clearance search migration, then refresh this page.`,
         code: error.code,
         details: error.details,
         hint: error.hint,
@@ -157,7 +173,7 @@ export interface ClearanceSearchResult {
   lastUpdated: string;
   confidenceScore: number;
   matchDetails: string;
-  matchType: "exact" | "alias";
+  matchType: "exact" | "alias" | "possible";
   roleLabel: string;
 }
 
@@ -1626,8 +1642,10 @@ export async function getDashboardStats(): Promise<
   );
 }
 
-export async function searchClearanceRecords(
+async function searchClearanceRpc(
   params: ClearanceSearchParams,
+  operation: "searchClearanceRecords" | "searchClearancePossibleMatches",
+  rpcName: "search_clearance_records" | "search_clearance_possible_matches",
 ): Promise<SupabaseQueryResult<ClearanceSearchResult[]>> {
   const safeQuery = params.query.trim();
   const searchType = params.searchType ?? "all";
@@ -1638,12 +1656,12 @@ export async function searchClearanceRecords(
   }
 
   return runSupabaseQuery(
-    "searchClearanceRecords",
+    operation,
     "case_participants",
     async () => {
       const supabase = await getSupabaseBrowserClient();
       const { data, error } = await supabase.rpc(
-        "search_clearance_records" as never,
+        rpcName as never,
         {
           p_query: safeQuery,
           p_search_type: searchType,
@@ -1710,6 +1728,26 @@ export async function searchClearanceRecords(
       };
     },
     [],
+  );
+}
+
+export async function searchClearanceRecords(
+  params: ClearanceSearchParams,
+): Promise<SupabaseQueryResult<ClearanceSearchResult[]>> {
+  return searchClearanceRpc(
+    params,
+    "searchClearanceRecords",
+    "search_clearance_records",
+  );
+}
+
+export async function searchClearancePossibleMatches(
+  params: ClearanceSearchParams,
+): Promise<SupabaseQueryResult<ClearanceSearchResult[]>> {
+  return searchClearanceRpc(
+    params,
+    "searchClearancePossibleMatches",
+    "search_clearance_possible_matches",
   );
 }
 
