@@ -56,7 +56,7 @@ type CasesPageCache = {
   hasAllCases: boolean;
 };
 
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v3';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v4';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -137,7 +137,12 @@ function getCaseKey(caseDetail: CompactCase) {
 }
 
 function personName(participant: CasePartyParticipantRecord) {
-  return participant.persons?.full_name?.trim() || 'Unnamed participant';
+  return (
+    participant.persons?.full_name?.trim() ||
+    participant.organizations?.organization_name?.trim() ||
+    participant.display_name_snapshot?.trim() ||
+    'Unnamed participant'
+  );
 }
 
 function participantMatchesRole(participant: CasePartyParticipantRecord, roleName: 'complainant' | 'respondent') {

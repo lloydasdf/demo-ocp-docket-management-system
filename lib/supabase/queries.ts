@@ -394,9 +394,13 @@ export async function getCasesDisplay(
   );
 }
 
-export type CasePartyParticipantRecord = Pick<TableRow<"case_participants">, "case_id"> & {
+export type CasePartyParticipantRecord = Pick<
+  TableRow<"case_participants">,
+  "case_id" | "display_name_snapshot"
+> & {
   participant_roles: Pick<TableRow<"participant_roles">, "code" | "display_label"> | null;
   persons: Pick<TableRow<"persons">, "full_name"> | null;
+  organizations: Pick<TableRow<"organizations">, "organization_name"> | null;
 };
 
 export async function getCasePartyParticipantsForCases(
@@ -405,7 +409,10 @@ export async function getCasePartyParticipantsForCases(
   const safeCaseIds = Array.from(
     new Set(caseIds.filter((caseId) => Number.isFinite(caseId))),
   );
-  const caseIdChunkSize = 500;
+  // Keep each request well below Supabase/PostgREST's default 1,000-row cap.
+  // Many cases have multiple participants, so a 500-case chunk can silently
+  // truncate the later case ids and leave the same docket rows unhydrated.
+  const caseIdChunkSize = 100;
 
   if (safeCaseIds.length === 0) {
     return ok([]);
@@ -426,9 +433,10 @@ export async function getCasePartyParticipantsForCases(
         const query = supabase
           .from("case_participants")
           .select(
-            `case_id,
+            `case_id, display_name_snapshot,
              participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
-             persons:persons!case_participants_person_id_fkey (full_name)`,
+             persons:persons!case_participants_person_id_fkey (full_name),
+             organizations:organizations!case_participants_organization_id_fkey (organization_name)`,
           )
           .in("case_id", caseIdChunk)
           .order("case_id", { ascending: true })
