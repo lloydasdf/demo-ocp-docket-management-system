@@ -258,8 +258,9 @@ export default function ClearanceSearch() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Searches exact normalized name and alias matches. Possible
-            misspelled and sound-alike matches will be added later.
+            Searches exact normalized names first, then limited possible spelling
+            variants and misspelled name matches. Phonetic sound-alike search is
+            not enabled yet.
           </p>
         </CardContent>
       </Card>
