@@ -157,7 +157,7 @@ export interface ClearanceSearchResult {
   lastUpdated: string;
   confidenceScore: number;
   matchDetails: string;
-  matchType: "exact" | "alias" | "variant" | "fuzzy";
+  matchType: "exact" | "alias";
   roleLabel: string;
 }
 
