@@ -56,7 +56,7 @@ type CasesPageCache = {
   hasAllCases: boolean;
 };
 
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v4';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v5';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {

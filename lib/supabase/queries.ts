@@ -342,6 +342,27 @@ export type CasesDisplayRecord = Pick<
 const CASES_DISPLAY_COLUMNS =
   "id, docket_type_id, docket_year, docket_number, docket_month_code, docket_display_number, docket_type_prefix, docket_type_name, date_received, summary_text, current_status_code, current_status_label, prosecutor_full_name, prosecutor_short_name, violations, created_at";
 
+function dedupeRowsById<Row extends { id: number | null }>(rows: Row[]): Row[] {
+  const seenCaseIds = new Set<number>();
+  const uniqueRows: Row[] = [];
+
+  for (const row of rows) {
+    if (row.id === null) {
+      uniqueRows.push(row);
+      continue;
+    }
+
+    if (seenCaseIds.has(row.id)) {
+      continue;
+    }
+
+    seenCaseIds.add(row.id);
+    uniqueRows.push(row);
+  }
+
+  return uniqueRows;
+}
+
 export async function getCasesDisplay(
   params: CasesCompactQueryParams = {},
 ): Promise<SupabaseQueryResult<CasesDisplayRecord[]>> {
@@ -361,6 +382,7 @@ export async function getCasesDisplay(
           .from("v_cases_display")
           .select(CASES_DISPLAY_COLUMNS)
           .order("created_at", { ascending: false, nullsFirst: false })
+          .order("id", { ascending: false })
           .range(start, start + pageSize - 1);
 
         if (docketType && docketType !== "All") {
@@ -388,7 +410,7 @@ export async function getCasesDisplay(
         }
       }
 
-      return { data: allCases, error: null };
+      return { data: dedupeRowsById(allCases), error: null };
     },
     [],
   );
@@ -609,6 +631,7 @@ export async function getCasesFromTable(
             current_status:case_statuses!cases_current_status_id_fkey (code, display_label)`,
           )
           .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
           .range(start, start + pageSize - 1);
 
         if (docketTypeId !== null) {
@@ -636,7 +659,7 @@ export async function getCasesFromTable(
         }
       }
 
-      return { data: allCases, error: null };
+      return { data: dedupeRowsById(allCases), error: null };
     },
     [],
   );
