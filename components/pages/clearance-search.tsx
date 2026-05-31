@@ -7,7 +7,6 @@ import { AlertCircle, Database, Search as SearchIcon } from "lucide-react";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -171,14 +170,18 @@ export default function ClearanceSearch() {
   const [possibleMatchError, setPossibleMatchError] = useState<string | null>(
     null,
   );
+  const [hasSearchedPossibleMatches, setHasSearchedPossibleMatches] =
+    useState(false);
   const possibleMatchSearchIdRef = useRef(0);
 
   useEffect(() => {
     const trimmedQuery = searchQuery.trim();
 
-    possibleMatchSearchIdRef.current += 1;
+    const searchId = possibleMatchSearchIdRef.current + 1;
+    possibleMatchSearchIdRef.current = searchId;
     setPossibleMatchResults([]);
     setPossibleMatchError(null);
+    setHasSearchedPossibleMatches(false);
     setIsSearchingPossibleMatches(false);
 
     if (!trimmedQuery) {
@@ -192,25 +195,48 @@ export default function ClearanceSearch() {
     setIsSearching(true);
 
     const timer = window.setTimeout(async () => {
-      const result = await searchClearanceRecords({
+      const exactResult = await searchClearanceRecords({
         query: trimmedQuery,
         searchType,
         limit: 50,
       });
 
-      if (!isCurrent) {
+      if (!isCurrent || possibleMatchSearchIdRef.current !== searchId) {
         return;
       }
 
-      if (result.error) {
+      if (exactResult.error) {
         setSearchResults([]);
-        setSearchError(result.error.message);
-      } else {
-        setSearchResults(result.data);
-        setSearchError(null);
+        setSearchError(exactResult.error.message);
+        setIsSearching(false);
+        return;
       }
 
+      setSearchResults(exactResult.data);
+      setSearchError(null);
       setIsSearching(false);
+      setIsSearchingPossibleMatches(true);
+
+      const possibleResult = await searchClearancePossibleMatches({
+        query: trimmedQuery,
+        searchType,
+        limit: 50,
+      });
+
+      if (!isCurrent || possibleMatchSearchIdRef.current !== searchId) {
+        return;
+      }
+
+      if (possibleResult.error) {
+        setPossibleMatchResults([]);
+        setPossibleMatchError(possibleResult.error.message);
+      } else {
+        setPossibleMatchResults(possibleResult.data);
+        setPossibleMatchError(null);
+      }
+
+      setHasSearchedPossibleMatches(true);
+      setIsSearchingPossibleMatches(false);
     }, 300);
 
     return () => {
@@ -228,43 +254,13 @@ export default function ClearanceSearch() {
     [possibleMatchResults],
   );
   const trimmedSearchQuery = searchQuery.trim();
-  const canSearchPossibleMatches =
-    Boolean(trimmedSearchQuery) &&
+  const shouldShowPossibleMatches =
     !isSearching &&
     !searchError &&
-    searchResults.length === 0;
-
-  async function handlePossibleMatchSearch() {
-    if (!trimmedSearchQuery || isSearchingPossibleMatches) {
-      return;
-    }
-
-    const searchId = possibleMatchSearchIdRef.current + 1;
-    possibleMatchSearchIdRef.current = searchId;
-    setIsSearchingPossibleMatches(true);
-    setPossibleMatchError(null);
-    setPossibleMatchResults([]);
-
-    const result = await searchClearancePossibleMatches({
-      query: trimmedSearchQuery,
-      searchType,
-      limit: 50,
-    });
-
-    if (possibleMatchSearchIdRef.current !== searchId) {
-      return;
-    }
-
-    if (result.error) {
-      setPossibleMatchResults([]);
-      setPossibleMatchError(result.error.message);
-    } else {
-      setPossibleMatchResults(result.data);
-      setPossibleMatchError(null);
-    }
-
-    setIsSearchingPossibleMatches(false);
-  }
+    (isSearchingPossibleMatches ||
+      hasSearchedPossibleMatches ||
+      Boolean(possibleMatchError) ||
+      possibleMatchResults.length > 0);
 
   return (
     <div className="p-8 space-y-6">
@@ -316,8 +312,8 @@ export default function ClearanceSearch() {
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Searches exact normalized names while typing. Use possible-match
-            search to review possible spelling variants and misspelled names.
+            Searches exact normalized names first, then automatically reviews
+            possible spelling variants and misspelled names separately.
           </p>
         </CardContent>
       </Card>
@@ -358,44 +354,15 @@ export default function ClearanceSearch() {
 
               {searchResults.length === 0 && (
                 <Card>
-                  <CardContent className="space-y-4 text-center py-8">
+                  <CardContent className="text-center py-8">
                     <p className="text-muted-foreground">
                       No exact live records found matching &quot;{searchQuery}&quot;
                     </p>
-                    {canSearchPossibleMatches && (
-                      <Button
-                        type="button"
-                        onClick={handlePossibleMatchSearch}
-                        disabled={isSearchingPossibleMatches}
-                      >
-                        {isSearchingPossibleMatches
-                          ? "Searching possible misspelled names…"
-                          : "Search possible misspelled names"}
-                      </Button>
-                    )}
                   </CardContent>
                 </Card>
               )}
 
-              {possibleMatchError && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Unable to run possible-match search</AlertTitle>
-                  <AlertDescription>{possibleMatchError}</AlertDescription>
-                </Alert>
-              )}
-
-              {isSearchingPossibleMatches && (
-                <Card>
-                  <CardContent className="text-center py-8">
-                    <p className="text-muted-foreground">
-                      Searching possible misspelled names…
-                    </p>
-                  </CardContent>
-                </Card>
-              )}
-
-              {possibleMatchResults.length > 0 && (
+              {shouldShowPossibleMatches && (
                 <section className="space-y-4">
                   <div>
                     <h2 className="text-2xl font-semibold">
@@ -406,29 +373,54 @@ export default function ClearanceSearch() {
                       manual review before clearance decisions.
                     </p>
                   </div>
-                  <ResultGroup
-                    label="High"
-                    results={groupedPossibleMatchResults.High}
-                  />
-                  <ResultGroup
-                    label="Medium"
-                    results={groupedPossibleMatchResults.Medium}
-                  />
-                  <ResultGroup
-                    label="Low"
-                    results={groupedPossibleMatchResults.Low}
-                  />
+
+                  {possibleMatchError && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertTitle>Unable to run possible-match search</AlertTitle>
+                      <AlertDescription>{possibleMatchError}</AlertDescription>
+                    </Alert>
+                  )}
+
+                  {isSearchingPossibleMatches && (
+                    <Card>
+                      <CardContent className="text-center py-8">
+                        <p className="text-muted-foreground">
+                          Searching possible misspelled names…
+                        </p>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {possibleMatchResults.length > 0 ? (
+                    <>
+                      <ResultGroup
+                        label="High"
+                        results={groupedPossibleMatchResults.High}
+                      />
+                      <ResultGroup
+                        label="Medium"
+                        results={groupedPossibleMatchResults.Medium}
+                      />
+                      <ResultGroup
+                        label="Low"
+                        results={groupedPossibleMatchResults.Low}
+                      />
+                    </>
+                  ) : (
+                    hasSearchedPossibleMatches &&
+                    !possibleMatchError && (
+                      <Card>
+                        <CardContent className="text-center py-8">
+                          <p className="text-muted-foreground">
+                            No possible matches found for &quot;{searchQuery}&quot;
+                          </p>
+                        </CardContent>
+                      </Card>
+                    )
+                  )}
                 </section>
               )}
-
-              {!isSearchingPossibleMatches &&
-                !possibleMatchError &&
-                possibleMatchResults.length === 0 &&
-                canSearchPossibleMatches && (
-                  <p className="text-center text-sm text-muted-foreground">
-                    Possible-match search has not been run for this query.
-                  </p>
-                )}
             </>
           )}
         </div>
