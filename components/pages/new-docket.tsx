@@ -471,7 +471,7 @@ export default function NewDocket() {
       <div>
         <h1 className="text-3xl font-bold text-foreground">New Docket Entry</h1>
         <p className="text-muted-foreground mt-1">
-          Create a live case record using the current Supabase docket schema.
+          Create a live case record using the current PostgreSQL docket schema.
         </p>
       </div>
 

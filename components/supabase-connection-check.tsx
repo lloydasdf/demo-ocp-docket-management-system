@@ -43,7 +43,7 @@ export function SupabaseConnectionCheck() {
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
               <Database className="h-4 w-4" />
-              Supabase Connection Check
+              PostgreSQL Connection Check
             </CardTitle>
             <CardDescription>
               Temporary verification helper. Remove this card after the database connection is confirmed.
@@ -62,7 +62,7 @@ export function SupabaseConnectionCheck() {
                 Checking
               </>
             ) : (
-              'Verify Supabase'
+              'Verify PostgreSQL'
             )}
           </Button>
         </div>
@@ -75,14 +75,14 @@ export function SupabaseConnectionCheck() {
         )}
 
         {connection.status === 'checking' && (
-          <p className="text-sm text-muted-foreground">Attempting a read-only Supabase query...</p>
+          <p className="text-sm text-muted-foreground">Attempting a read-only PostgreSQL query...</p>
         )}
 
         {connection.status === 'connected' && (
           <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2 text-green-700">
               <CheckCircle2 className="h-4 w-4" />
-              Connected to Supabase via {connection.checkedTable}.
+              Connected to PostgreSQL via {connection.checkedTable}.
             </div>
             <Badge variant="outline">
               {connection.rowCount} row{connection.rowCount === 1 ? '' : 's'} sampled at{' '}
@@ -95,7 +95,7 @@ export function SupabaseConnectionCheck() {
           <div className="space-y-2 text-sm text-destructive">
             <div className="flex items-center gap-2 font-medium">
               <AlertCircle className="h-4 w-4" />
-              Supabase check failed
+              PostgreSQL check failed
             </div>
             <p>{connection.error.message}</p>
             {connection.error.hint && <p className="text-xs">Hint: {connection.error.hint}</p>}

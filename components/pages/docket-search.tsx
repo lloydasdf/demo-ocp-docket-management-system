@@ -128,7 +128,7 @@ export default function DocketSearch() {
 
       {errorMessage ? (
         <Alert variant="destructive">
-          <AlertTitle>Unable to load live Supabase cases</AlertTitle>
+          <AlertTitle>Unable to load live PostgreSQL cases</AlertTitle>
           <AlertDescription>{errorMessage} Showing fallback dummy data.</AlertDescription>
         </Alert>
       ) : null}

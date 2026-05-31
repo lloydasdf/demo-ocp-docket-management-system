@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Database, Search as SearchIcon } from "lucide-react";
+import { AlertCircle, Database, Info, Search as SearchIcon } from "lucide-react";
 
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -15,16 +15,14 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   type ClearanceSearchResult,
-  type ClearanceSearchType,
   searchClearancePhoneticMatches,
   searchClearancePossibleMatches,
   searchClearanceRecords,
@@ -154,6 +152,22 @@ function ResultGroup({
                     <Badge variant="secondary" className="text-xs capitalize">
                       {result.matchType}
                     </Badge>
+                    {matchDetails ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-full border bg-background text-muted-foreground"
+                            aria-label="Show match details"
+                            tabIndex={0}
+                          >
+                            <Info className="h-3.5 w-3.5" />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs text-left">
+                          {matchDetails}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : null}
                   </div>
                   <p className="text-xs text-muted-foreground">
                     Violations: {result.violations || "—"} | Docket:{" "}
@@ -164,11 +178,6 @@ function ResultGroup({
                   {result.confidenceScore}%
                 </Badge>
               </div>
-              {matchDetails ? (
-                <p className="mb-3 text-sm text-muted-foreground">
-                  {matchDetails}
-                </p>
-              ) : null}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusBadge status={result.status} size="sm" />
@@ -193,7 +202,7 @@ function ResultGroup({
 
 export default function ClearanceSearch() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchType, setSearchType] = useState<ClearanceSearchType>("all");
+  const [isExpandedSearchEnabled, setIsExpandedSearchEnabled] = useState(true);
   const [searchResults, setSearchResults] = useState<ClearanceSearchResult[]>(
     [],
   );
@@ -248,7 +257,7 @@ export default function ClearanceSearch() {
     const timer = window.setTimeout(async () => {
       const exactResult = await searchClearanceRecords({
         query: trimmedQuery,
-        searchType,
+        searchType: "all",
         limit: 50,
       });
 
@@ -266,11 +275,16 @@ export default function ClearanceSearch() {
       setSearchResults(exactResult.data);
       setSearchError(null);
       setIsSearching(false);
+
+      if (!isExpandedSearchEnabled) {
+        return;
+      }
+
       setIsSearchingPossibleMatches(true);
 
       const possibleResult = await searchClearancePossibleMatches({
         query: trimmedQuery,
-        searchType,
+        searchType: "all",
         limit: 50,
       });
 
@@ -300,7 +314,7 @@ export default function ClearanceSearch() {
 
       const phoneticResult = await searchClearancePhoneticMatches({
         query: trimmedQuery,
-        searchType,
+        searchType: "all",
         limit: 50,
       });
 
@@ -328,7 +342,7 @@ export default function ClearanceSearch() {
       isCurrent = false;
       window.clearTimeout(timer);
     };
-  }, [searchQuery, searchType]);
+  }, [isExpandedSearchEnabled, searchQuery]);
 
   const groupedResults = useMemo(
     () => groupResults(searchResults),
@@ -344,6 +358,7 @@ export default function ClearanceSearch() {
   );
   const trimmedSearchQuery = searchQuery.trim();
   const shouldShowPossibleMatches =
+    isExpandedSearchEnabled &&
     !isSearching &&
     !searchError &&
     (isSearchingPossibleMatches ||
@@ -351,6 +366,7 @@ export default function ClearanceSearch() {
       Boolean(possibleMatchError) ||
       possibleMatchResults.length > 0);
   const shouldShowPhoneticMatches =
+    isExpandedSearchEnabled &&
     !isSearching &&
     !searchError &&
     getSearchTokens(trimmedSearchQuery).length > 1 &&
@@ -368,14 +384,14 @@ export default function ClearanceSearch() {
           </h1>
           <Badge variant="secondary" className="gap-1">
             <Database className="h-3.5 w-3.5" />
-            Live Supabase
+            Live PostgreSQL
           </Badge>
         </div>
       </div>
 
       <Card>
         <CardContent className="space-y-4 pt-6">
-          <div className="grid gap-4 md:grid-cols-[1fr_220px]">
+          <div className="grid gap-4 md:grid-cols-[1fr_280px]">
             <div>
               <Label htmlFor="search-query">Search Query</Label>
               <div className="relative mt-1">
@@ -389,30 +405,26 @@ export default function ClearanceSearch() {
                 />
               </div>
             </div>
-            <div>
-              <Label htmlFor="search-type">Search Mode</Label>
-              <Select
-                value={searchType}
-                onValueChange={(value) =>
-                  setSearchType(value as ClearanceSearchType)
-                }
-              >
-                <SelectTrigger id="search-type" className="mt-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Names + aliases</SelectItem>
-                  <SelectItem value="name">Name only</SelectItem>
-                  <SelectItem value="alias">Alias only</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <Label
+                  htmlFor="expanded-search"
+                  className="cursor-pointer text-sm font-medium"
+                >
+                  Automatic possible and phonetic matches
+                </Label>
+                <Switch
+                  id="expanded-search"
+                  checked={isExpandedSearchEnabled}
+                  onCheckedChange={setIsExpandedSearchEnabled}
+                  aria-label="Toggle automatic possible and phonetic matches"
+                />
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {isExpandedSearchEnabled ? "On" : "Off"}
+              </p>
             </div>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Searches exact normalized names first, then automatically reviews
-            possible spelling variants, misspelled names, and sound-alike names
-            separately.
-          </p>
         </CardContent>
       </Card>
 
@@ -423,7 +435,7 @@ export default function ClearanceSearch() {
           <AlertDescription className="space-y-2">
             <p>{searchError}</p>
             <p>
-              This means the app reached Supabase, but Supabase does not yet
+              This means the app reached PostgreSQL, but the database does not yet
               have the <code>search_clearance_records</code> RPC that powers the
               live exact normalized clearance search. Install the Phase 1
               clearance search RPC, then refresh this page.
@@ -438,7 +450,7 @@ export default function ClearanceSearch() {
             <Card>
               <CardContent className="text-center py-8">
                 <p className="text-muted-foreground">
-                  Searching live Supabase records…
+                  Searching live PostgreSQL records…
                 </p>
               </CardContent>
             </Card>
@@ -484,7 +496,8 @@ export default function ClearanceSearch() {
                     <Card>
                       <CardContent className="text-center py-8">
                         <p className="text-muted-foreground">
-                          Searching possible misspelled names…
+                          expanding search<br />
+                          finding possible matches for typo error
                         </p>
                       </CardContent>
                     </Card>
@@ -544,7 +557,8 @@ export default function ClearanceSearch() {
                     <Card>
                       <CardContent className="text-center py-8">
                         <p className="text-muted-foreground">
-                          Searching phonetic sound-alike names…
+                          expanding search<br />
+                          looking for possible sound alike names
                         </p>
                       </CardContent>
                     </Card>

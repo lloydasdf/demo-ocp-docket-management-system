@@ -208,7 +208,7 @@ export default function ProsecutorAssignment() {
       <div>
         <h1 className="text-3xl font-bold text-foreground">Prosecutor Assignment</h1>
         <p className="text-muted-foreground mt-1">
-          Assign prosecutors to live case records from the Supabase database.
+          Assign prosecutors to live case records from the PostgreSQL database.
         </p>
       </div>
 

@@ -26,6 +26,7 @@ type DocketYearFilter = string;
 const DEFAULT_DOCKET_TYPE = 'INV';
 const INITIAL_CASE_LIMIT = 500;
 const CASE_ROW_HEIGHT = 49;
+const EXPANDED_CASE_ROW_HEIGHT = 96;
 const VIRTUAL_ROW_OVERSCAN = 12;
 
 const docketNumberCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -45,7 +46,11 @@ const CASE_TABLE_COLUMNS = [
 
 type CaseTableColumnKey = (typeof CASE_TABLE_COLUMNS)[number]['key'];
 type ColumnWidths = Record<CaseTableColumnKey, number>;
-type CasePartyNames = { complainants: string | null; respondents: string | null };
+type CasePartyNames = {
+  complainants: string[];
+  respondents: string[];
+  searchText: string;
+};
 type CaseClassificationByCase = Record<number, string>;
 
 type CasesPageCache = {
@@ -56,7 +61,7 @@ type CasesPageCache = {
   hasAllCases: boolean;
 };
 
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v5';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v6';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -150,14 +155,26 @@ function participantMatchesRole(participant: CasePartyParticipantRecord, roleNam
   return roleText.includes(roleName);
 }
 
-function summarizePartyNames(participants: CasePartyParticipantRecord[], roleName: 'complainant' | 'respondent') {
-  const names = participants.filter((participant) => participantMatchesRole(participant, roleName)).map(personName);
+function partyNamesForRole(participants: CasePartyParticipantRecord[], roleName: 'complainant' | 'respondent') {
+  return participants
+    .filter((participant) => participantMatchesRole(participant, roleName))
+    .map(personName);
+}
 
+function compactPartyNames(names: string[]) {
   if (names.length === 0) {
-    return null;
+    return '—';
   }
 
-  return names.length > 2 ? `${names.slice(0, 2).join(', ')} et al.` : names.join(', ');
+  return names.length > 1 ? `${names[0]} +${names.length - 1}` : names[0];
+}
+
+function expandedPartyNames(names: string[]) {
+  if (names.length === 0) {
+    return '—';
+  }
+
+  return names.join('\n');
 }
 
 function caseIdsForCases(casesToCheck: CompactCase[]) {
@@ -201,9 +218,14 @@ function buildPartyNamesByCase(participants: CasePartyParticipantRecord[]) {
   }
 
   return Array.from(grouped.entries()).reduce((namesByCase, [caseId, caseParticipants]) => {
+    const complainants = partyNamesForRole(caseParticipants, 'complainant');
+    const respondents = partyNamesForRole(caseParticipants, 'respondent');
+    const allParticipantNames = caseParticipants.map(personName);
+
     namesByCase[caseId] = {
-      complainants: summarizePartyNames(caseParticipants, 'complainant'),
-      respondents: summarizePartyNames(caseParticipants, 'respondent'),
+      complainants,
+      respondents,
+      searchText: allParticipantNames.join(' '),
     };
     return namesByCase;
   }, {} as Record<number, CasePartyNames>);
@@ -425,8 +447,9 @@ export default function CasesPage() {
         formatDisplayDocketNumber(caseDetail),
         caseDetail.docket_type_prefix ?? '',
         String(caseDetail.docket_year ?? ''),
-        casePartyNames?.complainants ?? '',
-        casePartyNames?.respondents ?? '',
+        casePartyNames?.searchText ?? '',
+        casePartyNames?.complainants.join(' ') ?? '',
+        casePartyNames?.respondents.join(' ') ?? '',
         caseViolations(caseDetail) ?? '',
         assignedProsecutor(caseDetail) ?? '',
         currentStatusLabel(caseDetail) ?? '',
@@ -468,17 +491,56 @@ export default function CasesPage() {
     [columnWidths],
   );
 
+  const rowHeights = useMemo(
+    () =>
+      sortedCases.map((caseDetail) => {
+        if (selectedCaseKey !== getCaseKey(caseDetail)) {
+          return CASE_ROW_HEIGHT;
+        }
+
+        const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
+        const partyLineCount = Math.max(
+          casePartyNames?.complainants.length ?? 1,
+          casePartyNames?.respondents.length ?? 1,
+          1,
+        );
+
+        return Math.max(
+          EXPANDED_CASE_ROW_HEIGHT,
+          CASE_ROW_HEIGHT + (partyLineCount - 1) * 24,
+        );
+      }),
+    [partyNamesByCase, selectedCaseKey, sortedCases],
+  );
+
   const virtualRows = useMemo(() => {
-    const visibleCount = Math.ceil(viewportHeight / CASE_ROW_HEIGHT);
-    const startIndex = Math.max(0, Math.floor(scrollTop / CASE_ROW_HEIGHT) - VIRTUAL_ROW_OVERSCAN);
-    const endIndex = Math.min(sortedCases.length, startIndex + visibleCount + VIRTUAL_ROW_OVERSCAN * 2);
+    const overscanPixels = VIRTUAL_ROW_OVERSCAN * CASE_ROW_HEIGHT;
+    const startBoundary = Math.max(0, scrollTop - overscanPixels);
+    const endBoundary = scrollTop + viewportHeight + overscanPixels;
+    let topPadding = 0;
+    let startIndex = 0;
+
+    while (startIndex < rowHeights.length && topPadding + rowHeights[startIndex] < startBoundary) {
+      topPadding += rowHeights[startIndex];
+      startIndex += 1;
+    }
+
+    let visibleHeight = topPadding;
+    let endIndex = startIndex;
+
+    while (endIndex < rowHeights.length && visibleHeight < endBoundary) {
+      visibleHeight += rowHeights[endIndex];
+      endIndex += 1;
+    }
+
+    const bottomPadding = rowHeights.slice(endIndex).reduce((total, height) => total + height, 0);
 
     return {
       rows: sortedCases.slice(startIndex, endIndex),
-      topPadding: startIndex * CASE_ROW_HEIGHT,
-      bottomPadding: Math.max(0, (sortedCases.length - endIndex) * CASE_ROW_HEIGHT),
+      topPadding,
+      bottomPadding,
     };
-  }, [scrollTop, sortedCases, viewportHeight]);
+  }, [rowHeights, scrollTop, sortedCases, viewportHeight]);
 
   function handleColumnResize(columnKey: CaseTableColumnKey, startX: number) {
     const column = CASE_TABLE_COLUMNS.find((candidate) => candidate.key === columnKey);
@@ -514,7 +576,7 @@ export default function CasesPage() {
 
           {errorMessage ? (
             <Alert variant="destructive" className="shrink-0">
-              <AlertTitle>Unable to load live Supabase cases</AlertTitle>
+              <AlertTitle>Unable to load live PostgreSQL cases</AlertTitle>
               <AlertDescription>{errorMessage}</AlertDescription>
             </Alert>
           ) : null}
@@ -624,12 +686,15 @@ export default function CasesPage() {
                       {virtualRows.rows.map((caseDetail) => {
                         const caseKey = getCaseKey(caseDetail);
                         const isSelected = selectedCaseKey === caseKey;
+                        const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
+                        const complainantNames = casePartyNames?.complainants ?? [];
+                        const respondentNames = casePartyNames?.respondents ?? [];
 
                         return (
                           <TableRow
                             key={caseKey}
                             aria-selected={isSelected}
-                            className={`h-12 cursor-pointer ${isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'hover:bg-muted/50'}`}
+                            className={`cursor-pointer ${isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'h-12 hover:bg-muted/50'}`}
                             tabIndex={caseDetail.id ? 0 : -1}
                             onClick={() => setSelectedCaseKey(caseKey)}
                             onDoubleClick={() => {
@@ -658,11 +723,11 @@ export default function CasesPage() {
                             </TableCell>
                             <TableCell className="truncate text-sm">{caseDetail.docket_type_name ?? caseDetail.docket_type_prefix ?? '—'}</TableCell>
                             <TableCell className="truncate text-sm">{caseDetail.docket_year ?? '—'}</TableCell>
-                            <TableCell className="truncate text-sm">
-                              {caseDetail.id ? partyNamesByCase[caseDetail.id]?.complainants ?? '—' : '—'}
+                            <TableCell className={isSelected ? 'whitespace-pre-line text-sm leading-6' : 'truncate text-sm'}>
+                              {isSelected ? expandedPartyNames(complainantNames) : compactPartyNames(complainantNames)}
                             </TableCell>
-                            <TableCell className="truncate text-sm">
-                              {caseDetail.id ? partyNamesByCase[caseDetail.id]?.respondents ?? '—' : '—'}
+                            <TableCell className={isSelected ? 'whitespace-pre-line text-sm leading-6' : 'truncate text-sm'}>
+                              {isSelected ? expandedPartyNames(respondentNames) : compactPartyNames(respondentNames)}
                             </TableCell>
                             <TableCell className="truncate text-sm">{caseViolations(caseDetail) ?? '—'}</TableCell>
                             <TableCell className="truncate text-sm">{caseDetail.id ? classificationsByCase[caseDetail.id] ?? '—' : '—'}</TableCell>

@@ -71,7 +71,7 @@ export default function LoginPage() {
     setError(null);
 
     if (!supabaseStatus.isConfigured) {
-      setError('Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY first.');
+      setError('PostgreSQL connection is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY first.');
       return;
     }
 
@@ -114,7 +114,7 @@ export default function LoginPage() {
           <CardContent>
             {!supabaseStatus.isConfigured ? (
               <Alert variant="destructive" className="mb-4">
-                <AlertTitle>Supabase is not configured</AlertTitle>
+                <AlertTitle>PostgreSQL connection is not configured</AlertTitle>
                 <AlertDescription>
                   Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY, then restart the app.
                 </AlertDescription>
