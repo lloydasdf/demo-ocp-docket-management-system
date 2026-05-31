@@ -7,6 +7,7 @@ import { AlertCircle, Database, Info, Search as SearchIcon } from "lucide-react"
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -344,6 +345,84 @@ export default function ClearanceSearch() {
     };
   }, [isExpandedSearchEnabled, searchQuery]);
 
+  async function handleExpandPossibleMatches() {
+    const trimmedQuery = searchQuery.trim();
+
+    if (!trimmedQuery) {
+      return;
+    }
+
+    const searchId = possibleMatchSearchIdRef.current;
+    setPossibleMatchResults([]);
+    setPossibleMatchError(null);
+    setHasSearchedPossibleMatches(false);
+    setPhoneticMatchResults([]);
+    setPhoneticMatchError(null);
+    setHasSearchedPhoneticMatches(false);
+    setIsSearchingPhoneticMatches(false);
+    setIsSearchingPossibleMatches(true);
+
+    const possibleResult = await searchClearancePossibleMatches({
+      query: trimmedQuery,
+      searchType: "all",
+      limit: 50,
+    });
+
+    if (possibleMatchSearchIdRef.current !== searchId) {
+      return;
+    }
+
+    if (possibleResult.error) {
+      setPossibleMatchResults([]);
+      setPossibleMatchError(possibleResult.error.message);
+    } else {
+      setPossibleMatchResults(possibleResult.data);
+      setPossibleMatchError(null);
+    }
+
+    setHasSearchedPossibleMatches(true);
+    setIsSearchingPossibleMatches(false);
+  }
+
+  async function handleExpandPhoneticMatches() {
+    const trimmedQuery = searchQuery.trim();
+
+    if (!trimmedQuery || getSearchTokens(trimmedQuery).length <= 1) {
+      return;
+    }
+
+    const searchId = possibleMatchSearchIdRef.current;
+    setPhoneticMatchResults([]);
+    setPhoneticMatchError(null);
+    setHasSearchedPhoneticMatches(false);
+    setIsSearchingPhoneticMatches(true);
+
+    const phoneticResult = await searchClearancePhoneticMatches({
+      query: trimmedQuery,
+      searchType: "all",
+      limit: 50,
+    });
+
+    if (possibleMatchSearchIdRef.current !== searchId) {
+      return;
+    }
+
+    if (phoneticResult.error) {
+      setPhoneticMatchResults([]);
+      setPhoneticMatchError(phoneticResult.error.message);
+    } else {
+      setPhoneticMatchResults(
+        phoneticResult.data.filter((result) =>
+          hasMultipleNameTokens(result.respondentName),
+        ),
+      );
+      setPhoneticMatchError(null);
+    }
+
+    setHasSearchedPhoneticMatches(true);
+    setIsSearchingPhoneticMatches(false);
+  }
+
   const groupedResults = useMemo(
     () => groupResults(searchResults),
     [searchResults],
@@ -357,8 +436,8 @@ export default function ClearanceSearch() {
     [phoneticMatchResults],
   );
   const trimmedSearchQuery = searchQuery.trim();
+  const canRunPhoneticSearch = getSearchTokens(trimmedSearchQuery).length > 1;
   const shouldShowPossibleMatches =
-    isExpandedSearchEnabled &&
     !isSearching &&
     !searchError &&
     (isSearchingPossibleMatches ||
@@ -366,14 +445,33 @@ export default function ClearanceSearch() {
       Boolean(possibleMatchError) ||
       possibleMatchResults.length > 0);
   const shouldShowPhoneticMatches =
-    isExpandedSearchEnabled &&
     !isSearching &&
     !searchError &&
-    getSearchTokens(trimmedSearchQuery).length > 1 &&
+    canRunPhoneticSearch &&
     (isSearchingPhoneticMatches ||
       hasSearchedPhoneticMatches ||
       Boolean(phoneticMatchError) ||
       phoneticMatchResults.length > 0);
+  const shouldShowManualPossibleButton =
+    !isExpandedSearchEnabled &&
+    !isSearching &&
+    !searchError &&
+    !isSearchingPossibleMatches &&
+    !hasSearchedPossibleMatches &&
+    !possibleMatchError &&
+    possibleMatchResults.length === 0;
+  const shouldShowManualPhoneticButton =
+    !isExpandedSearchEnabled &&
+    !isSearching &&
+    !searchError &&
+    canRunPhoneticSearch &&
+    hasSearchedPossibleMatches &&
+    !possibleMatchError &&
+    !isSearchingPossibleMatches &&
+    !isSearchingPhoneticMatches &&
+    !hasSearchedPhoneticMatches &&
+    !phoneticMatchError &&
+    phoneticMatchResults.length === 0;
 
   return (
     <div className="p-8 space-y-6">
@@ -468,6 +566,22 @@ export default function ClearanceSearch() {
                 </Card>
               )}
 
+              {shouldShowManualPossibleButton && (
+                <Card>
+                  <CardContent className="flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="font-medium">Need a broader review?</p>
+                      <p className="text-sm text-muted-foreground">
+                        Expand search to load possible typo and spelling matches.
+                      </p>
+                    </div>
+                    <Button type="button" onClick={handleExpandPossibleMatches}>
+                      Expand search
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
               {shouldShowPossibleMatches && (
                 <section className="space-y-4">
                   <div>
@@ -527,6 +641,22 @@ export default function ClearanceSearch() {
                     )
                   )}
                 </section>
+              )}
+
+              {shouldShowManualPhoneticButton && (
+                <Card>
+                  <CardContent className="flex flex-col gap-3 py-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="font-medium">Continue with sound-alike names?</p>
+                      <p className="text-sm text-muted-foreground">
+                        Expand search to load phonetic matches after possible matches.
+                      </p>
+                    </div>
+                    <Button type="button" onClick={handleExpandPhoneticMatches}>
+                      Expand search
+                    </Button>
+                  </CardContent>
+                </Card>
               )}
 
               {shouldShowPhoneticMatches && (
