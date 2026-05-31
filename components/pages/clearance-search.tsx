@@ -389,41 +389,37 @@ export default function ClearanceSearch() {
         </div>
       </div>
 
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <div className="grid gap-4 md:grid-cols-[1fr_280px]">
-            <div>
-              <Label htmlFor="search-query">Search Query</Label>
-              <div className="relative mt-1">
-                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  id="search-query"
-                  placeholder="Enter name or alias..."
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  className="pl-10 text-lg"
-                />
-              </div>
+      <Card className="sticky top-0 z-20 border-x-0 border-t-0 rounded-none bg-background/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80 md:rounded-lg md:border-x md:border-t">
+        <CardContent className="space-y-2 py-3 md:py-4">
+          <div>
+            <Label htmlFor="search-query">Search Query</Label>
+            <div className="relative mt-1">
+              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                id="search-query"
+                placeholder="Enter name or alias..."
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                className="pl-10 text-lg"
+              />
             </div>
-            <div className="rounded-lg border bg-muted/30 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <Label
-                  htmlFor="expanded-search"
-                  className="cursor-pointer text-sm font-medium"
-                >
-                  Automatic possible and phonetic matches
-                </Label>
-                <Switch
-                  id="expanded-search"
-                  checked={isExpandedSearchEnabled}
-                  onCheckedChange={setIsExpandedSearchEnabled}
-                  aria-label="Toggle automatic possible and phonetic matches"
-                />
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                {isExpandedSearchEnabled ? "On" : "Off"}
-              </p>
-            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <Switch
+              id="expanded-search"
+              checked={isExpandedSearchEnabled}
+              onCheckedChange={setIsExpandedSearchEnabled}
+              aria-label="Toggle automatic possible and phonetic matches"
+            />
+            <Label
+              htmlFor="expanded-search"
+              className="cursor-pointer font-medium leading-none"
+            >
+              Automatic possible and phonetic matches
+            </Label>
+            <Badge variant="outline" className="h-5 px-2 text-[11px]">
+              {isExpandedSearchEnabled ? "On" : "Off"}
+            </Badge>
           </div>
         </CardContent>
       </Card>
