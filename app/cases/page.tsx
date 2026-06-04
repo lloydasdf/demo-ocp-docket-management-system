@@ -29,6 +29,9 @@ import {
 type CompactCase = CasesDisplayRecord;
 type DocketTypeFilter = string;
 type DocketYearFilter = string;
+type AssignedProsecutorFilter = string;
+type CurrentStatusFilter = string;
+type DateReceivedFilter = string;
 
 const DEFAULT_DOCKET_TYPE = 'All';
 const INITIAL_CASE_LIMIT = 500;
@@ -69,6 +72,9 @@ type CasesPageCache = {
   selectedSearchColumns?: CaseSearchColumnKey[];
   selectedDocketTypes?: DocketTypeFilter[];
   selectedDocketYears?: DocketYearFilter[];
+  selectedAssignedProsecutors?: AssignedProsecutorFilter[];
+  selectedCurrentStatuses?: CurrentStatusFilter[];
+  selectedDateReceived?: DateReceivedFilter[];
 };
 
 const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
@@ -76,7 +82,7 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v9';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v10';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -181,6 +187,18 @@ function allOptionsSelected<T extends string>(selectedOptions: T[], availableOpt
     selectedOptions.length === availableOptions.length &&
     availableOptions.every((option) => selectedOptions.includes(option))
   );
+}
+
+function filterableAssignedProsecutor(caseDetail: CompactCase) {
+  return assignedProsecutor(caseDetail) ?? 'Unassigned';
+}
+
+function filterableCurrentStatus(caseDetail: CompactCase) {
+  return currentStatusLabel(caseDetail) ?? 'No status';
+}
+
+function filterableDateReceived(caseDetail: CompactCase) {
+  return caseDetail.date_received ? formatDate(caseDetail.date_received) : 'No date received';
 }
 
 function formatDate(value: string | null | undefined) {
@@ -291,8 +309,20 @@ export default function CasesPage() {
   const docketFiltersTouchedRef = useRef(
     Array.isArray(cachedInitialState?.selectedDocketTypes) || Array.isArray(cachedInitialState?.selectedDocketYears),
   );
+  const assignedProsecutorFiltersTouchedRef = useRef(Array.isArray(cachedInitialState?.selectedAssignedProsecutors));
+  const currentStatusFiltersTouchedRef = useRef(Array.isArray(cachedInitialState?.selectedCurrentStatuses));
+  const dateReceivedFiltersTouchedRef = useRef(Array.isArray(cachedInitialState?.selectedDateReceived));
   const [selectedDocketTypes, setSelectedDocketTypes] = useState<DocketTypeFilter[]>(cachedInitialState?.selectedDocketTypes ?? []);
   const [selectedDocketYears, setSelectedDocketYears] = useState<DocketYearFilter[]>(cachedInitialState?.selectedDocketYears ?? []);
+  const [selectedAssignedProsecutors, setSelectedAssignedProsecutors] = useState<AssignedProsecutorFilter[]>(
+    cachedInitialState?.selectedAssignedProsecutors ?? [],
+  );
+  const [selectedCurrentStatuses, setSelectedCurrentStatuses] = useState<CurrentStatusFilter[]>(
+    cachedInitialState?.selectedCurrentStatuses ?? [],
+  );
+  const [selectedDateReceived, setSelectedDateReceived] = useState<DateReceivedFilter[]>(
+    cachedInitialState?.selectedDateReceived ?? [],
+  );
   const [searchTerm, setSearchTerm] = useState(cachedInitialState?.searchTerm ?? '');
   const [selectedSearchColumns, setSelectedSearchColumns] = useState<CaseSearchColumnKey[]>(() =>
     cachedInitialState?.selectedSearchColumns ?? [...DEFAULT_SEARCH_COLUMNS],
@@ -324,6 +354,9 @@ export default function CasesPage() {
         selectedSearchColumns: readCasesPageCache()?.selectedSearchColumns ?? selectedSearchColumns,
         selectedDocketTypes: readCasesPageCache()?.selectedDocketTypes ?? selectedDocketTypes,
         selectedDocketYears: readCasesPageCache()?.selectedDocketYears ?? selectedDocketYears,
+        selectedAssignedProsecutors: readCasesPageCache()?.selectedAssignedProsecutors ?? selectedAssignedProsecutors,
+        selectedCurrentStatuses: readCasesPageCache()?.selectedCurrentStatuses ?? selectedCurrentStatuses,
+        selectedDateReceived: readCasesPageCache()?.selectedDateReceived ?? selectedDateReceived,
       });
     }
 
@@ -365,6 +398,9 @@ export default function CasesPage() {
         selectedSearchColumns: readCasesPageCache()?.selectedSearchColumns ?? selectedSearchColumns,
         selectedDocketTypes: readCasesPageCache()?.selectedDocketTypes ?? selectedDocketTypes,
         selectedDocketYears: readCasesPageCache()?.selectedDocketYears ?? selectedDocketYears,
+        selectedAssignedProsecutors: readCasesPageCache()?.selectedAssignedProsecutors ?? selectedAssignedProsecutors,
+        selectedCurrentStatuses: readCasesPageCache()?.selectedCurrentStatuses ?? selectedCurrentStatuses,
+        selectedDateReceived: readCasesPageCache()?.selectedDateReceived ?? selectedDateReceived,
       });
     }
 
@@ -459,8 +495,19 @@ export default function CasesPage() {
       selectedSearchColumns,
       selectedDocketTypes,
       selectedDocketYears,
+      selectedAssignedProsecutors,
+      selectedCurrentStatuses,
+      selectedDateReceived,
     });
-  }, [searchTerm, selectedDocketTypes, selectedDocketYears, selectedSearchColumns]);
+  }, [
+    searchTerm,
+    selectedAssignedProsecutors,
+    selectedCurrentStatuses,
+    selectedDateReceived,
+    selectedDocketTypes,
+    selectedDocketYears,
+    selectedSearchColumns,
+  ]);
 
   useEffect(() => {
     const container = tableContainerRef.current;
@@ -490,7 +537,14 @@ export default function CasesPage() {
     const normalizedSearch = searchTerm.trim().toLowerCase();
 
     return cases.filter((caseDetail) => {
-      if (selectedDocketTypes.length === 0 || selectedDocketYears.length === 0 || selectedSearchColumns.length === 0) {
+      if (
+        selectedDocketTypes.length === 0 ||
+        selectedDocketYears.length === 0 ||
+        selectedAssignedProsecutors.length === 0 ||
+        selectedCurrentStatuses.length === 0 ||
+        selectedDateReceived.length === 0 ||
+        selectedSearchColumns.length === 0
+      ) {
         return false;
       }
 
@@ -499,6 +553,18 @@ export default function CasesPage() {
       }
 
       if (!Number.isFinite(caseDetail.docket_year) || !selectedDocketYears.includes(String(caseDetail.docket_year))) {
+        return false;
+      }
+
+      if (!selectedAssignedProsecutors.includes(filterableAssignedProsecutor(caseDetail))) {
+        return false;
+      }
+
+      if (!selectedCurrentStatuses.includes(filterableCurrentStatus(caseDetail))) {
+        return false;
+      }
+
+      if (!selectedDateReceived.includes(filterableDateReceived(caseDetail))) {
         return false;
       }
 
@@ -515,7 +581,18 @@ export default function CasesPage() {
           .includes(normalizedSearch),
       );
     });
-  }, [cases, classificationsByCase, partyNamesByCase, searchTerm, selectedDocketTypes, selectedDocketYears, selectedSearchColumns]);
+  }, [
+    cases,
+    classificationsByCase,
+    partyNamesByCase,
+    searchTerm,
+    selectedAssignedProsecutors,
+    selectedCurrentStatuses,
+    selectedDateReceived,
+    selectedDocketTypes,
+    selectedDocketYears,
+    selectedSearchColumns,
+  ]);
 
   const sortedCases = useMemo(
     () =>
@@ -541,6 +618,28 @@ export default function CasesPage() {
     return values.map(String);
   }, [cases]);
 
+  const assignedProsecutorFilters = useMemo(() => (
+    Array.from(new Set(cases.map(filterableAssignedProsecutor))).sort()
+  ), [cases]);
+
+  const currentStatusFilters = useMemo(() => (
+    Array.from(new Set(cases.map(filterableCurrentStatus))).sort()
+  ), [cases]);
+
+  const dateReceivedFilters = useMemo(() => (
+    Array.from(new Set(cases.map(filterableDateReceived))).sort((left, right) => {
+      if (left === 'No date received') {
+        return 1;
+      }
+
+      if (right === 'No date received') {
+        return -1;
+      }
+
+      return new Date(right).getTime() - new Date(left).getTime();
+    })
+  ), [cases]);
+
   useEffect(() => {
     if (!docketFiltersTouchedRef.current) {
       setSelectedDocketTypes(docketTypeFilters);
@@ -552,6 +651,24 @@ export default function CasesPage() {
       setSelectedDocketYears(docketYearFilters);
     }
   }, [docketYearFilters]);
+
+  useEffect(() => {
+    if (!assignedProsecutorFiltersTouchedRef.current) {
+      setSelectedAssignedProsecutors(assignedProsecutorFilters);
+    }
+  }, [assignedProsecutorFilters]);
+
+  useEffect(() => {
+    if (!currentStatusFiltersTouchedRef.current) {
+      setSelectedCurrentStatuses(currentStatusFilters);
+    }
+  }, [currentStatusFilters]);
+
+  useEffect(() => {
+    if (!dateReceivedFiltersTouchedRef.current) {
+      setSelectedDateReceived(dateReceivedFilters);
+    }
+  }, [dateReceivedFilters]);
 
   const searchColumnSummary = useMemo(() => {
     if (selectedSearchColumns.length === 0) {
@@ -600,6 +717,54 @@ export default function CasesPage() {
 
     return `${selectedDocketYears.length} years`;
   }, [docketYearFilters, selectedDocketYears]);
+
+  const assignedProsecutorSummary = useMemo(() => {
+    if (selectedAssignedProsecutors.length === 0) {
+      return 'No prosecutors';
+    }
+
+    if (allOptionsSelected(selectedAssignedProsecutors, assignedProsecutorFilters)) {
+      return 'All prosecutors';
+    }
+
+    if (selectedAssignedProsecutors.length === 1) {
+      return selectedAssignedProsecutors[0];
+    }
+
+    return `${selectedAssignedProsecutors.length} prosecutors`;
+  }, [assignedProsecutorFilters, selectedAssignedProsecutors]);
+
+  const currentStatusSummary = useMemo(() => {
+    if (selectedCurrentStatuses.length === 0) {
+      return 'No statuses';
+    }
+
+    if (allOptionsSelected(selectedCurrentStatuses, currentStatusFilters)) {
+      return 'All statuses';
+    }
+
+    if (selectedCurrentStatuses.length === 1) {
+      return selectedCurrentStatuses[0];
+    }
+
+    return `${selectedCurrentStatuses.length} statuses`;
+  }, [currentStatusFilters, selectedCurrentStatuses]);
+
+  const dateReceivedSummary = useMemo(() => {
+    if (selectedDateReceived.length === 0) {
+      return 'No dates';
+    }
+
+    if (allOptionsSelected(selectedDateReceived, dateReceivedFilters)) {
+      return 'All dates';
+    }
+
+    if (selectedDateReceived.length === 1) {
+      return selectedDateReceived[0];
+    }
+
+    return `${selectedDateReceived.length} dates`;
+  }, [dateReceivedFilters, selectedDateReceived]);
 
   const tableWidth = useMemo(
     () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0),
@@ -709,8 +874,224 @@ export default function CasesPage() {
     );
   }
 
+  function toggleAssignedProsecutor(prosecutor: AssignedProsecutorFilter) {
+    assignedProsecutorFiltersTouchedRef.current = true;
+    setSelectedAssignedProsecutors((currentProsecutors) => {
+      if (currentProsecutors.includes(prosecutor)) {
+        return currentProsecutors.filter((currentProsecutor) => currentProsecutor !== prosecutor);
+      }
+
+      return [...currentProsecutors, prosecutor];
+    });
+  }
+
+  function toggleAllAssignedProsecutors() {
+    assignedProsecutorFiltersTouchedRef.current = true;
+    setSelectedAssignedProsecutors((currentProsecutors) =>
+      allOptionsSelected(currentProsecutors, assignedProsecutorFilters) ? [] : [...assignedProsecutorFilters],
+    );
+  }
+
+  function toggleCurrentStatus(status: CurrentStatusFilter) {
+    currentStatusFiltersTouchedRef.current = true;
+    setSelectedCurrentStatuses((currentStatuses) => {
+      if (currentStatuses.includes(status)) {
+        return currentStatuses.filter((currentStatus) => currentStatus !== status);
+      }
+
+      return [...currentStatuses, status];
+    });
+  }
+
+  function toggleAllCurrentStatuses() {
+    currentStatusFiltersTouchedRef.current = true;
+    setSelectedCurrentStatuses((currentStatuses) =>
+      allOptionsSelected(currentStatuses, currentStatusFilters) ? [] : [...currentStatusFilters],
+    );
+  }
+
+  function toggleDateReceived(dateReceived: DateReceivedFilter) {
+    dateReceivedFiltersTouchedRef.current = true;
+    setSelectedDateReceived((currentDates) => {
+      if (currentDates.includes(dateReceived)) {
+        return currentDates.filter((currentDate) => currentDate !== dateReceived);
+      }
+
+      return [...currentDates, dateReceived];
+    });
+  }
+
+  function toggleAllDateReceived() {
+    dateReceivedFiltersTouchedRef.current = true;
+    setSelectedDateReceived((currentDates) =>
+      allOptionsSelected(currentDates, dateReceivedFilters) ? [] : [...dateReceivedFilters],
+    );
+  }
+
   function clearSearch() {
     setSearchTerm('');
+  }
+
+  function renderColumnFilter(columnKey: CaseTableColumnKey) {
+    switch (columnKey) {
+      case 'docketType':
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" className="h-7 max-w-full gap-1 px-2 text-xs font-normal normal-case">
+                <span className="truncate">{docketTypeSummary}</span>
+                <ChevronDown className="size-3 opacity-70" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-80 w-56 overflow-y-auto">
+              <DropdownMenuLabel>Docket types</DropdownMenuLabel>
+              <DropdownMenuCheckboxItem
+                checked={allOptionsSelected(selectedDocketTypes, docketTypeFilters)}
+                onCheckedChange={toggleAllDocketTypes}
+                onSelect={(event) => event.preventDefault()}
+              >
+                All
+              </DropdownMenuCheckboxItem>
+              {docketTypeFilters.map((docketType) => (
+                <DropdownMenuCheckboxItem
+                  key={docketType}
+                  checked={selectedDocketTypes.includes(docketType)}
+                  onCheckedChange={() => toggleDocketType(docketType)}
+                  onSelect={(event) => event.preventDefault()}
+                >
+                  {docketType}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      case 'docketYear':
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" className="h-7 max-w-full gap-1 px-2 text-xs font-normal normal-case">
+                <span className="truncate">{docketYearSummary}</span>
+                <ChevronDown className="size-3 opacity-70" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-80 w-56 overflow-y-auto">
+              <DropdownMenuLabel>Docket years</DropdownMenuLabel>
+              <DropdownMenuCheckboxItem
+                checked={allOptionsSelected(selectedDocketYears, docketYearFilters)}
+                onCheckedChange={toggleAllDocketYears}
+                onSelect={(event) => event.preventDefault()}
+              >
+                All years
+              </DropdownMenuCheckboxItem>
+              {docketYearFilters.map((docketYear) => (
+                <DropdownMenuCheckboxItem
+                  key={docketYear}
+                  checked={selectedDocketYears.includes(docketYear)}
+                  onCheckedChange={() => toggleDocketYear(docketYear)}
+                  onSelect={(event) => event.preventDefault()}
+                >
+                  {docketYear}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      case 'assignedProsecutor':
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" className="h-7 max-w-full gap-1 px-2 text-xs font-normal normal-case">
+                <span className="truncate">{assignedProsecutorSummary}</span>
+                <ChevronDown className="size-3 opacity-70" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-80 w-64 overflow-y-auto">
+              <DropdownMenuLabel>Assigned prosecutors</DropdownMenuLabel>
+              <DropdownMenuCheckboxItem
+                checked={allOptionsSelected(selectedAssignedProsecutors, assignedProsecutorFilters)}
+                onCheckedChange={toggleAllAssignedProsecutors}
+                onSelect={(event) => event.preventDefault()}
+              >
+                All prosecutors
+              </DropdownMenuCheckboxItem>
+              {assignedProsecutorFilters.map((prosecutor) => (
+                <DropdownMenuCheckboxItem
+                  key={prosecutor}
+                  checked={selectedAssignedProsecutors.includes(prosecutor)}
+                  onCheckedChange={() => toggleAssignedProsecutor(prosecutor)}
+                  onSelect={(event) => event.preventDefault()}
+                >
+                  {prosecutor}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      case 'currentStatus':
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" className="h-7 max-w-full gap-1 px-2 text-xs font-normal normal-case">
+                <span className="truncate">{currentStatusSummary}</span>
+                <ChevronDown className="size-3 opacity-70" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-80 w-56 overflow-y-auto">
+              <DropdownMenuLabel>Current statuses</DropdownMenuLabel>
+              <DropdownMenuCheckboxItem
+                checked={allOptionsSelected(selectedCurrentStatuses, currentStatusFilters)}
+                onCheckedChange={toggleAllCurrentStatuses}
+                onSelect={(event) => event.preventDefault()}
+              >
+                All statuses
+              </DropdownMenuCheckboxItem>
+              {currentStatusFilters.map((status) => (
+                <DropdownMenuCheckboxItem
+                  key={status}
+                  checked={selectedCurrentStatuses.includes(status)}
+                  onCheckedChange={() => toggleCurrentStatus(status)}
+                  onSelect={(event) => event.preventDefault()}
+                >
+                  {status}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      case 'dateReceived':
+        return (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" className="h-7 max-w-full gap-1 px-2 text-xs font-normal normal-case">
+                <span className="truncate">{dateReceivedSummary}</span>
+                <ChevronDown className="size-3 opacity-70" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-80 w-56 overflow-y-auto">
+              <DropdownMenuLabel>Date received</DropdownMenuLabel>
+              <DropdownMenuCheckboxItem
+                checked={allOptionsSelected(selectedDateReceived, dateReceivedFilters)}
+                onCheckedChange={toggleAllDateReceived}
+                onSelect={(event) => event.preventDefault()}
+              >
+                All dates
+              </DropdownMenuCheckboxItem>
+              {dateReceivedFilters.map((dateReceived) => (
+                <DropdownMenuCheckboxItem
+                  key={dateReceived}
+                  checked={selectedDateReceived.includes(dateReceived)}
+                  onCheckedChange={() => toggleDateReceived(dateReceived)}
+                  onSelect={(event) => event.preventDefault()}
+                >
+                  {dateReceived}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        );
+      default:
+        return null;
+    }
   }
 
   function handleColumnResize(columnKey: CaseTableColumnKey, startX: number) {
@@ -754,7 +1135,7 @@ export default function CasesPage() {
 
           <Card aria-busy={isLoading || isLoadingAllCases} className="min-h-0 flex-1 gap-4 overflow-hidden py-4">
             <CardHeader className="shrink-0 px-4 md:px-6">
-              <div className="grid gap-4 sm:max-w-xl sm:grid-cols-2">
+              <div className="grid gap-4 sm:max-w-xl">
                 <div className="flex flex-col gap-2 sm:col-span-2">
                   <label className="text-sm font-medium text-foreground" htmlFor="case-search">
                     Search Cases
@@ -809,74 +1190,6 @@ export default function CasesPage() {
                     </DropdownMenu>
                   </div>
                 </div>
-
-                <div className="flex flex-col gap-2">
-                  <label className="text-sm font-medium text-foreground" htmlFor="docket-type-filter">
-                    Docket Type
-                  </label>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button id="docket-type-filter" type="button" variant="outline" className="justify-between">
-                        {docketTypeSummary}
-                        <ChevronDown className="size-4 opacity-70" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-56">
-                      <DropdownMenuLabel>Docket types</DropdownMenuLabel>
-                      <DropdownMenuCheckboxItem
-                        checked={allOptionsSelected(selectedDocketTypes, docketTypeFilters)}
-                        onCheckedChange={toggleAllDocketTypes}
-                        onSelect={(event) => event.preventDefault()}
-                      >
-                        All
-                      </DropdownMenuCheckboxItem>
-                      {docketTypeFilters.map((docketType) => (
-                        <DropdownMenuCheckboxItem
-                          key={docketType}
-                          checked={selectedDocketTypes.includes(docketType)}
-                          onCheckedChange={() => toggleDocketType(docketType)}
-                          onSelect={(event) => event.preventDefault()}
-                        >
-                          {docketType}
-                        </DropdownMenuCheckboxItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <label className="text-sm font-medium text-foreground" htmlFor="docket-year-filter">
-                    Docket Year
-                  </label>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button id="docket-year-filter" type="button" variant="outline" className="justify-between">
-                        {docketYearSummary}
-                        <ChevronDown className="size-4 opacity-70" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-56">
-                      <DropdownMenuLabel>Docket years</DropdownMenuLabel>
-                      <DropdownMenuCheckboxItem
-                        checked={allOptionsSelected(selectedDocketYears, docketYearFilters)}
-                        onCheckedChange={toggleAllDocketYears}
-                        onSelect={(event) => event.preventDefault()}
-                      >
-                        All years
-                      </DropdownMenuCheckboxItem>
-                      {docketYearFilters.map((docketYear) => (
-                        <DropdownMenuCheckboxItem
-                          key={docketYear}
-                          checked={selectedDocketYears.includes(docketYear)}
-                          onCheckedChange={() => toggleDocketYear(docketYear)}
-                          onSelect={(event) => event.preventDefault()}
-                        >
-                          {docketYear}
-                        </DropdownMenuCheckboxItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
               </div>
             </CardHeader>
 
@@ -902,7 +1215,10 @@ export default function CasesPage() {
                       <TableRow className="bg-muted hover:bg-muted">
                         {CASE_TABLE_COLUMNS.map((column) => (
                           <TableHead key={column.key} className="relative select-none whitespace-nowrap pr-4 uppercase">
-                            {column.label}
+                            <div className="flex min-w-0 flex-col gap-1">
+                              <span>{column.label}</span>
+                              {renderColumnFilter(column.key)}
+                            </div>
                             <button
                               type="button"
                               className="absolute right-0 top-0 h-full w-2 cursor-col-resize touch-none border-r border-transparent hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
