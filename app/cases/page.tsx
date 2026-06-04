@@ -9,6 +9,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ChevronDown } from 'lucide-react';
 import {
   getCaseClassificationsForCases,
   getCasePartyParticipantsForCases,
@@ -44,11 +53,11 @@ const CASE_TABLE_COLUMNS = [
 ] as const;
 
 type CaseTableColumnKey = (typeof CASE_TABLE_COLUMNS)[number]['key'];
+type CaseSearchColumnKey = CaseTableColumnKey;
 type ColumnWidths = Record<CaseTableColumnKey, number>;
 type CasePartyNames = {
   complainants: string[];
   respondents: string[];
-  searchText: string;
 };
 type CaseClassificationByCase = Record<number, string>;
 
@@ -60,6 +69,7 @@ type CasesPageCache = {
   hasAllCases: boolean;
 };
 
+const DEFAULT_SEARCH_COLUMNS = CASE_TABLE_COLUMNS.map((column) => column.key);
 const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v7';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
@@ -125,6 +135,42 @@ function assignedProsecutor(caseDetail: CompactCase) {
 
 function currentStatusLabel(caseDetail: CompactCase) {
   return caseDetail.current_status_label || caseDetail.current_status_code;
+}
+
+function searchColumnValue(
+  caseDetail: CompactCase,
+  columnKey: CaseSearchColumnKey,
+  partyNames: CasePartyNames | undefined,
+  classification: string | undefined,
+) {
+  switch (columnKey) {
+    case 'docketNumber':
+      return formatDisplayDocketNumber(caseDetail);
+    case 'docketType':
+      return `${caseDetail.docket_type_name ?? ''} ${caseDetail.docket_type_prefix ?? ''}`;
+    case 'docketYear':
+      return String(caseDetail.docket_year ?? '');
+    case 'complainant':
+      return partyNames?.complainants.join(' ') ?? '';
+    case 'respondent':
+      return partyNames?.respondents.join(' ') ?? '';
+    case 'violation':
+      return caseViolations(caseDetail) ?? '';
+    case 'classification':
+      return classification ?? '';
+    case 'assignedProsecutor':
+      return assignedProsecutor(caseDetail) ?? '';
+    case 'currentStatus':
+      return currentStatusLabel(caseDetail) ?? '';
+    case 'dateReceived':
+      return `${caseDetail.date_received ?? ''} ${formatDate(caseDetail.date_received)}`;
+    default:
+      return '';
+  }
+}
+
+function searchColumnLabel(columnKey: CaseSearchColumnKey) {
+  return CASE_TABLE_COLUMNS.find((column) => column.key === columnKey)?.label ?? columnKey;
 }
 
 function formatDate(value: string | null | undefined) {
@@ -219,12 +265,9 @@ function buildPartyNamesByCase(participants: CasePartyParticipantRecord[]) {
   return Array.from(grouped.entries()).reduce((namesByCase, [caseId, caseParticipants]) => {
     const complainants = partyNamesForRole(caseParticipants, 'complainant');
     const respondents = partyNamesForRole(caseParticipants, 'respondent');
-    const allParticipantNames = caseParticipants.map(personName);
-
     namesByCase[caseId] = {
       complainants,
       respondents,
-      searchText: allParticipantNames.join(' '),
     };
     return namesByCase;
   }, {} as Record<number, CasePartyNames>);
@@ -238,6 +281,7 @@ export default function CasesPage() {
   const [selectedDocketType, setSelectedDocketType] = useState<DocketTypeFilter>(DEFAULT_DOCKET_TYPE);
   const [selectedDocketYear, setSelectedDocketYear] = useState<DocketYearFilter>(cachedInitialState?.selectedDocketYear ?? 'All');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedSearchColumns, setSelectedSearchColumns] = useState<CaseSearchColumnKey[]>(() => [...DEFAULT_SEARCH_COLUMNS]);
   const [isLoading, setIsLoading] = useState(!cachedInitialState);
   const [isLoadingAllCases, setIsLoadingAllCases] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -424,23 +468,15 @@ export default function CasesPage() {
       }
 
       const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
-      const searchableText = [
-        formatDisplayDocketNumber(caseDetail),
-        caseDetail.docket_type_prefix ?? '',
-        String(caseDetail.docket_year ?? ''),
-        casePartyNames?.searchText ?? '',
-        casePartyNames?.complainants.join(' ') ?? '',
-        casePartyNames?.respondents.join(' ') ?? '',
-        caseViolations(caseDetail) ?? '',
-        assignedProsecutor(caseDetail) ?? '',
-        currentStatusLabel(caseDetail) ?? '',
-      ]
-        .join(' ')
-        .toLowerCase();
+      const classification = caseDetail.id ? classificationsByCase[caseDetail.id] : undefined;
 
-      return searchableText.includes(normalizedSearch);
+      return selectedSearchColumns.some((columnKey) =>
+        searchColumnValue(caseDetail, columnKey, casePartyNames, classification)
+          .toLowerCase()
+          .includes(normalizedSearch),
+      );
     });
-  }, [cases, partyNamesByCase, searchTerm, selectedDocketType, selectedDocketYear]);
+  }, [cases, classificationsByCase, partyNamesByCase, searchTerm, selectedDocketType, selectedDocketYear, selectedSearchColumns]);
 
   const sortedCases = useMemo(
     () =>
@@ -466,6 +502,18 @@ export default function CasesPage() {
     ).sort((left, right) => right - left);
     return ['All', ...values.map(String)];
   }, [cases]);
+
+  const searchColumnSummary = useMemo(() => {
+    if (selectedSearchColumns.length === DEFAULT_SEARCH_COLUMNS.length) {
+      return 'All columns';
+    }
+
+    if (selectedSearchColumns.length === 1) {
+      return searchColumnLabel(selectedSearchColumns[0]);
+    }
+
+    return `${selectedSearchColumns.length} columns`;
+  }, [selectedSearchColumns]);
 
   const tableWidth = useMemo(
     () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0),
@@ -523,6 +571,18 @@ export default function CasesPage() {
     };
   }, [rowHeights, scrollTop, sortedCases, viewportHeight]);
 
+  function toggleSearchColumn(columnKey: CaseSearchColumnKey) {
+    setSelectedSearchColumns((currentColumns) => {
+      if (currentColumns.includes(columnKey)) {
+        return currentColumns.length === 1
+          ? currentColumns
+          : currentColumns.filter((currentColumn) => currentColumn !== columnKey);
+      }
+
+      return [...currentColumns, columnKey];
+    });
+  }
+
   function handleColumnResize(columnKey: CaseTableColumnKey, startX: number) {
     const column = CASE_TABLE_COLUMNS.find((candidate) => candidate.key === columnKey);
     const startWidth = columnWidths[columnKey];
@@ -569,12 +629,37 @@ export default function CasesPage() {
                   <label className="text-sm font-medium text-foreground" htmlFor="case-search">
                     Search Cases
                   </label>
-                  <Input
-                    id="case-search"
-                    placeholder="Search docket no., parties, violation, prosecutor, or status"
-                    value={searchTerm}
-                    onChange={(event) => setSearchTerm(event.target.value)}
-                  />
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      id="case-search"
+                      className="sm:flex-1"
+                      placeholder={`Search ${searchColumnSummary.toLowerCase()}`}
+                      value={searchTerm}
+                      onChange={(event) => setSearchTerm(event.target.value)}
+                    />
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button type="button" variant="outline" className="justify-between sm:w-56">
+                          {searchColumnSummary}
+                          <ChevronDown className="size-4 opacity-70" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-56">
+                        <DropdownMenuLabel>Search columns</DropdownMenuLabel>
+                        {CASE_TABLE_COLUMNS.map((column) => (
+                          <DropdownMenuCheckboxItem
+                            key={column.key}
+                            checked={selectedSearchColumns.includes(column.key)}
+                            disabled={selectedSearchColumns.length === 1 && selectedSearchColumns.includes(column.key)}
+                            onCheckedChange={() => toggleSearchColumn(column.key)}
+                            onSelect={(event) => event.preventDefault()}
+                          >
+                            {column.label}
+                          </DropdownMenuCheckboxItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
 
                 <div className="flex flex-col gap-2">
