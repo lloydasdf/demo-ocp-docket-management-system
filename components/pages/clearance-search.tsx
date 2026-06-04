@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Database, Info, Search as SearchIcon } from "lucide-react";
+import {
+  AlertCircle,
+  Database,
+  Info,
+  ListFilter,
+  Search as SearchIcon,
+} from "lucide-react";
 
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -17,6 +23,15 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
@@ -77,6 +92,96 @@ function getSearchTokens(query: string) {
 
 function hasMultipleNameTokens(name: string) {
   return getSearchTokens(name).length > 1;
+}
+
+type ParticipantRoleFilter = "respondents" | "complainants" | "both";
+
+interface ClearanceSearchPreferences {
+  searchQuery: string;
+  participantRoleFilter: ParticipantRoleFilter;
+  isExpandedSearchEnabled: boolean;
+  searchResults: ClearanceSearchResult[];
+  possibleMatchResults: ClearanceSearchResult[];
+  hasSearchedPossibleMatches: boolean;
+  phoneticMatchResults: ClearanceSearchResult[];
+  hasSearchedPhoneticMatches: boolean;
+}
+
+const CLEARANCE_SEARCH_PREFERENCES_STORAGE_KEY =
+  "ocp-clearance-search-preferences";
+
+function isParticipantRoleFilter(value: unknown): value is ParticipantRoleFilter {
+  return value === "respondents" || value === "complainants" || value === "both";
+}
+
+function parseStoredClearanceSearchPreferences(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value) as Partial<ClearanceSearchPreferences>;
+  } catch {
+    return null;
+  }
+}
+
+function getRoleLabel(result: ClearanceSearchResult) {
+  return result.roleLabel.toLowerCase();
+}
+
+function isRespondentResult(result: ClearanceSearchResult) {
+  return getRoleLabel(result).includes("respondent");
+}
+
+function isComplainantResult(result: ClearanceSearchResult) {
+  return getRoleLabel(result).includes("complainant");
+}
+
+function filterResultsByParticipantRole(
+  results: ClearanceSearchResult[],
+  roleFilter: ParticipantRoleFilter,
+) {
+  return results.filter((result) => {
+    if (roleFilter === "respondents") {
+      return isRespondentResult(result);
+    }
+
+    if (roleFilter === "complainants") {
+      return isComplainantResult(result);
+    }
+
+    return isRespondentResult(result) || isComplainantResult(result);
+  });
+}
+
+function getResultNameKey(result: ClearanceSearchResult) {
+  return result.respondentName.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function getResultNameKeys(results: ClearanceSearchResult[]) {
+  return new Set(results.map(getResultNameKey).filter(Boolean));
+}
+
+function excludeResultsByName(
+  results: ClearanceSearchResult[],
+  excludedNameKeys: Set<string>,
+) {
+  return results.filter(
+    (result) => !excludedNameKeys.has(getResultNameKey(result)),
+  );
+}
+
+function getRoleFilterSummary(roleFilter: ParticipantRoleFilter) {
+  if (roleFilter === "respondents") {
+    return "respondent";
+  }
+
+  if (roleFilter === "complainants") {
+    return "complainant";
+  }
+
+  return "complainant or respondent";
 }
 
 function groupResults(results: ClearanceSearchResult[]) {
@@ -204,6 +309,8 @@ function ResultGroup({
 export default function ClearanceSearch() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isExpandedSearchEnabled, setIsExpandedSearchEnabled] = useState(true);
+  const [participantRoleFilter, setParticipantRoleFilter] =
+    useState<ParticipantRoleFilter>("respondents");
   const [searchResults, setSearchResults] = useState<ClearanceSearchResult[]>(
     [],
   );
@@ -229,10 +336,98 @@ export default function ClearanceSearch() {
   );
   const [hasSearchedPhoneticMatches, setHasSearchedPhoneticMatches] =
     useState(false);
+  const [hasLoadedStoredSearchPreferences, setHasLoadedStoredSearchPreferences] =
+    useState(false);
   const possibleMatchSearchIdRef = useRef(0);
+  const lastSearchedQueryRef = useRef("");
 
   useEffect(() => {
+    const preferences = parseStoredClearanceSearchPreferences(
+      window.localStorage.getItem(CLEARANCE_SEARCH_PREFERENCES_STORAGE_KEY),
+    );
+
+    if (preferences) {
+      if (typeof preferences.searchQuery === "string") {
+        lastSearchedQueryRef.current = preferences.searchQuery.trim();
+        setSearchQuery(preferences.searchQuery);
+      }
+
+      if (isParticipantRoleFilter(preferences.participantRoleFilter)) {
+        setParticipantRoleFilter(preferences.participantRoleFilter);
+      }
+
+      if (typeof preferences.isExpandedSearchEnabled === "boolean") {
+        setIsExpandedSearchEnabled(preferences.isExpandedSearchEnabled);
+      }
+
+      if (Array.isArray(preferences.searchResults)) {
+        setSearchResults(preferences.searchResults);
+      }
+
+      if (Array.isArray(preferences.possibleMatchResults)) {
+        setPossibleMatchResults(preferences.possibleMatchResults);
+      }
+
+      if (typeof preferences.hasSearchedPossibleMatches === "boolean") {
+        setHasSearchedPossibleMatches(preferences.hasSearchedPossibleMatches);
+      }
+
+      if (Array.isArray(preferences.phoneticMatchResults)) {
+        setPhoneticMatchResults(preferences.phoneticMatchResults);
+      }
+
+      if (typeof preferences.hasSearchedPhoneticMatches === "boolean") {
+        setHasSearchedPhoneticMatches(preferences.hasSearchedPhoneticMatches);
+      }
+    }
+
+    setHasLoadedStoredSearchPreferences(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedStoredSearchPreferences) {
+      return;
+    }
+
+    const preferences: ClearanceSearchPreferences = {
+      searchQuery,
+      participantRoleFilter,
+      isExpandedSearchEnabled,
+      searchResults,
+      possibleMatchResults,
+      hasSearchedPossibleMatches,
+      phoneticMatchResults,
+      hasSearchedPhoneticMatches,
+    };
+
+    window.localStorage.setItem(
+      CLEARANCE_SEARCH_PREFERENCES_STORAGE_KEY,
+      JSON.stringify(preferences),
+    );
+  }, [
+    hasLoadedStoredSearchPreferences,
+    hasSearchedPhoneticMatches,
+    hasSearchedPossibleMatches,
+    isExpandedSearchEnabled,
+    participantRoleFilter,
+    phoneticMatchResults,
+    possibleMatchResults,
+    searchQuery,
+    searchResults,
+  ]);
+
+  useEffect(() => {
+    if (!hasLoadedStoredSearchPreferences) {
+      return;
+    }
+
     const trimmedQuery = searchQuery.trim();
+
+    if (trimmedQuery === lastSearchedQueryRef.current) {
+      return;
+    }
+
+    lastSearchedQueryRef.current = trimmedQuery;
 
     const searchId = possibleMatchSearchIdRef.current + 1;
     possibleMatchSearchIdRef.current = searchId;
@@ -343,7 +538,7 @@ export default function ClearanceSearch() {
       isCurrent = false;
       window.clearTimeout(timer);
     };
-  }, [isExpandedSearchEnabled, searchQuery]);
+  }, [hasLoadedStoredSearchPreferences, searchQuery]);
 
   async function handleExpandPossibleMatches() {
     const trimmedQuery = searchQuery.trim();
@@ -423,18 +618,51 @@ export default function ClearanceSearch() {
     setIsSearchingPhoneticMatches(false);
   }
 
+  const filteredSearchResults = useMemo(
+    () => filterResultsByParticipantRole(searchResults, participantRoleFilter),
+    [participantRoleFilter, searchResults],
+  );
+  const filteredPossibleMatchResults = useMemo(() => {
+    const roleFilteredResults = filterResultsByParticipantRole(
+      possibleMatchResults,
+      participantRoleFilter,
+    );
+
+    return excludeResultsByName(
+      roleFilteredResults,
+      getResultNameKeys(filteredSearchResults),
+    );
+  }, [filteredSearchResults, participantRoleFilter, possibleMatchResults]);
+  const filteredPhoneticMatchResults = useMemo(() => {
+    const roleFilteredResults = filterResultsByParticipantRole(
+      phoneticMatchResults,
+      participantRoleFilter,
+    );
+    const previouslyShownNameKeys = new Set([
+      ...getResultNameKeys(filteredSearchResults),
+      ...getResultNameKeys(filteredPossibleMatchResults),
+    ]);
+
+    return excludeResultsByName(roleFilteredResults, previouslyShownNameKeys);
+  }, [
+    filteredPossibleMatchResults,
+    filteredSearchResults,
+    participantRoleFilter,
+    phoneticMatchResults,
+  ]);
   const groupedResults = useMemo(
-    () => groupResults(searchResults),
-    [searchResults],
+    () => groupResults(filteredSearchResults),
+    [filteredSearchResults],
   );
   const groupedPossibleMatchResults = useMemo(
-    () => groupResults(possibleMatchResults),
-    [possibleMatchResults],
+    () => groupResults(filteredPossibleMatchResults),
+    [filteredPossibleMatchResults],
   );
   const groupedPhoneticMatchResults = useMemo(
-    () => groupResults(phoneticMatchResults),
-    [phoneticMatchResults],
+    () => groupResults(filteredPhoneticMatchResults),
+    [filteredPhoneticMatchResults],
   );
+  const roleFilterSummary = getRoleFilterSummary(participantRoleFilter);
   const trimmedSearchQuery = searchQuery.trim();
   const canRunPhoneticSearch = getSearchTokens(trimmedSearchQuery).length > 1;
   const shouldShowPossibleMatches =
@@ -498,8 +726,41 @@ export default function ClearanceSearch() {
                 placeholder="Enter name or alias..."
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                className="pl-10 text-lg"
+                className="pl-10 pr-12 text-lg"
               />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1/2 -translate-y-1/2"
+                    aria-label={`Filter results by role: ${roleFilterSummary}`}
+                  >
+                    <ListFilter className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>Results filter</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuRadioGroup
+                    value={participantRoleFilter}
+                    onValueChange={(value) =>
+                      setParticipantRoleFilter(value as ParticipantRoleFilter)
+                    }
+                  >
+                    <DropdownMenuRadioItem value="respondents">
+                      Respondents only
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="complainants">
+                      Complainants only
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="both">
+                      Both
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -556,11 +817,12 @@ export default function ClearanceSearch() {
               <ResultGroup label="Medium" results={groupedResults.Medium} />
               <ResultGroup label="Low" results={groupedResults.Low} />
 
-              {searchResults.length === 0 && (
+              {filteredSearchResults.length === 0 && (
                 <Card>
                   <CardContent className="text-center py-8">
                     <p className="text-muted-foreground">
-                      No exact live records found matching &quot;{searchQuery}&quot;
+                      No exact live {roleFilterSummary} records found matching
+                      &quot;{searchQuery}&quot;
                     </p>
                   </CardContent>
                 </Card>
@@ -613,7 +875,7 @@ export default function ClearanceSearch() {
                     </Card>
                   )}
 
-                  {possibleMatchResults.length > 0 ? (
+                  {filteredPossibleMatchResults.length > 0 ? (
                     <>
                       <ResultGroup
                         label="High"
@@ -634,7 +896,8 @@ export default function ClearanceSearch() {
                       <Card>
                         <CardContent className="text-center py-8">
                           <p className="text-muted-foreground">
-                            No possible matches found for &quot;{searchQuery}&quot;
+                            No possible {roleFilterSummary} matches found for
+                            &quot;{searchQuery}&quot;
                           </p>
                         </CardContent>
                       </Card>
@@ -690,7 +953,7 @@ export default function ClearanceSearch() {
                     </Card>
                   )}
 
-                  {phoneticMatchResults.length > 0 ? (
+                  {filteredPhoneticMatchResults.length > 0 ? (
                     <>
                       <ResultGroup
                         label="High"
@@ -714,7 +977,8 @@ export default function ClearanceSearch() {
                       <Card>
                         <CardContent className="text-center py-8">
                           <p className="text-muted-foreground">
-                            No sound-alike matches found for &quot;{searchQuery}&quot;
+                            No sound-alike {roleFilterSummary} matches found for
+                            &quot;{searchQuery}&quot;
                           </p>
                         </CardContent>
                       </Card>
