@@ -100,6 +100,11 @@ interface ClearanceSearchPreferences {
   searchQuery: string;
   participantRoleFilter: ParticipantRoleFilter;
   isExpandedSearchEnabled: boolean;
+  searchResults: ClearanceSearchResult[];
+  possibleMatchResults: ClearanceSearchResult[];
+  hasSearchedPossibleMatches: boolean;
+  phoneticMatchResults: ClearanceSearchResult[];
+  hasSearchedPhoneticMatches: boolean;
 }
 
 const CLEARANCE_SEARCH_PREFERENCES_STORAGE_KEY =
@@ -334,6 +339,7 @@ export default function ClearanceSearch() {
   const [hasLoadedStoredSearchPreferences, setHasLoadedStoredSearchPreferences] =
     useState(false);
   const possibleMatchSearchIdRef = useRef(0);
+  const lastSearchedQueryRef = useRef("");
 
   useEffect(() => {
     const preferences = parseStoredClearanceSearchPreferences(
@@ -342,6 +348,7 @@ export default function ClearanceSearch() {
 
     if (preferences) {
       if (typeof preferences.searchQuery === "string") {
+        lastSearchedQueryRef.current = preferences.searchQuery.trim();
         setSearchQuery(preferences.searchQuery);
       }
 
@@ -351,6 +358,26 @@ export default function ClearanceSearch() {
 
       if (typeof preferences.isExpandedSearchEnabled === "boolean") {
         setIsExpandedSearchEnabled(preferences.isExpandedSearchEnabled);
+      }
+
+      if (Array.isArray(preferences.searchResults)) {
+        setSearchResults(preferences.searchResults);
+      }
+
+      if (Array.isArray(preferences.possibleMatchResults)) {
+        setPossibleMatchResults(preferences.possibleMatchResults);
+      }
+
+      if (typeof preferences.hasSearchedPossibleMatches === "boolean") {
+        setHasSearchedPossibleMatches(preferences.hasSearchedPossibleMatches);
+      }
+
+      if (Array.isArray(preferences.phoneticMatchResults)) {
+        setPhoneticMatchResults(preferences.phoneticMatchResults);
+      }
+
+      if (typeof preferences.hasSearchedPhoneticMatches === "boolean") {
+        setHasSearchedPhoneticMatches(preferences.hasSearchedPhoneticMatches);
       }
     }
 
@@ -366,6 +393,11 @@ export default function ClearanceSearch() {
       searchQuery,
       participantRoleFilter,
       isExpandedSearchEnabled,
+      searchResults,
+      possibleMatchResults,
+      hasSearchedPossibleMatches,
+      phoneticMatchResults,
+      hasSearchedPhoneticMatches,
     };
 
     window.localStorage.setItem(
@@ -374,13 +406,28 @@ export default function ClearanceSearch() {
     );
   }, [
     hasLoadedStoredSearchPreferences,
+    hasSearchedPhoneticMatches,
+    hasSearchedPossibleMatches,
     isExpandedSearchEnabled,
     participantRoleFilter,
+    phoneticMatchResults,
+    possibleMatchResults,
     searchQuery,
+    searchResults,
   ]);
 
   useEffect(() => {
+    if (!hasLoadedStoredSearchPreferences) {
+      return;
+    }
+
     const trimmedQuery = searchQuery.trim();
+
+    if (trimmedQuery === lastSearchedQueryRef.current) {
+      return;
+    }
+
+    lastSearchedQueryRef.current = trimmedQuery;
 
     const searchId = possibleMatchSearchIdRef.current + 1;
     possibleMatchSearchIdRef.current = searchId;
@@ -491,7 +538,7 @@ export default function ClearanceSearch() {
       isCurrent = false;
       window.clearTimeout(timer);
     };
-  }, [isExpandedSearchEnabled, searchQuery]);
+  }, [hasLoadedStoredSearchPreferences, searchQuery]);
 
   async function handleExpandPossibleMatches() {
     const trimmedQuery = searchQuery.trim();
