@@ -54,6 +54,8 @@ const CASE_TABLE_COLUMNS = [
 type CaseTableColumnKey = (typeof CASE_TABLE_COLUMNS)[number]['key'];
 type CaseSearchColumnKey = Exclude<CaseTableColumnKey, 'docketType' | 'docketYear'>;
 type ColumnWidths = Record<CaseTableColumnKey, number>;
+type ColumnFilters = Record<CaseTableColumnKey, string[]>;
+type ColumnFilterTouched = Record<CaseTableColumnKey, boolean>;
 type CasePartyNames = {
   complainants: string[];
   respondents: string[];
@@ -69,6 +71,8 @@ type CasesPageCache = {
   selectedSearchColumns?: CaseSearchColumnKey[];
   selectedDocketTypes?: DocketTypeFilter[];
   selectedDocketYears?: DocketYearFilter[];
+  selectedColumnFilters?: Partial<ColumnFilters>;
+  showColumnFilters?: boolean;
 };
 
 const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
@@ -76,7 +80,7 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v9';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v11';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -120,6 +124,20 @@ function getInitialColumnWidths(): ColumnWidths {
     widths[column.key] = column.initialWidth;
     return widths;
   }, {} as ColumnWidths);
+}
+
+function getInitialColumnFilters(cachedFilters: Partial<ColumnFilters> | undefined): ColumnFilters {
+  return CASE_TABLE_COLUMNS.reduce((filters, column) => {
+    filters[column.key] = cachedFilters?.[column.key] ?? [];
+    return filters;
+  }, {} as ColumnFilters);
+}
+
+function getInitialColumnFilterTouched(cachedFilters: Partial<ColumnFilters> | undefined): ColumnFilterTouched {
+  return CASE_TABLE_COLUMNS.reduce((touched, column) => {
+    touched[column.key] = Array.isArray(cachedFilters?.[column.key]);
+    return touched;
+  }, {} as ColumnFilterTouched);
 }
 
 function formatDisplayDocketNumber(caseDetail: CompactCase) {
@@ -175,6 +193,18 @@ function searchColumnLabel(columnKey: CaseSearchColumnKey) {
   return SEARCH_COLUMN_OPTIONS.find((column) => column.key === columnKey)?.label ?? columnKey;
 }
 
+function columnFilterLabel(columnKey: CaseTableColumnKey) {
+  return CASE_TABLE_COLUMNS.find((column) => column.key === columnKey)?.label ?? columnKey;
+}
+
+function uniqueSortedOptions(values: string[]) {
+  return Array.from(new Set(values)).sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function sameOptions(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function allOptionsSelected<T extends string>(selectedOptions: T[], availableOptions: T[]) {
   return (
     availableOptions.length > 0 &&
@@ -190,6 +220,38 @@ function formatDate(value: string | null | undefined) {
 
   const parsedDate = new Date(value);
   return Number.isNaN(parsedDate.getTime()) ? value : parsedDate.toLocaleDateString();
+}
+
+function getCaseColumnFilterValue(
+  caseDetail: CompactCase,
+  columnKey: CaseTableColumnKey,
+  partyNames: CasePartyNames | undefined,
+  classification: string | undefined,
+) {
+  switch (columnKey) {
+    case 'docketNumber':
+      return formatDisplayDocketNumber(caseDetail);
+    case 'docketType':
+      return caseDetail.docket_type_name ?? caseDetail.docket_type_prefix ?? '—';
+    case 'docketYear':
+      return Number.isFinite(caseDetail.docket_year) ? String(caseDetail.docket_year) : '—';
+    case 'complainant':
+      return compactPartyNames(partyNames?.complainants ?? []);
+    case 'respondent':
+      return compactPartyNames(partyNames?.respondents ?? []);
+    case 'violation':
+      return caseViolations(caseDetail) ?? '—';
+    case 'classification':
+      return classification ?? '—';
+    case 'assignedProsecutor':
+      return assignedProsecutor(caseDetail) ?? '—';
+    case 'currentStatus':
+      return currentStatusLabel(caseDetail) ?? '—';
+    case 'dateReceived':
+      return formatDate(caseDetail.date_received);
+    default:
+      return '—';
+  }
 }
 
 function getCaseKey(caseDetail: CompactCase) {
@@ -293,6 +355,13 @@ export default function CasesPage() {
   );
   const [selectedDocketTypes, setSelectedDocketTypes] = useState<DocketTypeFilter[]>(cachedInitialState?.selectedDocketTypes ?? []);
   const [selectedDocketYears, setSelectedDocketYears] = useState<DocketYearFilter[]>(cachedInitialState?.selectedDocketYears ?? []);
+  const columnFilterTouchedRef = useRef<ColumnFilterTouched>(
+    getInitialColumnFilterTouched(cachedInitialState?.selectedColumnFilters),
+  );
+  const [selectedColumnFilters, setSelectedColumnFilters] = useState<ColumnFilters>(() =>
+    getInitialColumnFilters(cachedInitialState?.selectedColumnFilters),
+  );
+  const [showColumnFilters, setShowColumnFilters] = useState(cachedInitialState?.showColumnFilters ?? false);
   const [searchTerm, setSearchTerm] = useState(cachedInitialState?.searchTerm ?? '');
   const [selectedSearchColumns, setSelectedSearchColumns] = useState<CaseSearchColumnKey[]>(() =>
     cachedInitialState?.selectedSearchColumns ?? [...DEFAULT_SEARCH_COLUMNS],
@@ -324,6 +393,8 @@ export default function CasesPage() {
         selectedSearchColumns: readCasesPageCache()?.selectedSearchColumns ?? selectedSearchColumns,
         selectedDocketTypes: readCasesPageCache()?.selectedDocketTypes ?? selectedDocketTypes,
         selectedDocketYears: readCasesPageCache()?.selectedDocketYears ?? selectedDocketYears,
+        selectedColumnFilters: readCasesPageCache()?.selectedColumnFilters ?? selectedColumnFilters,
+        showColumnFilters: readCasesPageCache()?.showColumnFilters ?? showColumnFilters,
       });
     }
 
@@ -365,6 +436,8 @@ export default function CasesPage() {
         selectedSearchColumns: readCasesPageCache()?.selectedSearchColumns ?? selectedSearchColumns,
         selectedDocketTypes: readCasesPageCache()?.selectedDocketTypes ?? selectedDocketTypes,
         selectedDocketYears: readCasesPageCache()?.selectedDocketYears ?? selectedDocketYears,
+        selectedColumnFilters: readCasesPageCache()?.selectedColumnFilters ?? selectedColumnFilters,
+        showColumnFilters: readCasesPageCache()?.showColumnFilters ?? showColumnFilters,
       });
     }
 
@@ -459,8 +532,17 @@ export default function CasesPage() {
       selectedSearchColumns,
       selectedDocketTypes,
       selectedDocketYears,
+      selectedColumnFilters,
+      showColumnFilters,
     });
-  }, [searchTerm, selectedDocketTypes, selectedDocketYears, selectedSearchColumns]);
+  }, [
+    searchTerm,
+    selectedColumnFilters,
+    selectedDocketTypes,
+    selectedDocketYears,
+    selectedSearchColumns,
+    showColumnFilters,
+  ]);
 
   useEffect(() => {
     const container = tableContainerRef.current;
@@ -502,12 +584,25 @@ export default function CasesPage() {
         return false;
       }
 
+      const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
+      const classification = caseDetail.id ? classificationsByCase[caseDetail.id] : undefined;
+
+      if (showColumnFilters) {
+        const matchesColumnFilters = CASE_TABLE_COLUMNS.every((column) => {
+          const selectedValues = selectedColumnFilters[column.key];
+          return selectedValues.length > 0 && selectedValues.includes(
+            getCaseColumnFilterValue(caseDetail, column.key, casePartyNames, classification),
+          );
+        });
+
+        if (!matchesColumnFilters) {
+          return false;
+        }
+      }
+
       if (!normalizedSearch) {
         return true;
       }
-
-      const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
-      const classification = caseDetail.id ? classificationsByCase[caseDetail.id] : undefined;
 
       return selectedSearchColumns.some((columnKey) =>
         searchColumnValue(caseDetail, columnKey, casePartyNames, classification)
@@ -515,7 +610,17 @@ export default function CasesPage() {
           .includes(normalizedSearch),
       );
     });
-  }, [cases, classificationsByCase, partyNamesByCase, searchTerm, selectedDocketTypes, selectedDocketYears, selectedSearchColumns]);
+  }, [
+    cases,
+    classificationsByCase,
+    partyNamesByCase,
+    searchTerm,
+    selectedColumnFilters,
+    selectedDocketTypes,
+    selectedDocketYears,
+    selectedSearchColumns,
+    showColumnFilters,
+  ]);
 
   const sortedCases = useMemo(
     () =>
@@ -541,6 +646,27 @@ export default function CasesPage() {
     return values.map(String);
   }, [cases]);
 
+  const columnFilterOptions = useMemo(() => (
+    CASE_TABLE_COLUMNS.reduce((options, column) => {
+      options[column.key] = uniqueSortedOptions(
+        cases.map((caseDetail) => {
+          const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
+          const classification = caseDetail.id ? classificationsByCase[caseDetail.id] : undefined;
+          return getCaseColumnFilterValue(caseDetail, column.key, casePartyNames, classification);
+        }),
+      );
+      return options;
+    }, {} as ColumnFilters)
+  ), [cases, classificationsByCase, partyNamesByCase]);
+
+  const activeColumnFilterCount = useMemo(() => (
+    CASE_TABLE_COLUMNS.filter((column) => {
+      const selectedValues = selectedColumnFilters[column.key];
+      const availableValues = columnFilterOptions[column.key];
+      return selectedValues.length !== availableValues.length || selectedValues.some((value) => !availableValues.includes(value));
+    }).length
+  ), [columnFilterOptions, selectedColumnFilters]);
+
   useEffect(() => {
     if (!docketFiltersTouchedRef.current) {
       setSelectedDocketTypes(docketTypeFilters);
@@ -552,6 +678,31 @@ export default function CasesPage() {
       setSelectedDocketYears(docketYearFilters);
     }
   }, [docketYearFilters]);
+
+  useEffect(() => {
+    setSelectedColumnFilters((currentFilters) => {
+      let nextFilters = currentFilters;
+
+      for (const column of CASE_TABLE_COLUMNS) {
+        if (columnFilterTouchedRef.current[column.key]) {
+          continue;
+        }
+
+        const nextColumnOptions = columnFilterOptions[column.key];
+        if (sameOptions(currentFilters[column.key], nextColumnOptions)) {
+          continue;
+        }
+
+        if (nextFilters === currentFilters) {
+          nextFilters = { ...currentFilters };
+        }
+
+        nextFilters[column.key] = nextColumnOptions;
+      }
+
+      return nextFilters;
+    });
+  }, [columnFilterOptions]);
 
   const searchColumnSummary = useMemo(() => {
     if (selectedSearchColumns.length === 0) {
@@ -711,6 +862,93 @@ export default function CasesPage() {
 
   function clearSearch() {
     setSearchTerm('');
+  }
+
+  function clearColumnFilters() {
+    columnFilterTouchedRef.current = CASE_TABLE_COLUMNS.reduce((touched, column) => {
+      touched[column.key] = false;
+      return touched;
+    }, {} as ColumnFilterTouched);
+    setSelectedColumnFilters({ ...columnFilterOptions });
+  }
+
+  function columnFilterSummary(columnKey: CaseTableColumnKey) {
+    const selectedValues = selectedColumnFilters[columnKey];
+    const availableValues = columnFilterOptions[columnKey];
+
+    if (selectedValues.length === 0) {
+      return 'None';
+    }
+
+    if (allOptionsSelected(selectedValues, availableValues)) {
+      return 'All';
+    }
+
+    if (selectedValues.length === 1) {
+      return selectedValues[0];
+    }
+
+    return `${selectedValues.length} selected`;
+  }
+
+  function toggleColumnFilterValue(columnKey: CaseTableColumnKey, value: string) {
+    columnFilterTouchedRef.current[columnKey] = true;
+    setSelectedColumnFilters((currentFilters) => ({
+      ...currentFilters,
+      [columnKey]: currentFilters[columnKey].includes(value)
+        ? currentFilters[columnKey].filter((currentValue) => currentValue !== value)
+        : [...currentFilters[columnKey], value],
+    }));
+  }
+
+  function toggleAllColumnFilterValues(columnKey: CaseTableColumnKey) {
+    columnFilterTouchedRef.current[columnKey] = true;
+    setSelectedColumnFilters((currentFilters) => ({
+      ...currentFilters,
+      [columnKey]: allOptionsSelected(currentFilters[columnKey], columnFilterOptions[columnKey])
+        ? []
+        : [...columnFilterOptions[columnKey]],
+    }));
+  }
+
+  function renderColumnFilter(columnKey: CaseTableColumnKey) {
+    if (!showColumnFilters) {
+      return null;
+    }
+
+    const availableValues = columnFilterOptions[columnKey];
+    const selectedValues = selectedColumnFilters[columnKey];
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="ghost" size="sm" className="h-7 max-w-full justify-start gap-1 px-0 text-xs font-normal normal-case">
+            <span className="truncate">{columnFilterSummary(columnKey)}</span>
+            <ChevronDown className="size-3 opacity-70" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="max-h-80 w-64 overflow-y-auto">
+          <DropdownMenuLabel>{columnFilterLabel(columnKey)}</DropdownMenuLabel>
+          <DropdownMenuCheckboxItem
+            checked={allOptionsSelected(selectedValues, availableValues)}
+            onCheckedChange={() => toggleAllColumnFilterValues(columnKey)}
+            onSelect={(event) => event.preventDefault()}
+          >
+            All
+          </DropdownMenuCheckboxItem>
+          {availableValues.map((value) => (
+            <DropdownMenuCheckboxItem
+              key={value}
+              checked={selectedValues.includes(value)}
+              onCheckedChange={() => toggleColumnFilterValue(columnKey, value)}
+              onSelect={(event) => event.preventDefault()}
+            >
+              {value}
+            </DropdownMenuCheckboxItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
   }
 
   function handleColumnResize(columnKey: CaseTableColumnKey, startX: number) {
@@ -883,8 +1121,6 @@ export default function CasesPage() {
             <CardContent className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-4 md:px-6">
               {isLoading ? (
                 <div className="py-8 text-center text-sm text-muted-foreground">Loading cases...</div>
-              ) : sortedCases.length === 0 ? (
-                <div className="py-8 text-center text-sm text-muted-foreground">No cases, please check filters.</div>
               ) : (
                 <div
                   ref={tableContainerRef}
@@ -902,7 +1138,10 @@ export default function CasesPage() {
                       <TableRow className="bg-muted hover:bg-muted">
                         {CASE_TABLE_COLUMNS.map((column) => (
                           <TableHead key={column.key} className="relative select-none whitespace-nowrap pr-4 uppercase">
-                            {column.label}
+                            <div className="flex min-w-0 flex-col gap-1">
+                              <span>{column.label}</span>
+                              {renderColumnFilter(column.key)}
+                            </div>
                             <button
                               type="button"
                               className="absolute right-0 top-0 h-full w-2 cursor-col-resize touch-none border-r border-transparent hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -920,6 +1159,14 @@ export default function CasesPage() {
                       {virtualRows.topPadding > 0 ? (
                         <TableRow aria-hidden="true">
                           <TableCell colSpan={CASE_TABLE_COLUMNS.length} style={{ height: virtualRows.topPadding, padding: 0 }} />
+                        </TableRow>
+                      ) : null}
+
+                      {sortedCases.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={CASE_TABLE_COLUMNS.length} className="py-8 text-center text-sm text-muted-foreground">
+                            No cases, please check filters.
+                          </TableCell>
                         </TableRow>
                       ) : null}
 
@@ -989,8 +1236,20 @@ export default function CasesPage() {
                   </table>
                 </div>
               )}
-              <div className="shrink-0 text-sm text-muted-foreground">
-                {sortedCases.length.toLocaleString()} {sortedCases.length === 1 ? 'case' : 'cases'} shown
+              <div className="flex shrink-0 items-center justify-between gap-4 text-sm text-muted-foreground">
+                <span>
+                  {sortedCases.length.toLocaleString()} {sortedCases.length === 1 ? 'case' : 'cases'} shown
+                </span>
+                <div className="flex items-center gap-2">
+                  {showColumnFilters && activeColumnFilterCount > 0 ? (
+                    <Button type="button" variant="ghost" size="sm" onClick={clearColumnFilters}>
+                      Clear filters
+                    </Button>
+                  ) : null}
+                  <Button type="button" variant="outline" size="sm" onClick={() => setShowColumnFilters((currentValue) => !currentValue)}>
+                    {showColumnFilters ? 'Turn off filters' : 'Turn on filters'}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
