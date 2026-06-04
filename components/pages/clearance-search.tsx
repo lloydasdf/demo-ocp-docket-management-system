@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Database, Info, Search as SearchIcon } from "lucide-react";
+import {
+  AlertCircle,
+  Database,
+  Info,
+  ListFilter,
+  Search as SearchIcon,
+} from "lucide-react";
 
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -17,7 +23,15 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
@@ -559,63 +573,59 @@ export default function ClearanceSearch() {
                 placeholder="Enter name or alias..."
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                className="pl-10 text-lg"
+                className="pl-10 pr-12 text-lg"
               />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-1 top-1/2 -translate-y-1/2"
+                    aria-label={`Filter results by role: ${roleFilterSummary}`}
+                  >
+                    <ListFilter className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>Results filter</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuRadioGroup
+                    value={participantRoleFilter}
+                    onValueChange={(value) =>
+                      setParticipantRoleFilter(value as ParticipantRoleFilter)
+                    }
+                  >
+                    <DropdownMenuRadioItem value="respondents">
+                      Respondents only
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="complainants">
+                      Complainants only
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="both">
+                      Both
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1">
-              <Label htmlFor="results-role-filter">Results filter</Label>
-              <ToggleGroup
-                id="results-role-filter"
-                type="single"
-                variant="outline"
-                value={participantRoleFilter}
-                onValueChange={(value) => {
-                  if (value) {
-                    setParticipantRoleFilter(value as ParticipantRoleFilter);
-                  }
-                }}
-                aria-label="Filter clearance search results by participant role"
-                className="flex-wrap"
-              >
-                <ToggleGroupItem
-                  value="respondents"
-                  aria-label="Respondents only"
-                >
-                  Respondents only
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="complainants"
-                  aria-label="Complainants only"
-                >
-                  Complainants only
-                </ToggleGroupItem>
-                <ToggleGroupItem
-                  value="both"
-                  aria-label="Both complainants and respondents"
-                >
-                  Both
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <Switch
-                id="expanded-search"
-                checked={isExpandedSearchEnabled}
-                onCheckedChange={setIsExpandedSearchEnabled}
-                aria-label="Toggle automatic possible and phonetic matches"
-              />
-              <Label
-                htmlFor="expanded-search"
-                className="cursor-pointer font-medium leading-none"
-              >
-                Automatic possible and phonetic matches
-              </Label>
-              <Badge variant="outline" className="h-5 px-2 text-[11px]">
-                {isExpandedSearchEnabled ? "On" : "Off"}
-              </Badge>
-            </div>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <Switch
+              id="expanded-search"
+              checked={isExpandedSearchEnabled}
+              onCheckedChange={setIsExpandedSearchEnabled}
+              aria-label="Toggle automatic possible and phonetic matches"
+            />
+            <Label
+              htmlFor="expanded-search"
+              className="cursor-pointer font-medium leading-none"
+            >
+              Automatic possible and phonetic matches
+            </Label>
+            <Badge variant="outline" className="h-5 px-2 text-[11px]">
+              {isExpandedSearchEnabled ? "On" : "Off"}
+            </Badge>
           </div>
         </CardContent>
       </Card>
