@@ -96,6 +96,31 @@ function hasMultipleNameTokens(name: string) {
 
 type ParticipantRoleFilter = "respondents" | "complainants" | "both";
 
+interface ClearanceSearchPreferences {
+  searchQuery: string;
+  participantRoleFilter: ParticipantRoleFilter;
+  isExpandedSearchEnabled: boolean;
+}
+
+const CLEARANCE_SEARCH_PREFERENCES_STORAGE_KEY =
+  "ocp-clearance-search-preferences";
+
+function isParticipantRoleFilter(value: unknown): value is ParticipantRoleFilter {
+  return value === "respondents" || value === "complainants" || value === "both";
+}
+
+function parseStoredClearanceSearchPreferences(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value) as Partial<ClearanceSearchPreferences>;
+  } catch {
+    return null;
+  }
+}
+
 function getRoleLabel(result: ClearanceSearchResult) {
   return result.roleLabel.toLowerCase();
 }
@@ -306,7 +331,53 @@ export default function ClearanceSearch() {
   );
   const [hasSearchedPhoneticMatches, setHasSearchedPhoneticMatches] =
     useState(false);
+  const [hasLoadedStoredSearchPreferences, setHasLoadedStoredSearchPreferences] =
+    useState(false);
   const possibleMatchSearchIdRef = useRef(0);
+
+  useEffect(() => {
+    const preferences = parseStoredClearanceSearchPreferences(
+      window.localStorage.getItem(CLEARANCE_SEARCH_PREFERENCES_STORAGE_KEY),
+    );
+
+    if (preferences) {
+      if (typeof preferences.searchQuery === "string") {
+        setSearchQuery(preferences.searchQuery);
+      }
+
+      if (isParticipantRoleFilter(preferences.participantRoleFilter)) {
+        setParticipantRoleFilter(preferences.participantRoleFilter);
+      }
+
+      if (typeof preferences.isExpandedSearchEnabled === "boolean") {
+        setIsExpandedSearchEnabled(preferences.isExpandedSearchEnabled);
+      }
+    }
+
+    setHasLoadedStoredSearchPreferences(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedStoredSearchPreferences) {
+      return;
+    }
+
+    const preferences: ClearanceSearchPreferences = {
+      searchQuery,
+      participantRoleFilter,
+      isExpandedSearchEnabled,
+    };
+
+    window.localStorage.setItem(
+      CLEARANCE_SEARCH_PREFERENCES_STORAGE_KEY,
+      JSON.stringify(preferences),
+    );
+  }, [
+    hasLoadedStoredSearchPreferences,
+    isExpandedSearchEnabled,
+    participantRoleFilter,
+    searchQuery,
+  ]);
 
   useEffect(() => {
     const trimmedQuery = searchQuery.trim();
