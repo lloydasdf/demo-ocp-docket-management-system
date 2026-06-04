@@ -659,6 +659,14 @@ export default function CasesPage() {
     }, {} as ColumnFilters)
   ), [cases, classificationsByCase, partyNamesByCase]);
 
+  const activeColumnFilterCount = useMemo(() => (
+    CASE_TABLE_COLUMNS.filter((column) => {
+      const selectedValues = selectedColumnFilters[column.key];
+      const availableValues = columnFilterOptions[column.key];
+      return selectedValues.length !== availableValues.length || selectedValues.some((value) => !availableValues.includes(value));
+    }).length
+  ), [columnFilterOptions, selectedColumnFilters]);
+
   useEffect(() => {
     if (!docketFiltersTouchedRef.current) {
       setSelectedDocketTypes(docketTypeFilters);
@@ -856,6 +864,14 @@ export default function CasesPage() {
     setSearchTerm('');
   }
 
+  function clearColumnFilters() {
+    columnFilterTouchedRef.current = CASE_TABLE_COLUMNS.reduce((touched, column) => {
+      touched[column.key] = false;
+      return touched;
+    }, {} as ColumnFilterTouched);
+    setSelectedColumnFilters({ ...columnFilterOptions });
+  }
+
   function columnFilterSummary(columnKey: CaseTableColumnKey) {
     const selectedValues = selectedColumnFilters[columnKey];
     const availableValues = columnFilterOptions[columnKey];
@@ -906,7 +922,7 @@ export default function CasesPage() {
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button type="button" variant="ghost" size="sm" className="h-7 max-w-full gap-1 px-2 text-xs font-normal normal-case">
+          <Button type="button" variant="ghost" size="sm" className="h-7 max-w-full justify-start gap-1 px-0 text-xs font-normal normal-case">
             <span className="truncate">{columnFilterSummary(columnKey)}</span>
             <ChevronDown className="size-3 opacity-70" />
           </Button>
@@ -1224,9 +1240,16 @@ export default function CasesPage() {
                 <span>
                   {sortedCases.length.toLocaleString()} {sortedCases.length === 1 ? 'case' : 'cases'} shown
                 </span>
-                <Button type="button" variant="outline" size="sm" onClick={() => setShowColumnFilters((currentValue) => !currentValue)}>
-                  {showColumnFilters ? 'Turn off filters' : 'Turn on filters'}
-                </Button>
+                <div className="flex items-center gap-2">
+                  {showColumnFilters && activeColumnFilterCount > 0 ? (
+                    <Button type="button" variant="ghost" size="sm" onClick={clearColumnFilters}>
+                      Clear filters
+                    </Button>
+                  ) : null}
+                  <Button type="button" variant="outline" size="sm" onClick={() => setShowColumnFilters((currentValue) => !currentValue)}>
+                    {showColumnFilters ? 'Turn off filters' : 'Turn on filters'}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
