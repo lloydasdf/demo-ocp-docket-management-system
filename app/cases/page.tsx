@@ -52,7 +52,7 @@ const CASE_TABLE_COLUMNS = [
 ] as const;
 
 type CaseTableColumnKey = (typeof CASE_TABLE_COLUMNS)[number]['key'];
-type CaseSearchColumnKey = CaseTableColumnKey;
+type CaseSearchColumnKey = Exclude<CaseTableColumnKey, 'docketType' | 'docketYear'>;
 type ColumnWidths = Record<CaseTableColumnKey, number>;
 type CasePartyNames = {
   complainants: string[];
@@ -65,10 +65,18 @@ type CasesPageCache = {
   partyNamesByCase: Record<number, CasePartyNames>;
   classificationsByCase: CaseClassificationByCase;
   hasAllCases: boolean;
+  searchTerm?: string;
+  selectedSearchColumns?: CaseSearchColumnKey[];
+  selectedDocketTypes?: DocketTypeFilter[];
+  selectedDocketYears?: DocketYearFilter[];
 };
 
-const DEFAULT_SEARCH_COLUMNS = CASE_TABLE_COLUMNS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v8';
+const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
+  (column): column is Extract<(typeof CASE_TABLE_COLUMNS)[number], { key: CaseSearchColumnKey }> =>
+    column.key !== 'docketType' && column.key !== 'docketYear',
+);
+const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v9';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -144,10 +152,6 @@ function searchColumnValue(
   switch (columnKey) {
     case 'docketNumber':
       return formatDisplayDocketNumber(caseDetail);
-    case 'docketType':
-      return `${caseDetail.docket_type_name ?? ''} ${caseDetail.docket_type_prefix ?? ''}`;
-    case 'docketYear':
-      return String(caseDetail.docket_year ?? '');
     case 'complainant':
       return partyNames?.complainants.join(' ') ?? '';
     case 'respondent':
@@ -168,7 +172,7 @@ function searchColumnValue(
 }
 
 function searchColumnLabel(columnKey: CaseSearchColumnKey) {
-  return CASE_TABLE_COLUMNS.find((column) => column.key === columnKey)?.label ?? columnKey;
+  return SEARCH_COLUMN_OPTIONS.find((column) => column.key === columnKey)?.label ?? columnKey;
 }
 
 function allOptionsSelected<T extends string>(selectedOptions: T[], availableOptions: T[]) {
@@ -284,11 +288,15 @@ export default function CasesPage() {
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
   const [cachedInitialState] = useState(() => readCasesPageCache());
   const [cases, setCases] = useState<CompactCase[]>(cachedInitialState?.cases ?? []);
-  const docketFiltersTouchedRef = useRef(false);
-  const [selectedDocketTypes, setSelectedDocketTypes] = useState<DocketTypeFilter[]>([]);
-  const [selectedDocketYears, setSelectedDocketYears] = useState<DocketYearFilter[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedSearchColumns, setSelectedSearchColumns] = useState<CaseSearchColumnKey[]>(() => [...DEFAULT_SEARCH_COLUMNS]);
+  const docketFiltersTouchedRef = useRef(
+    Array.isArray(cachedInitialState?.selectedDocketTypes) || Array.isArray(cachedInitialState?.selectedDocketYears),
+  );
+  const [selectedDocketTypes, setSelectedDocketTypes] = useState<DocketTypeFilter[]>(cachedInitialState?.selectedDocketTypes ?? []);
+  const [selectedDocketYears, setSelectedDocketYears] = useState<DocketYearFilter[]>(cachedInitialState?.selectedDocketYears ?? []);
+  const [searchTerm, setSearchTerm] = useState(cachedInitialState?.searchTerm ?? '');
+  const [selectedSearchColumns, setSelectedSearchColumns] = useState<CaseSearchColumnKey[]>(() =>
+    cachedInitialState?.selectedSearchColumns ?? [...DEFAULT_SEARCH_COLUMNS],
+  );
   const [isLoading, setIsLoading] = useState(!cachedInitialState);
   const [isLoadingAllCases, setIsLoadingAllCases] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -312,6 +320,10 @@ export default function CasesPage() {
         partyNamesByCase: nextPartyNamesByCase,
         classificationsByCase: readCasesPageCache()?.classificationsByCase ?? classificationsByCase,
         hasAllCases: options.hasAllCases ?? readCasesPageCache()?.hasAllCases ?? false,
+        searchTerm: readCasesPageCache()?.searchTerm ?? searchTerm,
+        selectedSearchColumns: readCasesPageCache()?.selectedSearchColumns ?? selectedSearchColumns,
+        selectedDocketTypes: readCasesPageCache()?.selectedDocketTypes ?? selectedDocketTypes,
+        selectedDocketYears: readCasesPageCache()?.selectedDocketYears ?? selectedDocketYears,
       });
     }
 
@@ -349,6 +361,10 @@ export default function CasesPage() {
         partyNamesByCase: readCasesPageCache()?.partyNamesByCase ?? partyNamesByCase,
         classificationsByCase: nextClassificationsByCase,
         hasAllCases: readCasesPageCache()?.hasAllCases ?? false,
+        searchTerm: readCasesPageCache()?.searchTerm ?? searchTerm,
+        selectedSearchColumns: readCasesPageCache()?.selectedSearchColumns ?? selectedSearchColumns,
+        selectedDocketTypes: readCasesPageCache()?.selectedDocketTypes ?? selectedDocketTypes,
+        selectedDocketYears: readCasesPageCache()?.selectedDocketYears ?? selectedDocketYears,
       });
     }
 
@@ -429,6 +445,22 @@ export default function CasesPage() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    const currentCache = readCasesPageCache();
+
+    if (!currentCache) {
+      return;
+    }
+
+    writeCasesPageCache({
+      ...currentCache,
+      searchTerm,
+      selectedSearchColumns,
+      selectedDocketTypes,
+      selectedDocketYears,
+    });
+  }, [searchTerm, selectedDocketTypes, selectedDocketYears, selectedSearchColumns]);
 
   useEffect(() => {
     const container = tableContainerRef.current;
@@ -677,6 +709,10 @@ export default function CasesPage() {
     );
   }
 
+  function clearSearch() {
+    setSearchTerm('');
+  }
+
   function handleColumnResize(columnKey: CaseTableColumnKey, startX: number) {
     const column = CASE_TABLE_COLUMNS.find((candidate) => candidate.key === columnKey);
     const startWidth = columnWidths[columnKey];
@@ -731,6 +767,9 @@ export default function CasesPage() {
                       value={searchTerm}
                       onChange={(event) => setSearchTerm(event.target.value)}
                     />
+                    <Button type="button" variant="outline" onClick={clearSearch} disabled={!searchTerm}>
+                      Delete all
+                    </Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button type="button" variant="outline" className="justify-between sm:w-56">
@@ -747,7 +786,7 @@ export default function CasesPage() {
                         >
                           Search all columns
                         </DropdownMenuCheckboxItem>
-                        {CASE_TABLE_COLUMNS.map((column) => (
+                        {SEARCH_COLUMN_OPTIONS.map((column) => (
                           <DropdownMenuCheckboxItem
                             key={column.key}
                             checked={selectedSearchColumns.includes(column.key)}
