@@ -17,6 +17,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   Tooltip,
   TooltipContent,
@@ -77,6 +78,49 @@ function getSearchTokens(query: string) {
 
 function hasMultipleNameTokens(name: string) {
   return getSearchTokens(name).length > 1;
+}
+
+type ParticipantRoleFilter = "respondents" | "complainants" | "both";
+
+function getRoleLabel(result: ClearanceSearchResult) {
+  return result.roleLabel.toLowerCase();
+}
+
+function isRespondentResult(result: ClearanceSearchResult) {
+  return getRoleLabel(result).includes("respondent");
+}
+
+function isComplainantResult(result: ClearanceSearchResult) {
+  return getRoleLabel(result).includes("complainant");
+}
+
+function filterResultsByParticipantRole(
+  results: ClearanceSearchResult[],
+  roleFilter: ParticipantRoleFilter,
+) {
+  return results.filter((result) => {
+    if (roleFilter === "respondents") {
+      return isRespondentResult(result);
+    }
+
+    if (roleFilter === "complainants") {
+      return isComplainantResult(result);
+    }
+
+    return isRespondentResult(result) || isComplainantResult(result);
+  });
+}
+
+function getRoleFilterSummary(roleFilter: ParticipantRoleFilter) {
+  if (roleFilter === "respondents") {
+    return "respondent";
+  }
+
+  if (roleFilter === "complainants") {
+    return "complainant";
+  }
+
+  return "complainant or respondent";
 }
 
 function groupResults(results: ClearanceSearchResult[]) {
@@ -204,6 +248,8 @@ function ResultGroup({
 export default function ClearanceSearch() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isExpandedSearchEnabled, setIsExpandedSearchEnabled] = useState(true);
+  const [participantRoleFilter, setParticipantRoleFilter] =
+    useState<ParticipantRoleFilter>("respondents");
   const [searchResults, setSearchResults] = useState<ClearanceSearchResult[]>(
     [],
   );
@@ -423,18 +469,33 @@ export default function ClearanceSearch() {
     setIsSearchingPhoneticMatches(false);
   }
 
+  const filteredSearchResults = useMemo(
+    () => filterResultsByParticipantRole(searchResults, participantRoleFilter),
+    [participantRoleFilter, searchResults],
+  );
+  const filteredPossibleMatchResults = useMemo(
+    () =>
+      filterResultsByParticipantRole(possibleMatchResults, participantRoleFilter),
+    [participantRoleFilter, possibleMatchResults],
+  );
+  const filteredPhoneticMatchResults = useMemo(
+    () =>
+      filterResultsByParticipantRole(phoneticMatchResults, participantRoleFilter),
+    [participantRoleFilter, phoneticMatchResults],
+  );
   const groupedResults = useMemo(
-    () => groupResults(searchResults),
-    [searchResults],
+    () => groupResults(filteredSearchResults),
+    [filteredSearchResults],
   );
   const groupedPossibleMatchResults = useMemo(
-    () => groupResults(possibleMatchResults),
-    [possibleMatchResults],
+    () => groupResults(filteredPossibleMatchResults),
+    [filteredPossibleMatchResults],
   );
   const groupedPhoneticMatchResults = useMemo(
-    () => groupResults(phoneticMatchResults),
-    [phoneticMatchResults],
+    () => groupResults(filteredPhoneticMatchResults),
+    [filteredPhoneticMatchResults],
   );
+  const roleFilterSummary = getRoleFilterSummary(participantRoleFilter);
   const trimmedSearchQuery = searchQuery.trim();
   const canRunPhoneticSearch = getSearchTokens(trimmedSearchQuery).length > 1;
   const shouldShowPossibleMatches =
@@ -502,22 +563,59 @@ export default function ClearanceSearch() {
               />
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <Switch
-              id="expanded-search"
-              checked={isExpandedSearchEnabled}
-              onCheckedChange={setIsExpandedSearchEnabled}
-              aria-label="Toggle automatic possible and phonetic matches"
-            />
-            <Label
-              htmlFor="expanded-search"
-              className="cursor-pointer font-medium leading-none"
-            >
-              Automatic possible and phonetic matches
-            </Label>
-            <Badge variant="outline" className="h-5 px-2 text-[11px]">
-              {isExpandedSearchEnabled ? "On" : "Off"}
-            </Badge>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <Label htmlFor="results-role-filter">Results filter</Label>
+              <ToggleGroup
+                id="results-role-filter"
+                type="single"
+                variant="outline"
+                value={participantRoleFilter}
+                onValueChange={(value) => {
+                  if (value) {
+                    setParticipantRoleFilter(value as ParticipantRoleFilter);
+                  }
+                }}
+                aria-label="Filter clearance search results by participant role"
+                className="flex-wrap"
+              >
+                <ToggleGroupItem
+                  value="respondents"
+                  aria-label="Respondents only"
+                >
+                  Respondents only
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="complainants"
+                  aria-label="Complainants only"
+                >
+                  Complainants only
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="both"
+                  aria-label="Both complainants and respondents"
+                >
+                  Both
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Switch
+                id="expanded-search"
+                checked={isExpandedSearchEnabled}
+                onCheckedChange={setIsExpandedSearchEnabled}
+                aria-label="Toggle automatic possible and phonetic matches"
+              />
+              <Label
+                htmlFor="expanded-search"
+                className="cursor-pointer font-medium leading-none"
+              >
+                Automatic possible and phonetic matches
+              </Label>
+              <Badge variant="outline" className="h-5 px-2 text-[11px]">
+                {isExpandedSearchEnabled ? "On" : "Off"}
+              </Badge>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -556,11 +654,12 @@ export default function ClearanceSearch() {
               <ResultGroup label="Medium" results={groupedResults.Medium} />
               <ResultGroup label="Low" results={groupedResults.Low} />
 
-              {searchResults.length === 0 && (
+              {filteredSearchResults.length === 0 && (
                 <Card>
                   <CardContent className="text-center py-8">
                     <p className="text-muted-foreground">
-                      No exact live records found matching &quot;{searchQuery}&quot;
+                      No exact live {roleFilterSummary} records found matching
+                      &quot;{searchQuery}&quot;
                     </p>
                   </CardContent>
                 </Card>
@@ -613,7 +712,7 @@ export default function ClearanceSearch() {
                     </Card>
                   )}
 
-                  {possibleMatchResults.length > 0 ? (
+                  {filteredPossibleMatchResults.length > 0 ? (
                     <>
                       <ResultGroup
                         label="High"
@@ -634,7 +733,8 @@ export default function ClearanceSearch() {
                       <Card>
                         <CardContent className="text-center py-8">
                           <p className="text-muted-foreground">
-                            No possible matches found for &quot;{searchQuery}&quot;
+                            No possible {roleFilterSummary} matches found for
+                            &quot;{searchQuery}&quot;
                           </p>
                         </CardContent>
                       </Card>
@@ -690,7 +790,7 @@ export default function ClearanceSearch() {
                     </Card>
                   )}
 
-                  {phoneticMatchResults.length > 0 ? (
+                  {filteredPhoneticMatchResults.length > 0 ? (
                     <>
                       <ResultGroup
                         label="High"
@@ -714,7 +814,8 @@ export default function ClearanceSearch() {
                       <Card>
                         <CardContent className="text-center py-8">
                           <p className="text-muted-foreground">
-                            No sound-alike matches found for &quot;{searchQuery}&quot;
+                            No sound-alike {roleFilterSummary} matches found for
+                            &quot;{searchQuery}&quot;
                           </p>
                         </CardContent>
                       </Card>
