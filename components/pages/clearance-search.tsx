@@ -125,6 +125,23 @@ function filterResultsByParticipantRole(
   });
 }
 
+function getResultNameKey(result: ClearanceSearchResult) {
+  return result.respondentName.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function getResultNameKeys(results: ClearanceSearchResult[]) {
+  return new Set(results.map(getResultNameKey).filter(Boolean));
+}
+
+function excludeResultsByName(
+  results: ClearanceSearchResult[],
+  excludedNameKeys: Set<string>,
+) {
+  return results.filter(
+    (result) => !excludedNameKeys.has(getResultNameKey(result)),
+  );
+}
+
 function getRoleFilterSummary(roleFilter: ParticipantRoleFilter) {
   if (roleFilter === "respondents") {
     return "respondent";
@@ -487,16 +504,34 @@ export default function ClearanceSearch() {
     () => filterResultsByParticipantRole(searchResults, participantRoleFilter),
     [participantRoleFilter, searchResults],
   );
-  const filteredPossibleMatchResults = useMemo(
-    () =>
-      filterResultsByParticipantRole(possibleMatchResults, participantRoleFilter),
-    [participantRoleFilter, possibleMatchResults],
-  );
-  const filteredPhoneticMatchResults = useMemo(
-    () =>
-      filterResultsByParticipantRole(phoneticMatchResults, participantRoleFilter),
-    [participantRoleFilter, phoneticMatchResults],
-  );
+  const filteredPossibleMatchResults = useMemo(() => {
+    const roleFilteredResults = filterResultsByParticipantRole(
+      possibleMatchResults,
+      participantRoleFilter,
+    );
+
+    return excludeResultsByName(
+      roleFilteredResults,
+      getResultNameKeys(filteredSearchResults),
+    );
+  }, [filteredSearchResults, participantRoleFilter, possibleMatchResults]);
+  const filteredPhoneticMatchResults = useMemo(() => {
+    const roleFilteredResults = filterResultsByParticipantRole(
+      phoneticMatchResults,
+      participantRoleFilter,
+    );
+    const previouslyShownNameKeys = new Set([
+      ...getResultNameKeys(filteredSearchResults),
+      ...getResultNameKeys(filteredPossibleMatchResults),
+    ]);
+
+    return excludeResultsByName(roleFilteredResults, previouslyShownNameKeys);
+  }, [
+    filteredPossibleMatchResults,
+    filteredSearchResults,
+    participantRoleFilter,
+    phoneticMatchResults,
+  ]);
   const groupedResults = useMemo(
     () => groupResults(filteredSearchResults),
     [filteredSearchResults],
