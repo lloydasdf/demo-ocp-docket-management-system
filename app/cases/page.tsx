@@ -16,7 +16,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, X } from 'lucide-react';
 import {
   getCaseClassificationsForCases,
   getCasePartyParticipantsForCases,
@@ -760,16 +760,25 @@ export default function CasesPage() {
                     Search Cases
                   </label>
                   <div className="flex flex-col gap-2 sm:flex-row">
-                    <Input
-                      id="case-search"
-                      className="sm:flex-1"
-                      placeholder={`Search ${searchColumnSummary.toLowerCase()}`}
-                      value={searchTerm}
-                      onChange={(event) => setSearchTerm(event.target.value)}
-                    />
-                    <Button type="button" variant="outline" onClick={clearSearch} disabled={!searchTerm}>
-                      Delete all
-                    </Button>
+                    <div className="relative sm:flex-1">
+                      <Input
+                        id="case-search"
+                        className="pr-10"
+                        placeholder={`Search ${searchColumnSummary.toLowerCase()}`}
+                        value={searchTerm}
+                        onChange={(event) => setSearchTerm(event.target.value)}
+                      />
+                      {searchTerm ? (
+                        <button
+                          type="button"
+                          className="absolute right-2 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          aria-label="Clear case search"
+                          onClick={clearSearch}
+                        >
+                          <X className="size-4" />
+                        </button>
+                      ) : null}
+                    </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button type="button" variant="outline" className="justify-between sm:w-56">
