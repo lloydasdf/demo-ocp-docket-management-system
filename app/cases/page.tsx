@@ -5,7 +5,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sidebar } from '@/components/sidebar';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -65,12 +64,11 @@ type CasesPageCache = {
   cases: CompactCase[];
   partyNamesByCase: Record<number, CasePartyNames>;
   classificationsByCase: CaseClassificationByCase;
-  selectedDocketYear: DocketYearFilter;
   hasAllCases: boolean;
 };
 
 const DEFAULT_SEARCH_COLUMNS = CASE_TABLE_COLUMNS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v7';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v8';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -171,6 +169,14 @@ function searchColumnValue(
 
 function searchColumnLabel(columnKey: CaseSearchColumnKey) {
   return CASE_TABLE_COLUMNS.find((column) => column.key === columnKey)?.label ?? columnKey;
+}
+
+function allOptionsSelected<T extends string>(selectedOptions: T[], availableOptions: T[]) {
+  return (
+    availableOptions.length > 0 &&
+    selectedOptions.length === availableOptions.length &&
+    availableOptions.every((option) => selectedOptions.includes(option))
+  );
 }
 
 function formatDate(value: string | null | undefined) {
@@ -278,8 +284,9 @@ export default function CasesPage() {
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
   const [cachedInitialState] = useState(() => readCasesPageCache());
   const [cases, setCases] = useState<CompactCase[]>(cachedInitialState?.cases ?? []);
-  const [selectedDocketType, setSelectedDocketType] = useState<DocketTypeFilter>(DEFAULT_DOCKET_TYPE);
-  const [selectedDocketYear, setSelectedDocketYear] = useState<DocketYearFilter>(cachedInitialState?.selectedDocketYear ?? 'All');
+  const docketFiltersTouchedRef = useRef(false);
+  const [selectedDocketTypes, setSelectedDocketTypes] = useState<DocketTypeFilter[]>([]);
+  const [selectedDocketYears, setSelectedDocketYears] = useState<DocketYearFilter[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSearchColumns, setSelectedSearchColumns] = useState<CaseSearchColumnKey[]>(() => [...DEFAULT_SEARCH_COLUMNS]);
   const [isLoading, setIsLoading] = useState(!cachedInitialState);
@@ -298,13 +305,12 @@ export default function CasesPage() {
     function cacheCasesPageState(
       nextCases: CompactCase[],
       nextPartyNamesByCase: Record<number, CasePartyNames>,
-      options: { selectedYear?: DocketYearFilter; hasAllCases?: boolean } = {},
+      options: { hasAllCases?: boolean } = {},
     ) {
       writeCasesPageCache({
         cases: nextCases,
         partyNamesByCase: nextPartyNamesByCase,
         classificationsByCase: readCasesPageCache()?.classificationsByCase ?? classificationsByCase,
-        selectedDocketYear: options.selectedYear ?? readCasesPageCache()?.selectedDocketYear ?? selectedDocketYear,
         hasAllCases: options.hasAllCases ?? readCasesPageCache()?.hasAllCases ?? false,
       });
     }
@@ -342,7 +348,6 @@ export default function CasesPage() {
         cases: nextCases,
         partyNamesByCase: readCasesPageCache()?.partyNamesByCase ?? partyNamesByCase,
         classificationsByCase: nextClassificationsByCase,
-        selectedDocketYear: readCasesPageCache()?.selectedDocketYear ?? selectedDocketYear,
         hasAllCases: readCasesPageCache()?.hasAllCases ?? false,
       });
     }
@@ -391,8 +396,6 @@ export default function CasesPage() {
       }
 
       setIsLoading(true);
-      setSelectedDocketYear('All');
-
       const initialCasesResult = await getCasesDisplay({
         limit: INITIAL_CASE_LIMIT,
       });
@@ -408,7 +411,7 @@ export default function CasesPage() {
       } else {
         setErrorMessage(null);
         setCases(initialCasesResult.data);
-        cacheCasesPageState(initialCasesResult.data, {}, { selectedYear: 'All' });
+        cacheCasesPageState(initialCasesResult.data, {});
         void loadPartyNamesForCases(initialCasesResult.data, { clearOnError: true });
         void loadClassificationsForCases(initialCasesResult.data);
       }
@@ -455,11 +458,15 @@ export default function CasesPage() {
     const normalizedSearch = searchTerm.trim().toLowerCase();
 
     return cases.filter((caseDetail) => {
-      if (selectedDocketType !== 'All' && caseDetail.docket_type_prefix !== selectedDocketType) {
+      if (selectedDocketTypes.length === 0 || selectedDocketYears.length === 0 || selectedSearchColumns.length === 0) {
         return false;
       }
 
-      if (selectedDocketYear !== 'All' && String(caseDetail.docket_year) !== selectedDocketYear) {
+      if (!caseDetail.docket_type_prefix || !selectedDocketTypes.includes(caseDetail.docket_type_prefix)) {
+        return false;
+      }
+
+      if (!Number.isFinite(caseDetail.docket_year) || !selectedDocketYears.includes(String(caseDetail.docket_year))) {
         return false;
       }
 
@@ -476,7 +483,7 @@ export default function CasesPage() {
           .includes(normalizedSearch),
       );
     });
-  }, [cases, classificationsByCase, partyNamesByCase, searchTerm, selectedDocketType, selectedDocketYear, selectedSearchColumns]);
+  }, [cases, classificationsByCase, partyNamesByCase, searchTerm, selectedDocketTypes, selectedDocketYears, selectedSearchColumns]);
 
   const sortedCases = useMemo(
     () =>
@@ -489,21 +496,36 @@ export default function CasesPage() {
     [filteredCases],
   );
 
-  const docketTypeFilters = useMemo(() => {
-    const values = Array.from(
+  const docketTypeFilters = useMemo(() => (
+    Array.from(
       new Set(cases.map((caseDetail) => caseDetail.docket_type_prefix).filter((value): value is string => Boolean(value))),
-    ).sort();
-    return ['All', ...values];
-  }, [cases]);
+    ).sort()
+  ), [cases]);
 
   const docketYearFilters = useMemo(() => {
     const values = Array.from(
       new Set(cases.map((caseDetail) => caseDetail.docket_year).filter((value): value is number => Number.isFinite(value))),
     ).sort((left, right) => right - left);
-    return ['All', ...values.map(String)];
+    return values.map(String);
   }, [cases]);
 
+  useEffect(() => {
+    if (!docketFiltersTouchedRef.current) {
+      setSelectedDocketTypes(docketTypeFilters);
+    }
+  }, [docketTypeFilters]);
+
+  useEffect(() => {
+    if (!docketFiltersTouchedRef.current) {
+      setSelectedDocketYears(docketYearFilters);
+    }
+  }, [docketYearFilters]);
+
   const searchColumnSummary = useMemo(() => {
+    if (selectedSearchColumns.length === 0) {
+      return 'No columns';
+    }
+
     if (selectedSearchColumns.length === DEFAULT_SEARCH_COLUMNS.length) {
       return 'All columns';
     }
@@ -514,6 +536,38 @@ export default function CasesPage() {
 
     return `${selectedSearchColumns.length} columns`;
   }, [selectedSearchColumns]);
+
+  const docketTypeSummary = useMemo(() => {
+    if (selectedDocketTypes.length === 0) {
+      return 'No docket types';
+    }
+
+    if (allOptionsSelected(selectedDocketTypes, docketTypeFilters)) {
+      return DEFAULT_DOCKET_TYPE;
+    }
+
+    if (selectedDocketTypes.length === 1) {
+      return selectedDocketTypes[0];
+    }
+
+    return `${selectedDocketTypes.length} types`;
+  }, [docketTypeFilters, selectedDocketTypes]);
+
+  const docketYearSummary = useMemo(() => {
+    if (selectedDocketYears.length === 0) {
+      return 'No years';
+    }
+
+    if (allOptionsSelected(selectedDocketYears, docketYearFilters)) {
+      return 'All years';
+    }
+
+    if (selectedDocketYears.length === 1) {
+      return selectedDocketYears[0];
+    }
+
+    return `${selectedDocketYears.length} years`;
+  }, [docketYearFilters, selectedDocketYears]);
 
   const tableWidth = useMemo(
     () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0),
@@ -571,16 +625,56 @@ export default function CasesPage() {
     };
   }, [rowHeights, scrollTop, sortedCases, viewportHeight]);
 
+  function toggleSearchAllColumns() {
+    setSelectedSearchColumns((currentColumns) =>
+      allOptionsSelected(currentColumns, DEFAULT_SEARCH_COLUMNS) ? [] : [...DEFAULT_SEARCH_COLUMNS],
+    );
+  }
+
   function toggleSearchColumn(columnKey: CaseSearchColumnKey) {
     setSelectedSearchColumns((currentColumns) => {
       if (currentColumns.includes(columnKey)) {
-        return currentColumns.length === 1
-          ? currentColumns
-          : currentColumns.filter((currentColumn) => currentColumn !== columnKey);
+        return currentColumns.filter((currentColumn) => currentColumn !== columnKey);
       }
 
       return [...currentColumns, columnKey];
     });
+  }
+
+  function toggleDocketType(docketType: DocketTypeFilter) {
+    docketFiltersTouchedRef.current = true;
+    setSelectedDocketTypes((currentTypes) => {
+      if (currentTypes.includes(docketType)) {
+        return currentTypes.filter((currentType) => currentType !== docketType);
+      }
+
+      return [...currentTypes, docketType];
+    });
+  }
+
+  function toggleAllDocketTypes() {
+    docketFiltersTouchedRef.current = true;
+    setSelectedDocketTypes((currentTypes) =>
+      allOptionsSelected(currentTypes, docketTypeFilters) ? [] : [...docketTypeFilters],
+    );
+  }
+
+  function toggleDocketYear(docketYear: DocketYearFilter) {
+    docketFiltersTouchedRef.current = true;
+    setSelectedDocketYears((currentYears) => {
+      if (currentYears.includes(docketYear)) {
+        return currentYears.filter((currentYear) => currentYear !== docketYear);
+      }
+
+      return [...currentYears, docketYear];
+    });
+  }
+
+  function toggleAllDocketYears() {
+    docketFiltersTouchedRef.current = true;
+    setSelectedDocketYears((currentYears) =>
+      allOptionsSelected(currentYears, docketYearFilters) ? [] : [...docketYearFilters],
+    );
   }
 
   function handleColumnResize(columnKey: CaseTableColumnKey, startX: number) {
@@ -646,11 +740,17 @@ export default function CasesPage() {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-56">
                         <DropdownMenuLabel>Search columns</DropdownMenuLabel>
+                        <DropdownMenuCheckboxItem
+                          checked={allOptionsSelected(selectedSearchColumns, DEFAULT_SEARCH_COLUMNS)}
+                          onCheckedChange={toggleSearchAllColumns}
+                          onSelect={(event) => event.preventDefault()}
+                        >
+                          Search all columns
+                        </DropdownMenuCheckboxItem>
                         {CASE_TABLE_COLUMNS.map((column) => (
                           <DropdownMenuCheckboxItem
                             key={column.key}
                             checked={selectedSearchColumns.includes(column.key)}
-                            disabled={selectedSearchColumns.length === 1 && selectedSearchColumns.includes(column.key)}
                             onCheckedChange={() => toggleSearchColumn(column.key)}
                             onSelect={(event) => event.preventDefault()}
                           >
@@ -666,55 +766,81 @@ export default function CasesPage() {
                   <label className="text-sm font-medium text-foreground" htmlFor="docket-type-filter">
                     Docket Type
                   </label>
-                  <Select
-                    value={selectedDocketType}
-                    onValueChange={(value) => setSelectedDocketType(value as DocketTypeFilter)}
-                  >
-                    <SelectTrigger id="docket-type-filter" className="w-full">
-                      <SelectValue placeholder="Filter by docket type" />
-                    </SelectTrigger>
-                    <SelectContent>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button id="docket-type-filter" type="button" variant="outline" className="justify-between">
+                        {docketTypeSummary}
+                        <ChevronDown className="size-4 opacity-70" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-56">
+                      <DropdownMenuLabel>Docket types</DropdownMenuLabel>
+                      <DropdownMenuCheckboxItem
+                        checked={allOptionsSelected(selectedDocketTypes, docketTypeFilters)}
+                        onCheckedChange={toggleAllDocketTypes}
+                        onSelect={(event) => event.preventDefault()}
+                      >
+                        All
+                      </DropdownMenuCheckboxItem>
                       {docketTypeFilters.map((docketType) => (
-                        <SelectItem key={docketType} value={docketType}>
+                        <DropdownMenuCheckboxItem
+                          key={docketType}
+                          checked={selectedDocketTypes.includes(docketType)}
+                          onCheckedChange={() => toggleDocketType(docketType)}
+                          onSelect={(event) => event.preventDefault()}
+                        >
                           {docketType}
-                        </SelectItem>
+                        </DropdownMenuCheckboxItem>
                       ))}
-                    </SelectContent>
-                  </Select>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
 
                 <div className="flex flex-col gap-2">
                   <label className="text-sm font-medium text-foreground" htmlFor="docket-year-filter">
                     Docket Year
                   </label>
-                  <Select
-                    value={selectedDocketYear}
-                    onValueChange={(value) => setSelectedDocketYear(value as DocketYearFilter)}
-                  >
-                    <SelectTrigger id="docket-year-filter" className="w-full">
-                      <SelectValue placeholder="Filter by docket year" />
-                    </SelectTrigger>
-                    <SelectContent>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button id="docket-year-filter" type="button" variant="outline" className="justify-between">
+                        {docketYearSummary}
+                        <ChevronDown className="size-4 opacity-70" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-56">
+                      <DropdownMenuLabel>Docket years</DropdownMenuLabel>
+                      <DropdownMenuCheckboxItem
+                        checked={allOptionsSelected(selectedDocketYears, docketYearFilters)}
+                        onCheckedChange={toggleAllDocketYears}
+                        onSelect={(event) => event.preventDefault()}
+                      >
+                        All years
+                      </DropdownMenuCheckboxItem>
                       {docketYearFilters.map((docketYear) => (
-                        <SelectItem key={docketYear} value={docketYear}>
-                          {docketYear === 'All' ? 'All years' : docketYear}
-                        </SelectItem>
+                        <DropdownMenuCheckboxItem
+                          key={docketYear}
+                          checked={selectedDocketYears.includes(docketYear)}
+                          onCheckedChange={() => toggleDocketYear(docketYear)}
+                          onSelect={(event) => event.preventDefault()}
+                        >
+                          {docketYear}
+                        </DropdownMenuCheckboxItem>
                       ))}
-                    </SelectContent>
-                  </Select>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </div>
             </CardHeader>
 
-            <CardContent className="min-h-0 flex-1 overflow-hidden px-4 md:px-6">
+            <CardContent className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-4 md:px-6">
               {isLoading ? (
                 <div className="py-8 text-center text-sm text-muted-foreground">Loading cases...</div>
               ) : sortedCases.length === 0 ? (
-                <div className="py-8 text-center text-sm text-muted-foreground">No cases found.</div>
+                <div className="py-8 text-center text-sm text-muted-foreground">No cases, please check filters.</div>
               ) : (
                 <div
                   ref={tableContainerRef}
-                  className="h-full min-h-0 overflow-auto rounded-lg border border-border"
+                  className="min-h-0 flex-1 overflow-auto rounded-lg border border-border"
                   aria-label="Cases table with native horizontal and vertical scrollbars"
                   onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
                 >
@@ -815,6 +941,9 @@ export default function CasesPage() {
                   </table>
                 </div>
               )}
+              <div className="shrink-0 text-sm text-muted-foreground">
+                {sortedCases.length.toLocaleString()} {sortedCases.length === 1 ? 'case' : 'cases'} shown
+              </div>
             </CardContent>
           </Card>
         </div>
