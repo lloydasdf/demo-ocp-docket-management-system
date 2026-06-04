@@ -13,7 +13,6 @@ import {
   getCaseClassificationsForCases,
   getCasePartyParticipantsForCases,
   getCasesDisplay,
-  getLatestCaseDocketYear,
   type CaseClassificationSummaryRecord,
   type CasePartyParticipantRecord,
   type CasesDisplayRecord,
@@ -23,7 +22,7 @@ type CompactCase = CasesDisplayRecord;
 type DocketTypeFilter = string;
 type DocketYearFilter = string;
 
-const DEFAULT_DOCKET_TYPE = 'INV';
+const DEFAULT_DOCKET_TYPE = 'All';
 const INITIAL_CASE_LIMIT = 500;
 const CASE_ROW_HEIGHT = 49;
 const EXPANDED_CASE_ROW_HEIGHT = 96;
@@ -61,7 +60,7 @@ type CasesPageCache = {
   hasAllCases: boolean;
 };
 
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v6';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v7';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -348,27 +347,9 @@ export default function CasesPage() {
       }
 
       setIsLoading(true);
-      const latestYearResult = await getLatestCaseDocketYear(DEFAULT_DOCKET_TYPE);
-
-      if (!isMounted) {
-        return;
-      }
-
-      if (latestYearResult.error) {
-        setErrorMessage(latestYearResult.error.message);
-        setCases([]);
-        setPartyNamesByCase({});
-        setIsLoading(false);
-        return;
-      }
-
-      const defaultDocketYear = latestYearResult.data ?? undefined;
-      const selectedYear = defaultDocketYear ? String(defaultDocketYear) : 'All';
-      setSelectedDocketYear(selectedYear);
+      setSelectedDocketYear('All');
 
       const initialCasesResult = await getCasesDisplay({
-        docketType: DEFAULT_DOCKET_TYPE,
-        docketYear: defaultDocketYear,
         limit: INITIAL_CASE_LIMIT,
       });
 
@@ -383,7 +364,7 @@ export default function CasesPage() {
       } else {
         setErrorMessage(null);
         setCases(initialCasesResult.data);
-        cacheCasesPageState(initialCasesResult.data, {}, { selectedYear });
+        cacheCasesPageState(initialCasesResult.data, {}, { selectedYear: 'All' });
         void loadPartyNamesForCases(initialCasesResult.data, { clearOnError: true });
         void loadClassificationsForCases(initialCasesResult.data);
       }
