@@ -12,6 +12,58 @@ import type {
   ViewRow,
 } from "@/lib/supabase/types";
 
+type CaseParticipantPrivateDetailsRecord = {
+  remarks: string | null;
+  source: string | null;
+  source_detail: string | null;
+  legacy_source_file: string | null;
+  legacy_source_sheet: string | null;
+  legacy_row_number: number | null;
+  legacy_raw_text: string | null;
+};
+
+type CasePrivateDetailsRecord = {
+  current_status_id: number | null;
+  current_status_date: string | null;
+  current_status_raw: string | null;
+  current_status_remarks: string | null;
+  current_status_approved_date_raw: string | null;
+  is_summary_procedure: boolean | null;
+  remarks: string | null;
+  source: string | null;
+  summary_text: string | null;
+  current_status: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
+};
+
+function withFlattenedCasePrivateDetails<T extends { case_private_details?: CasePrivateDetailsRecord | null }>(
+  record: T,
+): T & {
+  current_status_id?: number | null;
+  current_status_date?: string | null;
+  current_status_raw?: string | null;
+  current_status_remarks?: string | null;
+  current_status?: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
+  is_summary_procedure?: boolean | null;
+  remarks?: string | null;
+  source?: string | null;
+  summary_text?: string | null;
+} {
+  const details = record.case_private_details ?? null;
+
+  return {
+    ...record,
+    current_status_id: details?.current_status_id ?? null,
+    current_status_date: details?.current_status_date ?? null,
+    current_status_raw: details?.current_status_raw ?? null,
+    current_status_remarks: details?.current_status_remarks ?? null,
+    current_status: details?.current_status ?? null,
+    is_summary_procedure: details?.is_summary_procedure ?? null,
+    remarks: details?.remarks ?? null,
+    source: details?.source ?? null,
+    summary_text: details?.summary_text ?? null,
+  };
+}
+
 type SupabaseErrorLike = {
   message?: string;
   code?: string;
@@ -577,8 +629,7 @@ export type CasesTableRecord = TableRow<"cases"> & {
         prosecutors: Pick<TableRow<"prosecutors">, "full_name" | "short_name"> | null;
       })[]
     | null;
-  current_status_id?: number | null;
-  current_status: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
+  case_private_details: CasePrivateDetailsRecord | null;
 };
 
 export async function getCasesFromTable(
@@ -632,7 +683,10 @@ export async function getCasesFromTable(
               assigned_at, unassigned_at,
               prosecutors:prosecutors!case_assignments_prosecutor_id_fkey (full_name, short_name)
             ),
-            current_status:case_statuses!cases_current_status_id_fkey (code, display_label)`,
+            case_private_details:case_private_details!case_private_details_case_id_fkey (
+              current_status_id, current_status_date, current_status_raw, current_status_remarks, current_status_approved_date_raw, is_summary_procedure, remarks, source, summary_text,
+              current_status:case_statuses!case_private_details_current_status_id_fkey (code, display_label)
+            )`,
           )
           .order("created_at", { ascending: false })
           .order("id", { ascending: false })
@@ -655,7 +709,9 @@ export async function getCasesFromTable(
           return response;
         }
 
-        const page = response.data ?? [];
+        const page = (response.data ?? []).map((record) =>
+          withFlattenedCasePrivateDetails(record),
+        );
         allCases.push(...page);
 
         if (!shouldFetchAllPages || page.length < pageSize) {
@@ -755,14 +811,15 @@ export async function getCompactCases(
 }
 
 export type CaseDetailsRecord = TableRow<"cases"> & {
+  case_private_details: CasePrivateDetailsRecord | null;
   current_status_id?: number | null;
   current_status_date?: string | null;
   current_status_raw?: string | null;
   current_status_remarks?: string | null;
+  current_status?: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
   status_approved_date?: string | null;
   status_approved_date_raw?: string | null;
   case_classification_id?: number | null;
-  current_status: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
   docket_types: Pick<TableRow<"docket_types">, "name" | "prefix"> | null;
   case_classifications:
     | { code?: string | null; display_label?: string | null; name?: string | null }
@@ -818,6 +875,7 @@ export type CaseParticipantAttributeRecord = Pick<
 >;
 
 export type CaseParticipantRecord = TableRow<"case_participants"> & {
+  case_participant_private_details: CaseParticipantPrivateDetailsRecord | null;
   case_participant_attributes: CaseParticipantAttributeRecord | null;
   participant_roles: Pick<
     TableRow<"participant_roles">,
@@ -916,7 +974,8 @@ export async function getCaseParticipantsForPerson(
       const query = supabase
         .from("case_participants")
         .select(
-          `*,
+          `id, case_id, person_id, organization_id, role_id, participant_order, participant_kind, display_name_snapshot, created_at,
+        case_participant_private_details:case_participant_private_details!case_participant_private_details_case_participant_id_fkey (remarks, source, source_detail, legacy_source_file, legacy_source_sheet, legacy_row_number, legacy_raw_text),
         case_participant_attributes:case_participant_attributes!case_participant_attributes_case_participant_id_fkey (age_text, age_years, gender_text, gender_normalized, is_minor_at_case, is_senior_at_case, is_pwd_at_case),
         participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
         persons:persons!case_participants_person_id_fkey (
@@ -998,17 +1057,29 @@ export async function getCaseDetailsById(
         .from("cases")
         .select(
           `*,
-          current_status:case_statuses!cases_current_status_id_fkey (code, display_label),
+          case_private_details:case_private_details!case_private_details_case_id_fkey (
+            current_status_id, current_status_date, current_status_raw, current_status_remarks, current_status_approved_date_raw, is_summary_procedure, remarks, source, summary_text,
+            current_status:case_statuses!case_private_details_current_status_id_fkey (code, display_label)
+          ),
           docket_types:docket_types!cases_docket_type_id_fkey (name, prefix),
           case_classifications:case_classifications!cases_case_classification_id_fkey (display_label)`,
         )
         .eq("id", caseId)
         .maybeSingle();
 
-      return query as unknown as Promise<{
+      const response = (await query) as unknown as {
         data: CaseDetailsRecord | null;
         error: unknown;
-      }>;
+      };
+
+      if (response.error || !response.data) {
+        return response;
+      }
+
+      return {
+        data: withFlattenedCasePrivateDetails(response.data),
+        error: null,
+      };
     },
     null,
   );
@@ -1138,7 +1209,8 @@ export async function getCaseParticipants(
       const query = supabase
         .from("case_participants")
         .select(
-          `*,
+          `id, case_id, person_id, organization_id, role_id, participant_order, participant_kind, display_name_snapshot, created_at,
+        case_participant_private_details:case_participant_private_details!case_participant_private_details_case_participant_id_fkey (remarks, source, source_detail, legacy_source_file, legacy_source_sheet, legacy_row_number, legacy_raw_text),
         case_participant_attributes:case_participant_attributes!case_participant_attributes_case_participant_id_fkey (age_text, age_years, gender_text, gender_normalized, is_minor_at_case, is_senior_at_case, is_pwd_at_case),
         participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
         persons:persons!case_participants_person_id_fkey (
@@ -1186,7 +1258,8 @@ export async function getCaseParticipantsForCases(
         const query = supabase
           .from("case_participants")
           .select(
-            `*,
+            `id, case_id, person_id, organization_id, role_id, participant_order, participant_kind, display_name_snapshot, created_at,
+        case_participant_private_details:case_participant_private_details!case_participant_private_details_case_participant_id_fkey (remarks, source, source_detail, legacy_source_file, legacy_source_sheet, legacy_row_number, legacy_raw_text),
         case_participant_attributes:case_participant_attributes!case_participant_attributes_case_participant_id_fkey (age_text, age_years, gender_text, gender_normalized, is_minor_at_case, is_senior_at_case, is_pwd_at_case),
         participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
         persons:persons!case_participants_person_id_fkey (
@@ -2219,11 +2292,7 @@ export async function createNewDocketEntry(
         docket_number: docketNumber,
         docket_type_id: input.docketTypeId,
         docket_year: input.docketYear,
-        is_summary_procedure: input.isSummaryProcedure ?? null,
         region_code: cleanString(input.regionCode) ?? "IV-A",
-        remarks: cleanString(input.remarks),
-        source: cleanString(input.source) ?? "manual",
-        summary_text: cleanString(input.summaryText),
         updated_by_user_id: createdByUserId,
       })
       .select("id,docket_number,docket_year,docket_type_id")
@@ -2234,6 +2303,27 @@ export async function createNewDocketEntry(
     }
 
     const caseId = createdCase.id;
+
+    const { error: privateDetailsError } = await (supabase as any)
+      .from("case_private_details")
+      .insert({
+        case_id: caseId,
+        is_summary_procedure: input.isSummaryProcedure ?? null,
+        remarks: cleanString(input.remarks),
+        source: cleanString(input.source) ?? "manual",
+        summary_text: cleanString(input.summaryText),
+      });
+
+    if (privateDetailsError) {
+      return fail(
+        toQueryError(
+          privateDetailsError,
+          "createNewDocketEntry",
+          "case_private_details" as RelationName,
+        ),
+      );
+    }
+
     const counterError = await advanceDocketCounter(
       input.docketTypeId,
       input.docketYear,
@@ -2278,8 +2368,9 @@ export async function createNewDocketEntry(
         .insert({
           case_id: caseId,
           participant_order: index + 1,
+          display_name_snapshot: buildFullName(person),
+          participant_kind: "PERSON",
           person_id: createdPerson.id,
-          remarks: cleanString(person.remarks),
           role_id: person.roleId,
         })
         .select("id")
@@ -2288,6 +2379,25 @@ export async function createNewDocketEntry(
       if (participantError || !createdParticipant) {
         return fail(
           toQueryError(participantError, "createNewDocketEntry", "case_participants"),
+        );
+      }
+
+      const { error: participantPrivateError } = await (supabase as any)
+        .from("case_participant_private_details")
+        .insert({
+          case_id: caseId,
+          case_participant_id: createdParticipant.id,
+          remarks: cleanString(person.remarks),
+          source: "MANUAL_ENTRY",
+        });
+
+      if (participantPrivateError) {
+        return fail(
+          toQueryError(
+            participantPrivateError,
+            "createNewDocketEntry",
+            "case_participant_private_details" as RelationName,
+          ),
         );
       }
 
