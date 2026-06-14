@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Gz6cUErEY968pDfDw6j0eHdFVrIqryGQHwG5dQK1A1JnbN1xzRmamrEgxQeTYgG
+\restrict qnRWCXRPfxj7eilPJJnMSoFcVMsbrDKvaGZAA2xeOb6EkAUYrHuLeaxq6f31eHf
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 18.3
@@ -813,6 +813,305 @@ $$;
 
 
 --
+-- Name: can_assign_case(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_assign_case() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF', 'ADMIN']);
+$$;
+
+
+--
+-- Name: can_assign_role(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_assign_role(p_target_role_code text) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT
+    CASE
+      WHEN upper(p_target_role_code) = 'DEVELOPER'
+        THEN public.has_app_role('DEVELOPER')
+      ELSE
+        public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF', 'ADMIN'])
+    END;
+$$;
+
+
+--
+-- Name: can_create_case(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_create_case() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF', 'ADMIN']);
+$$;
+
+
+--
+-- Name: can_delete_case(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_delete_case() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_app_role('DEVELOPER');
+$$;
+
+
+--
+-- Name: can_delete_seed_data(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_delete_seed_data() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_app_role('DEVELOPER');
+$$;
+
+
+--
+-- Name: can_edit_case_details(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_edit_case_details(p_case_id bigint) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT
+    public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF', 'ADMIN'])
+    OR (
+      public.has_any_app_role(ARRAY['PROSECUTOR', 'STAFF'])
+      AND public.can_view_case_details(p_case_id)
+    );
+$$;
+
+
+--
+-- Name: can_edit_case_header(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_edit_case_header() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF', 'ADMIN']);
+$$;
+
+
+--
+-- Name: can_edit_case_participant_details(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_edit_case_participant_details(p_case_participant_id bigint) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.case_participants cp
+    WHERE cp.id = p_case_participant_id
+      AND public.can_edit_case_details(cp.case_id)
+  );
+$$;
+
+
+--
+-- Name: can_manage_master_identity_data(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_manage_master_identity_data() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF', 'ADMIN']);
+$$;
+
+
+--
+-- Name: can_manage_seed_data(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_manage_seed_data() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF', 'ADMIN']);
+$$;
+
+
+--
+-- Name: can_manage_system_internal(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_manage_system_internal() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_app_role('DEVELOPER');
+$$;
+
+
+--
+-- Name: can_manage_users(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_manage_users() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF', 'ADMIN']);
+$$;
+
+
+--
+-- Name: can_view_address_details(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_view_address_details(p_address_id bigint) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT
+    EXISTS (
+      SELECT 1
+      FROM public.case_addresses ca
+      WHERE ca.address_id = p_address_id
+        AND public.can_view_case_details(ca.case_id)
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM public.person_addresses pa
+      JOIN public.case_participants cp
+        ON cp.person_id = pa.person_id
+      WHERE pa.address_id = p_address_id
+        AND public.can_view_case_details(cp.case_id)
+    );
+$$;
+
+
+--
+-- Name: can_view_audit_logs(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_view_audit_logs() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF']);
+$$;
+
+
+--
+-- Name: can_view_case_details(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_view_case_details(p_case_id bigint) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT
+    public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF', 'ADMIN'])
+
+    OR (
+      public.has_app_role('PROSECUTOR')
+      AND EXISTS (
+        SELECT 1
+        FROM public.case_assignments ca
+        WHERE ca.case_id = p_case_id
+          AND ca.unassigned_at IS NULL
+          AND ca.prosecutor_id = public.current_app_prosecutor_id()
+      )
+    )
+
+    OR (
+      public.has_app_role('STAFF')
+      AND EXISTS (
+        SELECT 1
+        FROM public.case_assignments ca
+        WHERE ca.case_id = p_case_id
+          AND ca.unassigned_at IS NULL
+          AND (
+            ca.staff_id = public.current_app_staff_id()
+
+            OR EXISTS (
+              SELECT 1
+              FROM public.prosecutor_staff_assignments psa
+              WHERE psa.prosecutor_id = ca.prosecutor_id
+                AND psa.staff_id = public.current_app_staff_id()
+                AND psa.is_active = true
+                AND psa.start_date <= CURRENT_DATE
+                AND (
+                  psa.end_date IS NULL
+                  OR psa.end_date >= CURRENT_DATE
+                )
+            )
+          )
+      )
+    );
+$$;
+
+
+--
+-- Name: can_view_case_participant_details(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_view_case_participant_details(p_case_participant_id bigint) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.case_participants cp
+    WHERE cp.id = p_case_participant_id
+      AND public.can_view_case_details(cp.case_id)
+  );
+$$;
+
+
+--
+-- Name: can_view_organization_details(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_view_organization_details(p_organization_id integer) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.case_participants cp
+    WHERE cp.organization_id = p_organization_id
+      AND public.can_view_case_details(cp.case_id)
+  );
+$$;
+
+
+--
+-- Name: can_view_person_details(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.can_view_person_details(p_person_id bigint) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.case_participants cp
+    WHERE cp.person_id = p_person_id
+      AND public.can_view_case_details(cp.case_id)
+  );
+$$;
+
+
+--
 -- Name: clearance_bv_key(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1311,6 +1610,38 @@ $$;
 
 
 --
+-- Name: current_app_prosecutor_id(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.current_app_prosecutor_id() RETURNS bigint
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT u.prosecutor_id
+  FROM public.users u
+  WHERE u.auth_user_id = auth.uid()
+    AND u.is_active = true
+  LIMIT 1;
+$$;
+
+
+--
+-- Name: current_app_staff_id(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.current_app_staff_id() RETURNS bigint
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT u.staff_id
+  FROM public.users u
+  WHERE u.auth_user_id = auth.uid()
+    AND u.is_active = true
+  LIMIT 1;
+$$;
+
+
+--
 -- Name: current_app_user_id(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1318,11 +1649,11 @@ CREATE FUNCTION public.current_app_user_id() RETURNS bigint
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-    SELECT u.id
-    FROM public.users u
-    WHERE u.auth_user_id = auth.uid()
-      AND u.is_active = true
-    LIMIT 1;
+  SELECT u.id
+  FROM public.users u
+  WHERE u.auth_user_id = auth.uid()
+    AND u.is_active = true
+  LIMIT 1;
 $$;
 
 
@@ -1603,6 +1934,32 @@ $_$;
 
 
 --
+-- Name: has_any_app_role(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.has_any_app_role(p_role_codes text[]) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.users u
+    JOIN public.user_roles ur
+      ON ur.user_id = u.id
+    JOIN public.roles r
+      ON r.id = ur.role_id
+    WHERE u.auth_user_id = auth.uid()
+      AND u.is_active = true
+      AND r.is_active = true
+      AND upper(r.code) = ANY (
+        SELECT upper(code)
+        FROM unnest(p_role_codes) AS code
+      )
+  );
+$$;
+
+
+--
 -- Name: has_app_role(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1610,16 +1967,18 @@ CREATE FUNCTION public.has_app_role(p_role_code text) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-    SELECT EXISTS (
-        SELECT 1
-        FROM public.users u
-        JOIN public.user_roles ur ON ur.user_id = u.id
-        JOIN public.roles r ON r.id = ur.role_id
-        WHERE u.auth_user_id = auth.uid()
-          AND u.is_active = true
-          AND r.is_active = true
-          AND r.code = p_role_code
-    );
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.users u
+    JOIN public.user_roles ur
+      ON ur.user_id = u.id
+    JOIN public.roles r
+      ON r.id = ur.role_id
+    WHERE u.auth_user_id = auth.uid()
+      AND u.is_active = true
+      AND r.is_active = true
+      AND upper(r.code) = upper(p_role_code)
+  );
 $$;
 
 
@@ -4117,6 +4476,18 @@ $$;
 
 
 --
+-- Name: is_admin_role(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.is_admin_role() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_app_role('ADMIN');
+$$;
+
+
+--
 -- Name: is_app_admin(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4124,7 +4495,7 @@ CREATE FUNCTION public.is_app_admin() RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-    SELECT public.has_app_role('ADMIN');
+  SELECT public.has_app_role('ADMIN');
 $$;
 
 
@@ -4136,7 +4507,55 @@ CREATE FUNCTION public.is_authenticated_app_user() RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-    SELECT public.current_app_user_id() IS NOT NULL;
+  SELECT public.current_app_user_id() IS NOT NULL;
+$$;
+
+
+--
+-- Name: is_chief(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.is_chief() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_app_role('CHIEF');
+$$;
+
+
+--
+-- Name: is_developer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.is_developer() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_app_role('DEVELOPER');
+$$;
+
+
+--
+-- Name: is_prosecutor_role(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.is_prosecutor_role() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_app_role('PROSECUTOR');
+$$;
+
+
+--
+-- Name: is_staff_role(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.is_staff_role() RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT public.has_app_role('STAFF');
 $$;
 
 
@@ -6169,8 +6588,11 @@ CREATE FUNCTION public.search_clearance_phonetic_matches(p_query text, p_search_
     LEFT JOIN public.participant_roles pr
       ON pr.id = cp.role_id
 
+    LEFT JOIN public.case_private_details cpd
+      ON cpd.case_id = c.id
+
     LEFT JOIN public.case_statuses cs
-      ON cs.id = c.current_status_id
+      ON cs.id = cpd.current_status_id
 
     LEFT JOIN LATERAL (
       SELECT array_agg(pa.alias_name ORDER BY pa.alias_name) AS aliases
@@ -6538,8 +6960,11 @@ CREATE FUNCTION public.search_clearance_possible_matches_v3(p_query text, p_sear
     LEFT JOIN public.participant_roles pr
       ON pr.id = cp.role_id
 
+    LEFT JOIN public.case_private_details cpd
+      ON cpd.case_id = c.id
+
     LEFT JOIN public.case_statuses cs
-      ON cs.id = c.current_status_id
+      ON cs.id = cpd.current_status_id
 
     LEFT JOIN LATERAL (
       SELECT array_agg(pa.alias_name ORDER BY pa.alias_name) AS aliases
@@ -6987,8 +7412,11 @@ CREATE FUNCTION public.search_clearance_possible_matches_v31(p_query text, p_sea
     LEFT JOIN public.participant_roles pr
       ON pr.id = cp.role_id
 
+    LEFT JOIN public.case_private_details cpd
+      ON cpd.case_id = c.id
+
     LEFT JOIN public.case_statuses cs
-      ON cs.id = c.current_status_id
+      ON cs.id = cpd.current_status_id
 
     LEFT JOIN LATERAL (
       SELECT array_agg(pa.alias_name ORDER BY pa.alias_name) AS aliases
@@ -7159,8 +7587,11 @@ CREATE FUNCTION public.search_clearance_records(p_query text, p_search_type text
     LEFT JOIN public.participant_roles pr
       ON pr.id = cp.role_id
 
+    LEFT JOIN public.case_private_details cpd
+      ON cpd.case_id = c.id
+
     LEFT JOIN public.case_statuses cs
-      ON cs.id = c.current_status_id
+      ON cs.id = cpd.current_status_id
 
     LEFT JOIN LATERAL (
       SELECT
@@ -10385,6 +10816,46 @@ ALTER TABLE public.case_participant_attributes ALTER COLUMN id ADD GENERATED BY 
 
 
 --
+-- Name: case_participant_private_details; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_participant_private_details (
+    case_participant_id bigint NOT NULL,
+    case_id bigint NOT NULL,
+    remarks text,
+    source text DEFAULT 'MANUAL_ENTRY'::text NOT NULL,
+    source_detail text,
+    legacy_source_file text,
+    legacy_source_sheet text,
+    legacy_row_number integer,
+    legacy_raw_text text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE case_participant_private_details; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.case_participant_private_details IS 'Private/sensitive participant details moved from public.case_participants. Protected by can_view_case_details(case_id).';
+
+
+--
+-- Name: COLUMN case_participant_private_details.case_participant_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_participant_private_details.case_participant_id IS 'Primary key. References public.case_participants(id).';
+
+
+--
+-- Name: COLUMN case_participant_private_details.case_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_participant_private_details.case_id IS 'Duplicated access key for efficient RLS by case_id.';
+
+
+--
 -- Name: case_participant_relationships; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10454,18 +10925,11 @@ CREATE TABLE public.case_participants (
     case_id bigint NOT NULL,
     person_id bigint,
     role_id bigint NOT NULL,
-    remarks text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     participant_order integer,
     organization_id integer,
     participant_kind text,
-    display_name_snapshot text,
-    source text DEFAULT 'MANUAL_ENTRY'::character varying NOT NULL,
-    source_detail text,
-    legacy_source_file text,
-    legacy_source_sheet text,
-    legacy_row_number integer,
-    legacy_raw_text text
+    display_name_snapshot text
 );
 
 
@@ -10561,6 +11025,79 @@ ALTER TABLE public.case_petitions_for_review ALTER COLUMN id ADD GENERATED BY DE
     NO MAXVALUE
     CACHE 1
 );
+
+
+--
+-- Name: case_private_details; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_private_details (
+    case_id bigint NOT NULL,
+    source text,
+    remarks text,
+    legacy_source_file text,
+    legacy_source_sheet text,
+    legacy_row_number integer,
+    legacy_raw_json jsonb,
+    is_summary_procedure boolean DEFAULT false,
+    summary_text text,
+    current_status_id bigint,
+    current_status_date date,
+    current_status_approved_date_raw text,
+    current_status_raw text,
+    current_status_remarks text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE case_private_details; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.case_private_details IS 'Private/sensitive case details moved from public.cases. Protected by can_view_case_details(case_id).';
+
+
+--
+-- Name: COLUMN case_private_details.case_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_private_details.case_id IS 'Primary key and access key. References public.cases(id).';
+
+
+--
+-- Name: COLUMN case_private_details.current_status_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_private_details.current_status_id IS 'Current/latest case status for UI list/search. Moved from public.cases.';
+
+
+--
+-- Name: COLUMN case_private_details.current_status_date; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_private_details.current_status_date IS 'Parsed date associated with imported current status. Moved from public.cases.';
+
+
+--
+-- Name: COLUMN case_private_details.current_status_approved_date_raw; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_private_details.current_status_approved_date_raw IS 'Raw legacy status approved/date text preserved for export reconstruction.';
+
+
+--
+-- Name: COLUMN case_private_details.current_status_raw; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_private_details.current_status_raw IS 'Raw legacy status text before normalization.';
+
+
+--
+-- Name: COLUMN case_private_details.current_status_remarks; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_private_details.current_status_remarks IS 'Raw legacy status remarks text.';
 
 
 --
@@ -10770,13 +11307,6 @@ CREATE TABLE public.cases (
     docket_year integer NOT NULL,
     docket_number integer NOT NULL,
     date_received date NOT NULL,
-    source text,
-    remarks text,
-    gdrive_folder_id text,
-    gdrive_folder_link text,
-    gdrive_folder_name text,
-    gdrive_folder_status text DEFAULT 'NOT_CREATED'::character varying NOT NULL,
-    gdrive_folder_last_scanned_at timestamp with time zone,
     created_by_user_id bigint NOT NULL,
     updated_by_user_id bigint,
     is_archived boolean DEFAULT false NOT NULL,
@@ -10784,55 +11314,8 @@ CREATE TABLE public.cases (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     region_code text,
     docket_month_code text,
-    legacy_source_file text,
-    legacy_source_sheet text,
-    legacy_row_number integer,
-    legacy_raw_json jsonb,
-    is_summary_procedure boolean DEFAULT false,
-    summary_text text,
-    case_classification_id bigint,
-    current_status_id bigint,
-    current_status_date date,
-    current_status_approved_date_raw text,
-    current_status_raw text,
-    current_status_remarks text,
-    CONSTRAINT chk_cases_gdrive_folder_status CHECK ((gdrive_folder_status = ANY (ARRAY[('NOT_CREATED'::character varying)::text, ('ACTIVE'::character varying)::text, ('MISSING'::character varying)::text, ('PERMISSION_ERROR'::character varying)::text, ('ARCHIVED'::character varying)::text])))
+    case_classification_id bigint
 );
-
-
---
--- Name: COLUMN cases.current_status_id; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.cases.current_status_id IS 'Current/latest case status for UI list/search. Legacy status column is transformed here, not into case_events timeline.';
-
-
---
--- Name: COLUMN cases.current_status_date; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.cases.current_status_date IS 'Parsed date associated with imported current status, usually legacy status approved date when available.';
-
-
---
--- Name: COLUMN cases.current_status_approved_date_raw; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.cases.current_status_approved_date_raw IS 'Raw legacy status approved/date text preserved for exact export reconstruction.';
-
-
---
--- Name: COLUMN cases.current_status_raw; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.cases.current_status_raw IS 'Raw legacy status text before normalization.';
-
-
---
--- Name: COLUMN cases.current_status_remarks; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON COLUMN public.cases.current_status_remarks IS 'Raw legacy status remarks text.';
 
 
 --
@@ -12429,7 +12912,7 @@ CREATE TABLE public.users (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     auth_user_id uuid,
-    CONSTRAINT one_user_identity CHECK (((prosecutor_id IS NOT NULL) <> (staff_id IS NOT NULL)))
+    CONSTRAINT users_only_one_office_identity CHECK ((NOT ((prosecutor_id IS NOT NULL) AND (staff_id IS NOT NULL))))
 );
 
 
@@ -12456,7 +12939,13 @@ ALTER SEQUENCE public.users_id_seq OWNED BY public.users.id;
 -- Name: v_case_participants_long_term; Type: VIEW; Schema: public; Owner: -
 --
 
-CREATE VIEW public.v_case_participants_long_term AS
+CREATE VIEW public.v_case_participants_long_term WITH (security_invoker='false') AS
+ WITH access AS (
+         SELECT cp_1.id AS case_participant_id,
+            public.can_view_case_details(cp_1.case_id) AS can_details
+           FROM public.case_participants cp_1
+          WHERE public.is_authenticated_app_user()
+        )
  SELECT cp.id AS case_participant_id,
     cp.case_id,
     pr.code AS role_code,
@@ -12465,39 +12954,104 @@ CREATE VIEW public.v_case_participants_long_term AS
     cp.participant_kind,
     cp.person_id,
     cp.organization_id,
-    COALESCE(p.full_name, o.organization_name, cp.display_name_snapshot) AS display_name,
-    p.full_name AS person_name,
-    o.organization_name,
-    o.organization_type,
-    cpa.age_text,
-    cpa.age_years,
-    cpa.gender_text,
-    cpa.gender_normalized,
-    cpa.minor_text,
-    cpa.is_minor_at_case,
-    cpa.senior_text,
-    cpa.is_senior_at_case,
-    cpa.pwd_text,
-    cpa.is_pwd_at_case,
-    cp.remarks,
-    cp.source,
-    cp.source_detail,
-    cp.legacy_source_file,
-    cp.legacy_source_sheet,
-    cp.legacy_row_number,
-    cp.legacy_raw_text
-   FROM ((((public.case_participants cp
+        CASE
+            WHEN access.can_details THEN COALESCE(p.full_name, o.organization_name, cp.display_name_snapshot)
+            ELSE cp.display_name_snapshot
+        END AS display_name,
+        CASE
+            WHEN access.can_details THEN p.full_name
+            ELSE NULL::text
+        END AS person_name,
+        CASE
+            WHEN access.can_details THEN o.organization_name
+            ELSE NULL::text
+        END AS organization_name,
+        CASE
+            WHEN access.can_details THEN o.organization_type
+            ELSE NULL::text
+        END AS organization_type,
+        CASE
+            WHEN access.can_details THEN cpa.age_text
+            ELSE NULL::text
+        END AS age_text,
+        CASE
+            WHEN access.can_details THEN cpa.age_years
+            ELSE NULL::integer
+        END AS age_years,
+        CASE
+            WHEN access.can_details THEN cpa.gender_text
+            ELSE NULL::text
+        END AS gender_text,
+        CASE
+            WHEN access.can_details THEN cpa.gender_normalized
+            ELSE NULL::text
+        END AS gender_normalized,
+        CASE
+            WHEN access.can_details THEN cpa.minor_text
+            ELSE NULL::text
+        END AS minor_text,
+        CASE
+            WHEN access.can_details THEN cpa.is_minor_at_case
+            ELSE NULL::boolean
+        END AS is_minor_at_case,
+        CASE
+            WHEN access.can_details THEN cpa.senior_text
+            ELSE NULL::text
+        END AS senior_text,
+        CASE
+            WHEN access.can_details THEN cpa.is_senior_at_case
+            ELSE NULL::boolean
+        END AS is_senior_at_case,
+        CASE
+            WHEN access.can_details THEN cpa.pwd_text
+            ELSE NULL::text
+        END AS pwd_text,
+        CASE
+            WHEN access.can_details THEN cpa.is_pwd_at_case
+            ELSE NULL::boolean
+        END AS is_pwd_at_case,
+        CASE
+            WHEN access.can_details THEN cppd.remarks
+            ELSE NULL::text
+        END AS remarks,
+        CASE
+            WHEN access.can_details THEN cppd.source
+            ELSE NULL::text
+        END AS source,
+        CASE
+            WHEN access.can_details THEN cppd.source_detail
+            ELSE NULL::text
+        END AS source_detail,
+        CASE
+            WHEN access.can_details THEN cppd.legacy_source_file
+            ELSE NULL::text
+        END AS legacy_source_file,
+        CASE
+            WHEN access.can_details THEN cppd.legacy_source_sheet
+            ELSE NULL::text
+        END AS legacy_source_sheet,
+        CASE
+            WHEN access.can_details THEN cppd.legacy_row_number
+            ELSE NULL::integer
+        END AS legacy_row_number,
+        CASE
+            WHEN access.can_details THEN cppd.legacy_raw_text
+            ELSE NULL::text
+        END AS legacy_raw_text
+   FROM ((((((public.case_participants cp
+     JOIN access ON ((access.case_participant_id = cp.id)))
      JOIN public.participant_roles pr ON ((pr.id = cp.role_id)))
      LEFT JOIN public.persons p ON ((p.id = cp.person_id)))
      LEFT JOIN public.organizations o ON ((o.id = cp.organization_id)))
-     LEFT JOIN public.case_participant_attributes cpa ON ((cpa.case_participant_id = cp.id)));
+     LEFT JOIN public.case_participant_attributes cpa ON ((cpa.case_participant_id = cp.id)))
+     LEFT JOIN public.case_participant_private_details cppd ON ((cppd.case_participant_id = cp.id)));
 
 
 --
 -- Name: v_case_timeline; Type: VIEW; Schema: public; Owner: -
 --
 
-CREATE VIEW public.v_case_timeline AS
+CREATE VIEW public.v_case_timeline WITH (security_invoker='false') AS
  SELECT ce.id AS case_event_id,
     ce.case_id,
     dt.prefix AS docket_type,
@@ -12542,7 +13096,8 @@ CREATE VIEW public.v_case_timeline AS
      LEFT JOIN public.case_statuses cs ON ((cs.id = ce.status_id)))
      LEFT JOIN public.prosecutors p ON ((p.id = ce.prosecutor_id)))
      LEFT JOIN public.staff st ON ((st.id = ce.staff_id)))
-     LEFT JOIN public.courts co ON ((co.id = ce.court_id)));
+     LEFT JOIN public.courts co ON ((co.id = ce.court_id)))
+  WHERE public.can_view_case_details(ce.case_id);
 
 
 --
@@ -12567,29 +13122,31 @@ CREATE TABLE public.violations (
 -- Name: v_cases_display; Type: VIEW; Schema: public; Owner: -
 --
 
-CREATE VIEW public.v_cases_display AS
- WITH active_assignment AS (
-         SELECT DISTINCT ON (ca.case_id) ca.case_id,
-            ca.prosecutor_id,
-            p.short_name AS prosecutor_short_name,
-            p.full_name AS prosecutor_full_name,
-            ca.staff_id,
-            st.short_name AS staff_short_name,
-            st.full_name AS staff_full_name,
-            ca.assigned_at
-           FROM ((public.case_assignments ca
-             LEFT JOIN public.prosecutors p ON ((p.id = ca.prosecutor_id)))
-             LEFT JOIN public.staff st ON ((st.id = ca.staff_id)))
-          WHERE (ca.unassigned_at IS NULL)
-          ORDER BY ca.case_id, ca.assigned_at DESC NULLS LAST, ca.id DESC
-        ), court_summary AS (
-         SELECT cc.case_id,
-            string_agg(DISTINCT co.code, ', '::text ORDER BY co.code) AS court_codes,
-            string_agg(DISTINCT NULLIF(cc.criminal_case_number, ''::text), ', '::text ORDER BY NULLIF(cc.criminal_case_number, ''::text)) AS criminal_case_numbers,
-            bool_or(cc.needs_review) AS court_needs_review
-           FROM (public.case_courts cc
-             LEFT JOIN public.courts co ON ((co.id = cc.court_id)))
-          GROUP BY cc.case_id
+CREATE VIEW public.v_cases_display WITH (security_invoker='false') AS
+ WITH ctx AS (
+         SELECT public.is_authenticated_app_user() AS is_app_user,
+            public.has_any_app_role(ARRAY['DEVELOPER'::text, 'CHIEF'::text, 'ADMIN'::text]) AS can_view_all_details,
+            public.has_app_role('PROSECUTOR'::text) AS is_prosecutor,
+            public.has_app_role('STAFF'::text) AS is_staff,
+            public.current_app_prosecutor_id() AS my_prosecutor_id,
+            public.current_app_staff_id() AS my_staff_id
+        ), latest_assignment AS (
+         SELECT DISTINCT ON (ca_1.case_id) ca_1.case_id,
+            ca_1.prosecutor_id,
+            ca_1.staff_id,
+            ca_1.assigned_at
+           FROM public.case_assignments ca_1
+          WHERE (ca_1.unassigned_at IS NULL)
+          ORDER BY ca_1.case_id, ca_1.assigned_at DESC NULLS LAST, ca_1.id DESC
+        ), case_access AS (
+         SELECT c_1.id AS case_id,
+            (ctx.can_view_all_details OR (ctx.is_prosecutor AND (la_1.prosecutor_id = ctx.my_prosecutor_id)) OR (ctx.is_staff AND ((la_1.staff_id = ctx.my_staff_id) OR (EXISTS ( SELECT 1
+                   FROM public.prosecutor_staff_assignments psa
+                  WHERE ((psa.prosecutor_id = la_1.prosecutor_id) AND (psa.staff_id = ctx.my_staff_id) AND (psa.is_active = true) AND (psa.start_date <= CURRENT_DATE) AND ((psa.end_date IS NULL) OR (psa.end_date >= CURRENT_DATE)))))))) AS can_details
+           FROM ((public.cases c_1
+             CROSS JOIN ctx)
+             LEFT JOIN latest_assignment la_1 ON ((la_1.case_id = c_1.id)))
+          WHERE (ctx.is_app_user = true)
         ), violation_summary AS (
          SELECT cv.case_id,
             string_agg(v.title, ', '::text ORDER BY cv.violation_order, v.title) AS violations
@@ -12602,13 +13159,19 @@ CREATE VIEW public.v_cases_display AS
     c.docket_year,
     c.docket_number,
     c.date_received,
-    c.source,
-    c.remarks,
-    c.gdrive_folder_id,
-    c.gdrive_folder_link,
-    c.gdrive_folder_name,
-    c.gdrive_folder_status,
-    c.gdrive_folder_last_scanned_at,
+        CASE
+            WHEN ca.can_details THEN cpd.source
+            ELSE NULL::text
+        END AS source,
+        CASE
+            WHEN ca.can_details THEN cpd.remarks
+            ELSE NULL::text
+        END AS remarks,
+    NULL::text AS gdrive_folder_id,
+    NULL::text AS gdrive_folder_link,
+    NULL::text AS gdrive_folder_name,
+    NULL::text AS gdrive_folder_status,
+    NULL::timestamp with time zone AS gdrive_folder_last_scanned_at,
     c.created_by_user_id,
     c.updated_by_user_id,
     c.is_archived,
@@ -12616,35 +13179,69 @@ CREATE VIEW public.v_cases_display AS
     c.updated_at,
     c.region_code,
     c.docket_month_code,
-    c.legacy_source_file,
-    c.legacy_source_sheet,
-    c.legacy_row_number,
-    c.legacy_raw_json,
-    c.is_summary_procedure,
-    c.summary_text,
+        CASE
+            WHEN ca.can_details THEN cpd.legacy_source_file
+            ELSE NULL::text
+        END AS legacy_source_file,
+        CASE
+            WHEN ca.can_details THEN cpd.legacy_source_sheet
+            ELSE NULL::text
+        END AS legacy_source_sheet,
+        CASE
+            WHEN ca.can_details THEN cpd.legacy_row_number
+            ELSE NULL::integer
+        END AS legacy_row_number,
+        CASE
+            WHEN ca.can_details THEN cpd.legacy_raw_json
+            ELSE NULL::jsonb
+        END AS legacy_raw_json,
+        CASE
+            WHEN ca.can_details THEN cpd.is_summary_procedure
+            ELSE NULL::boolean
+        END AS is_summary_procedure,
+        CASE
+            WHEN ca.can_details THEN cpd.summary_text
+            ELSE NULL::text
+        END AS summary_text,
     (((((((dt.prefix)::text || '-'::text) || (c.docket_year)::text) || '-'::text) || COALESCE(c.docket_month_code, ''::text)) || '-'::text) || lpad((c.docket_number)::text, 6, '0'::text)) AS docket_display_number,
     dt.prefix AS docket_type_prefix,
     dt.name AS docket_type_name,
-    cs.code AS current_status_code,
-    cs.display_label AS current_status_label,
-    c.current_status_date,
-    aa.prosecutor_id AS current_prosecutor_id,
-    aa.prosecutor_short_name,
-    aa.prosecutor_full_name,
-    aa.staff_id AS current_staff_id,
-    aa.staff_short_name,
-    aa.staff_full_name,
-    aa.assigned_at AS current_assigned_at,
-    court_summary.court_codes,
-    court_summary.criminal_case_numbers,
-    court_summary.court_needs_review,
-    violation_summary.violations
-   FROM (((((public.cases c
+        CASE
+            WHEN ca.can_details THEN cs.code
+            ELSE NULL::text
+        END AS current_status_code,
+        CASE
+            WHEN ca.can_details THEN cs.display_label
+            ELSE NULL::text
+        END AS current_status_label,
+        CASE
+            WHEN ca.can_details THEN cpd.current_status_date
+            ELSE NULL::date
+        END AS current_status_date,
+    la.prosecutor_id AS current_prosecutor_id,
+    p.short_name AS prosecutor_short_name,
+    p.full_name AS prosecutor_full_name,
+    la.staff_id AS current_staff_id,
+    st.short_name AS staff_short_name,
+    st.full_name AS staff_full_name,
+    la.assigned_at AS current_assigned_at,
+    NULL::text AS court_codes,
+    NULL::text AS criminal_case_numbers,
+    NULL::boolean AS court_needs_review,
+    vs.violations,
+    c.case_classification_id,
+    cc.display_label AS case_classification_label,
+    cc.description AS case_classification_description
+   FROM (((((((((public.cases c
      JOIN public.docket_types dt ON ((dt.id = c.docket_type_id)))
-     LEFT JOIN public.case_statuses cs ON ((cs.id = c.current_status_id)))
-     LEFT JOIN active_assignment aa ON ((aa.case_id = c.id)))
-     LEFT JOIN court_summary ON ((court_summary.case_id = c.id)))
-     LEFT JOIN violation_summary ON ((violation_summary.case_id = c.id)));
+     JOIN case_access ca ON ((ca.case_id = c.id)))
+     LEFT JOIN public.case_private_details cpd ON ((cpd.case_id = c.id)))
+     LEFT JOIN public.case_statuses cs ON ((cs.id = cpd.current_status_id)))
+     LEFT JOIN latest_assignment la ON ((la.case_id = c.id)))
+     LEFT JOIN public.prosecutors p ON ((p.id = la.prosecutor_id)))
+     LEFT JOIN public.staff st ON ((st.id = la.staff_id)))
+     LEFT JOIN violation_summary vs ON ((vs.case_id = c.id)))
+     LEFT JOIN public.case_classifications cc ON ((cc.id = c.case_classification_id)));
 
 
 --
@@ -13522,6 +14119,14 @@ ALTER TABLE ONLY public.case_participant_attributes
 
 
 --
+-- Name: case_participant_private_details case_participant_private_details_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_participant_private_details
+    ADD CONSTRAINT case_participant_private_details_pkey PRIMARY KEY (case_participant_id);
+
+
+--
 -- Name: case_participant_relationships case_participant_relationships_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13551,6 +14156,14 @@ ALTER TABLE ONLY public.case_participants
 
 ALTER TABLE ONLY public.case_petitions_for_review
     ADD CONSTRAINT case_petitions_for_review_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: case_private_details case_private_details_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_private_details
+    ADD CONSTRAINT case_private_details_pkey PRIMARY KEY (case_id);
 
 
 --
@@ -13631,14 +14244,6 @@ ALTER TABLE ONLY public.case_witness_details
 
 ALTER TABLE ONLY public.cases
     ADD CONSTRAINT cases_docket_type_id_docket_year_docket_number_key UNIQUE (docket_type_id, docket_year, docket_number);
-
-
---
--- Name: cases cases_gdrive_folder_id_key; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.cases
-    ADD CONSTRAINT cases_gdrive_folder_id_key UNIQUE (gdrive_folder_id);
 
 
 --
@@ -14569,6 +15174,41 @@ CREATE INDEX idx_case_addresses_case ON public.case_addresses USING btree (case_
 
 
 --
+-- Name: idx_case_assignments_active_case; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_assignments_active_case ON public.case_assignments USING btree (case_id) WHERE (unassigned_at IS NULL);
+
+
+--
+-- Name: idx_case_assignments_active_prosecutor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_assignments_active_prosecutor ON public.case_assignments USING btree (prosecutor_id, case_id) WHERE (unassigned_at IS NULL);
+
+
+--
+-- Name: idx_case_assignments_active_prosecutor_case; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_assignments_active_prosecutor_case ON public.case_assignments USING btree (prosecutor_id, case_id) WHERE (unassigned_at IS NULL);
+
+
+--
+-- Name: idx_case_assignments_active_staff; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_assignments_active_staff ON public.case_assignments USING btree (staff_id, case_id) WHERE (unassigned_at IS NULL);
+
+
+--
+-- Name: idx_case_assignments_active_staff_case; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_assignments_active_staff_case ON public.case_assignments USING btree (staff_id, case_id) WHERE (unassigned_at IS NULL);
+
+
+--
 -- Name: idx_case_assignments_case_event_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -14580,6 +15220,13 @@ CREATE INDEX idx_case_assignments_case_event_id ON public.case_assignments USING
 --
 
 CREATE INDEX idx_case_assignments_case_time ON public.case_assignments USING btree (case_id, assigned_at DESC);
+
+
+--
+-- Name: idx_case_assignments_latest_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_assignments_latest_active ON public.case_assignments USING btree (case_id, assigned_at DESC, id DESC) WHERE (unassigned_at IS NULL);
 
 
 --
@@ -14807,6 +15454,20 @@ CREATE INDEX idx_case_participant_attributes_senior ON public.case_participant_a
 
 
 --
+-- Name: idx_case_participant_private_details_case_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_participant_private_details_case_id ON public.case_participant_private_details USING btree (case_id);
+
+
+--
+-- Name: idx_case_participant_private_details_legacy_row; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_participant_private_details_legacy_row ON public.case_participant_private_details USING btree (legacy_source_sheet, legacy_row_number);
+
+
+--
 -- Name: idx_case_participant_relationships_case_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -14853,13 +15514,6 @@ CREATE INDEX idx_case_participants_case_role_order ON public.case_participants U
 --
 
 CREATE INDEX idx_case_participants_inv2022_lookup ON public.case_participants USING btree (case_id, person_id, role_id);
-
-
---
--- Name: idx_case_participants_legacy_row; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_case_participants_legacy_row ON public.case_participants USING btree (legacy_source_sheet, legacy_row_number);
 
 
 --
@@ -14912,6 +15566,34 @@ CREATE INDEX idx_case_petitions_review_title_trgm ON public.case_petitions_for_r
 
 
 --
+-- Name: idx_case_private_details_case_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_private_details_case_status ON public.case_private_details USING btree (case_id, current_status_id);
+
+
+--
+-- Name: idx_case_private_details_current_status_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_private_details_current_status_date ON public.case_private_details USING btree (current_status_date);
+
+
+--
+-- Name: idx_case_private_details_current_status_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_private_details_current_status_id ON public.case_private_details USING btree (current_status_id);
+
+
+--
+-- Name: idx_case_private_details_legacy_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_private_details_legacy_source ON public.case_private_details USING btree (legacy_source_file, legacy_source_sheet, legacy_row_number);
+
+
+--
 -- Name: idx_case_status_history_case_event_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -14937,6 +15619,13 @@ CREATE INDEX idx_case_status_history_status ON public.case_status_history USING 
 --
 
 CREATE INDEX idx_case_violations_case_id ON public.case_violations USING btree (case_id);
+
+
+--
+-- Name: idx_case_violations_summary; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_violations_summary ON public.case_violations USING btree (case_id, violation_order, violation_id);
 
 
 --
@@ -14975,17 +15664,10 @@ CREATE INDEX idx_cases_case_classification_id ON public.cases USING btree (case_
 
 
 --
--- Name: idx_cases_current_status_date; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_cases_created_id_desc; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_cases_current_status_date ON public.cases USING btree (current_status_date);
-
-
---
--- Name: idx_cases_current_status_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_cases_current_status_id ON public.cases USING btree (current_status_id);
+CREATE INDEX idx_cases_created_id_desc ON public.cases USING btree (created_at DESC, id DESC);
 
 
 --
@@ -14996,6 +15678,13 @@ CREATE INDEX idx_cases_docket_type ON public.cases USING btree (docket_type_id);
 
 
 --
+-- Name: idx_cases_docket_type_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cases_docket_type_id ON public.cases USING btree (docket_type_id);
+
+
+--
 -- Name: idx_cases_docket_type_year; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -15003,31 +15692,10 @@ CREATE INDEX idx_cases_docket_type_year ON public.cases USING btree (docket_type
 
 
 --
--- Name: idx_cases_gdrive_folder_id; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_cases_list_order; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_cases_gdrive_folder_id ON public.cases USING btree (gdrive_folder_id);
-
-
---
--- Name: idx_cases_gdrive_folder_status; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_cases_gdrive_folder_status ON public.cases USING btree (gdrive_folder_status);
-
-
---
--- Name: idx_cases_inv2022_legacy_source_row; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_cases_inv2022_legacy_source_row ON public.cases USING btree (legacy_source_file, legacy_source_sheet, source, legacy_row_number);
-
-
---
--- Name: idx_cases_legacy_source; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_cases_legacy_source ON public.cases USING btree (legacy_source_file, legacy_source_sheet, legacy_row_number);
+CREATE INDEX idx_cases_list_order ON public.cases USING btree (docket_year DESC, docket_number DESC);
 
 
 --
@@ -15346,6 +16014,13 @@ CREATE INDEX idx_persons_name_lookup ON public.persons USING btree (last_name, f
 
 
 --
+-- Name: idx_prosecutor_staff_assignments_active_staff_prosecutor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_prosecutor_staff_assignments_active_staff_prosecutor ON public.prosecutor_staff_assignments USING btree (staff_id, prosecutor_id) WHERE (is_active = true);
+
+
+--
 -- Name: idx_prosecutors_inv2022_short_name_norm; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -15364,6 +16039,34 @@ CREATE INDEX idx_psa_prosecutor ON public.prosecutor_staff_assignments USING btr
 --
 
 CREATE INDEX idx_psa_staff ON public.prosecutor_staff_assignments USING btree (staff_id);
+
+
+--
+-- Name: idx_user_roles_role_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_roles_role_id ON public.user_roles USING btree (role_id);
+
+
+--
+-- Name: idx_users_auth_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_users_auth_user_id ON public.users USING btree (auth_user_id);
+
+
+--
+-- Name: idx_users_prosecutor_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_users_prosecutor_id ON public.users USING btree (prosecutor_id) WHERE (prosecutor_id IS NOT NULL);
+
+
+--
+-- Name: idx_users_staff_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_users_staff_id ON public.users USING btree (staff_id) WHERE (staff_id IS NOT NULL);
 
 
 --
@@ -15406,13 +16109,6 @@ CREATE UNIQUE INDEX ux_case_participant_relationship_unique ON public.case_parti
 --
 
 CREATE UNIQUE INDEX ux_case_violations_case_violation ON public.case_violations USING btree (case_id, violation_id);
-
-
---
--- Name: ux_cases_gdrive_folder_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX ux_cases_gdrive_folder_id ON public.cases USING btree (gdrive_folder_id) WHERE (gdrive_folder_id IS NOT NULL);
 
 
 --
@@ -16035,6 +16731,22 @@ ALTER TABLE ONLY public.case_participant_attributes
 
 
 --
+-- Name: case_participant_private_details case_participant_private_details_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_participant_private_details
+    ADD CONSTRAINT case_participant_private_details_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: case_participant_private_details case_participant_private_details_case_participant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_participant_private_details
+    ADD CONSTRAINT case_participant_private_details_case_participant_id_fkey FOREIGN KEY (case_participant_id) REFERENCES public.case_participants(id) ON DELETE CASCADE;
+
+
+--
 -- Name: case_participant_relationships case_participant_relationships_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16139,6 +16851,22 @@ ALTER TABLE ONLY public.case_petitions_for_review
 
 
 --
+-- Name: case_private_details case_private_details_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_private_details
+    ADD CONSTRAINT case_private_details_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: case_private_details case_private_details_current_status_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_private_details
+    ADD CONSTRAINT case_private_details_current_status_id_fkey FOREIGN KEY (current_status_id) REFERENCES public.case_statuses(id);
+
+
+--
 -- Name: case_status_colors case_status_colors_status_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16240,14 +16968,6 @@ ALTER TABLE ONLY public.cases
 
 ALTER TABLE ONLY public.cases
     ADD CONSTRAINT cases_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id);
-
-
---
--- Name: cases cases_current_status_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.cases
-    ADD CONSTRAINT cases_current_status_id_fkey FOREIGN KEY (current_status_id) REFERENCES public.case_statuses(id);
 
 
 --
@@ -16625,10 +17345,66 @@ ALTER TABLE auth.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.address_types ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: address_types address_types_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY address_types_delete_developer_only ON public.address_types FOR DELETE TO authenticated USING (public.can_delete_seed_data());
+
+
+--
+-- Name: address_types address_types_insert_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY address_types_insert_by_seed_managers ON public.address_types FOR INSERT TO authenticated WITH CHECK (public.can_manage_seed_data());
+
+
+--
+-- Name: address_types address_types_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY address_types_select_for_app_users ON public.address_types FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: address_types address_types_update_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY address_types_update_by_seed_managers ON public.address_types FOR UPDATE TO authenticated USING (public.can_manage_seed_data()) WITH CHECK (public.can_manage_seed_data());
+
+
+--
 -- Name: addresses; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.addresses ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: addresses addresses_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY addresses_delete_developer_only ON public.addresses FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: addresses addresses_insert_by_identity_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY addresses_insert_by_identity_managers ON public.addresses FOR INSERT TO authenticated WITH CHECK (public.can_manage_master_identity_data());
+
+
+--
+-- Name: addresses addresses_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY addresses_select_by_case_access ON public.addresses FOR SELECT TO authenticated USING ((public.can_view_address_details(id) OR public.can_manage_master_identity_data()));
+
+
+--
+-- Name: addresses addresses_update_by_identity_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY addresses_update_by_identity_managers ON public.addresses FOR UPDATE TO authenticated USING (public.can_manage_master_identity_data()) WITH CHECK (public.can_manage_master_identity_data());
+
 
 --
 -- Name: audit_logs; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16637,87 +17413,31 @@ ALTER TABLE public.addresses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: case_assignments auth read case assignments; Type: POLICY; Schema: public; Owner: -
+-- Name: audit_logs audit_logs_delete_developer_only; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "auth read case assignments" ON public.case_assignments FOR SELECT TO authenticated USING (true);
-
-
---
--- Name: case_classifications auth read case classifications; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "auth read case classifications" ON public.case_classifications FOR SELECT TO authenticated USING (true);
+CREATE POLICY audit_logs_delete_developer_only ON public.audit_logs FOR DELETE TO authenticated USING (public.can_manage_system_internal());
 
 
 --
--- Name: case_courts auth read case courts; Type: POLICY; Schema: public; Owner: -
+-- Name: audit_logs audit_logs_insert_developer_only; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "auth read case courts" ON public.case_courts FOR SELECT TO authenticated USING (true);
-
-
---
--- Name: case_events auth read case events; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "auth read case events" ON public.case_events FOR SELECT TO authenticated USING (true);
+CREATE POLICY audit_logs_insert_developer_only ON public.audit_logs FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
 
 
 --
--- Name: case_motions auth read case motions; Type: POLICY; Schema: public; Owner: -
+-- Name: audit_logs audit_logs_select_by_audit_viewers; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "auth read case motions" ON public.case_motions FOR SELECT TO authenticated USING (true);
-
-
---
--- Name: case_participants auth read case participants; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "auth read case participants" ON public.case_participants FOR SELECT TO authenticated USING (true);
+CREATE POLICY audit_logs_select_by_audit_viewers ON public.audit_logs FOR SELECT TO authenticated USING (public.can_view_audit_logs());
 
 
 --
--- Name: case_violations auth read case violations; Type: POLICY; Schema: public; Owner: -
+-- Name: audit_logs audit_logs_update_developer_only; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY "auth read case violations" ON public.case_violations FOR SELECT TO authenticated USING (true);
-
-
---
--- Name: cases auth read cases; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "auth read cases" ON public.cases FOR SELECT TO authenticated USING (true);
-
-
---
--- Name: participant_roles auth read participant roles; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "auth read participant roles" ON public.participant_roles FOR SELECT TO authenticated USING (true);
-
-
---
--- Name: persons auth read persons; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "auth read persons" ON public.persons FOR SELECT TO authenticated USING (true);
-
-
---
--- Name: prosecutors auth read prosecutors; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "auth read prosecutors" ON public.prosecutors FOR SELECT TO authenticated USING (true);
-
-
---
--- Name: violations auth read violations; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "auth read violations" ON public.violations FOR SELECT TO authenticated USING (true);
+CREATE POLICY audit_logs_update_developer_only ON public.audit_logs FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
 
 
 --
@@ -16727,10 +17447,66 @@ CREATE POLICY "auth read violations" ON public.violations FOR SELECT TO authenti
 ALTER TABLE public.case_addresses ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: case_addresses case_addresses_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_addresses_delete_developer_only ON public.case_addresses FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_addresses case_addresses_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_addresses_insert_by_case_access ON public.case_addresses FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: case_addresses case_addresses_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_addresses_select_by_case_access ON public.case_addresses FOR SELECT TO authenticated USING (public.can_view_case_details(case_id));
+
+
+--
+-- Name: case_addresses case_addresses_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_addresses_update_by_case_access ON public.case_addresses FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
 -- Name: case_assignments; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.case_assignments ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_assignments case_assignments_delete_by_assignment_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_assignments_delete_by_assignment_managers ON public.case_assignments FOR DELETE TO authenticated USING (public.can_assign_case());
+
+
+--
+-- Name: case_assignments case_assignments_insert_by_assignment_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_assignments_insert_by_assignment_managers ON public.case_assignments FOR INSERT TO authenticated WITH CHECK (public.can_assign_case());
+
+
+--
+-- Name: case_assignments case_assignments_select_by_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_assignments_select_by_access ON public.case_assignments FOR SELECT TO authenticated USING ((public.can_assign_case() OR public.can_view_case_details(case_id)));
+
+
+--
+-- Name: case_assignments case_assignments_update_by_assignment_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_assignments_update_by_assignment_managers ON public.case_assignments FOR UPDATE TO authenticated USING (public.can_assign_case()) WITH CHECK (public.can_assign_case());
+
 
 --
 -- Name: case_attachment_index; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16739,10 +17515,66 @@ ALTER TABLE public.case_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.case_attachment_index ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: case_attachment_index case_attachment_index_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_attachment_index_delete_developer_only ON public.case_attachment_index FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_attachment_index case_attachment_index_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_attachment_index_insert_by_case_access ON public.case_attachment_index FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: case_attachment_index case_attachment_index_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_attachment_index_select_by_case_access ON public.case_attachment_index FOR SELECT TO authenticated USING (public.can_view_case_details(case_id));
+
+
+--
+-- Name: case_attachment_index case_attachment_index_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_attachment_index_update_by_case_access ON public.case_attachment_index FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
 -- Name: case_classifications; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.case_classifications ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_classifications case_classifications_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_classifications_delete_developer_only ON public.case_classifications FOR DELETE TO authenticated USING (public.can_delete_seed_data());
+
+
+--
+-- Name: case_classifications case_classifications_insert_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_classifications_insert_by_seed_managers ON public.case_classifications FOR INSERT TO authenticated WITH CHECK (public.can_manage_seed_data());
+
+
+--
+-- Name: case_classifications case_classifications_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_classifications_select_for_app_users ON public.case_classifications FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: case_classifications case_classifications_update_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_classifications_update_by_seed_managers ON public.case_classifications FOR UPDATE TO authenticated USING (public.can_manage_seed_data()) WITH CHECK (public.can_manage_seed_data());
+
 
 --
 -- Name: case_courts; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16751,10 +17583,66 @@ ALTER TABLE public.case_classifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.case_courts ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: case_courts case_courts_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_courts_delete_developer_only ON public.case_courts FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_courts case_courts_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_courts_insert_by_case_access ON public.case_courts FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: case_courts case_courts_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_courts_select_by_case_access ON public.case_courts FOR SELECT TO authenticated USING (public.can_view_case_details(case_id));
+
+
+--
+-- Name: case_courts case_courts_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_courts_update_by_case_access ON public.case_courts FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
 -- Name: case_event_types; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.case_event_types ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_event_types case_event_types_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_event_types_delete_developer_only ON public.case_event_types FOR DELETE TO authenticated USING (public.can_delete_seed_data());
+
+
+--
+-- Name: case_event_types case_event_types_insert_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_event_types_insert_by_seed_managers ON public.case_event_types FOR INSERT TO authenticated WITH CHECK (public.can_manage_seed_data());
+
+
+--
+-- Name: case_event_types case_event_types_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_event_types_select_for_app_users ON public.case_event_types FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: case_event_types case_event_types_update_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_event_types_update_by_seed_managers ON public.case_event_types FOR UPDATE TO authenticated USING (public.can_manage_seed_data()) WITH CHECK (public.can_manage_seed_data());
+
 
 --
 -- Name: case_events; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16763,10 +17651,66 @@ ALTER TABLE public.case_event_types ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.case_events ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: case_events case_events_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_events_delete_developer_only ON public.case_events FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_events case_events_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_events_insert_by_case_access ON public.case_events FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: case_events case_events_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_events_select_by_case_access ON public.case_events FOR SELECT TO authenticated USING (public.can_view_case_details(case_id));
+
+
+--
+-- Name: case_events case_events_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_events_update_by_case_access ON public.case_events FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
 -- Name: case_legacy_attributes; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.case_legacy_attributes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_legacy_attributes case_legacy_attributes_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_legacy_attributes_delete_developer_only ON public.case_legacy_attributes FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_legacy_attributes case_legacy_attributes_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_legacy_attributes_insert_by_case_access ON public.case_legacy_attributes FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details((case_id)::bigint));
+
+
+--
+-- Name: case_legacy_attributes case_legacy_attributes_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_legacy_attributes_select_by_case_access ON public.case_legacy_attributes FOR SELECT TO authenticated USING (public.can_view_case_details((case_id)::bigint));
+
+
+--
+-- Name: case_legacy_attributes case_legacy_attributes_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_legacy_attributes_update_by_case_access ON public.case_legacy_attributes FOR UPDATE TO authenticated USING (public.can_edit_case_details((case_id)::bigint)) WITH CHECK (public.can_edit_case_details((case_id)::bigint));
+
 
 --
 -- Name: case_motions; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16775,10 +17719,100 @@ ALTER TABLE public.case_legacy_attributes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.case_motions ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: case_motions case_motions_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_motions_delete_developer_only ON public.case_motions FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_motions case_motions_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_motions_insert_by_case_access ON public.case_motions FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: case_motions case_motions_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_motions_select_by_case_access ON public.case_motions FOR SELECT TO authenticated USING (public.can_view_case_details(case_id));
+
+
+--
+-- Name: case_motions case_motions_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_motions_update_by_case_access ON public.case_motions FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
 -- Name: case_participant_attributes; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.case_participant_attributes ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_participant_attributes case_participant_attributes_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participant_attributes_delete_developer_only ON public.case_participant_attributes FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_participant_attributes case_participant_attributes_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participant_attributes_insert_by_case_access ON public.case_participant_attributes FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_participant_details((case_participant_id)::bigint));
+
+
+--
+-- Name: case_participant_attributes case_participant_attributes_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participant_attributes_select_by_case_access ON public.case_participant_attributes FOR SELECT TO authenticated USING (public.can_view_case_participant_details((case_participant_id)::bigint));
+
+
+--
+-- Name: case_participant_attributes case_participant_attributes_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participant_attributes_update_by_case_access ON public.case_participant_attributes FOR UPDATE TO authenticated USING (public.can_edit_case_participant_details((case_participant_id)::bigint)) WITH CHECK (public.can_edit_case_participant_details((case_participant_id)::bigint));
+
+
+--
+-- Name: case_participant_private_details; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.case_participant_private_details ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_participant_private_details case_participant_private_details_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participant_private_details_delete_developer_only ON public.case_participant_private_details FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_participant_private_details case_participant_private_details_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participant_private_details_insert_by_case_access ON public.case_participant_private_details FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: case_participant_private_details case_participant_private_details_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participant_private_details_select_by_case_access ON public.case_participant_private_details FOR SELECT TO authenticated USING (public.can_view_case_details(case_id));
+
+
+--
+-- Name: case_participant_private_details case_participant_private_details_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participant_private_details_update_by_case_access ON public.case_participant_private_details FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
 
 --
 -- Name: case_participant_relationships; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16787,10 +17821,66 @@ ALTER TABLE public.case_participant_attributes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.case_participant_relationships ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: case_participant_relationships case_participant_relationships_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participant_relationships_delete_developer_only ON public.case_participant_relationships FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_participant_relationships case_participant_relationships_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participant_relationships_insert_by_case_access ON public.case_participant_relationships FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details((case_id)::bigint));
+
+
+--
+-- Name: case_participant_relationships case_participant_relationships_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participant_relationships_select_by_case_access ON public.case_participant_relationships FOR SELECT TO authenticated USING (public.can_view_case_details((case_id)::bigint));
+
+
+--
+-- Name: case_participant_relationships case_participant_relationships_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participant_relationships_update_by_case_access ON public.case_participant_relationships FOR UPDATE TO authenticated USING (public.can_edit_case_details((case_id)::bigint)) WITH CHECK (public.can_edit_case_details((case_id)::bigint));
+
+
+--
 -- Name: case_participants; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.case_participants ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_participants case_participants_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participants_delete_developer_only ON public.case_participants FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_participants case_participants_insert_by_case_editors; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participants_insert_by_case_editors ON public.case_participants FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: case_participants case_participants_select_header_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participants_select_header_for_app_users ON public.case_participants FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: case_participants case_participants_update_by_case_editors; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_participants_update_by_case_editors ON public.case_participants FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
 
 --
 -- Name: case_petitions_for_review; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16799,10 +17889,100 @@ ALTER TABLE public.case_participants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.case_petitions_for_review ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: case_petitions_for_review case_petitions_for_review_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_petitions_for_review_delete_developer_only ON public.case_petitions_for_review FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_petitions_for_review case_petitions_for_review_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_petitions_for_review_insert_by_case_access ON public.case_petitions_for_review FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: case_petitions_for_review case_petitions_for_review_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_petitions_for_review_select_by_case_access ON public.case_petitions_for_review FOR SELECT TO authenticated USING (public.can_view_case_details(case_id));
+
+
+--
+-- Name: case_petitions_for_review case_petitions_for_review_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_petitions_for_review_update_by_case_access ON public.case_petitions_for_review FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: case_private_details; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.case_private_details ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_private_details case_private_details_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_private_details_delete_developer_only ON public.case_private_details FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_private_details case_private_details_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_private_details_insert_by_case_access ON public.case_private_details FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: case_private_details case_private_details_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_private_details_select_by_case_access ON public.case_private_details FOR SELECT TO authenticated USING (public.can_view_case_details(case_id));
+
+
+--
+-- Name: case_private_details case_private_details_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_private_details_update_by_case_access ON public.case_private_details FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
 -- Name: case_status_colors; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.case_status_colors ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_status_colors case_status_colors_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_status_colors_delete_developer_only ON public.case_status_colors FOR DELETE TO authenticated USING (public.can_delete_seed_data());
+
+
+--
+-- Name: case_status_colors case_status_colors_insert_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_status_colors_insert_by_seed_managers ON public.case_status_colors FOR INSERT TO authenticated WITH CHECK (public.can_manage_seed_data());
+
+
+--
+-- Name: case_status_colors case_status_colors_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_status_colors_select_for_app_users ON public.case_status_colors FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: case_status_colors case_status_colors_update_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_status_colors_update_by_seed_managers ON public.case_status_colors FOR UPDATE TO authenticated USING (public.can_manage_seed_data()) WITH CHECK (public.can_manage_seed_data());
+
 
 --
 -- Name: case_status_history; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16811,10 +17991,66 @@ ALTER TABLE public.case_status_colors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.case_status_history ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: case_status_history case_status_history_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_status_history_delete_developer_only ON public.case_status_history FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_status_history case_status_history_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_status_history_insert_by_case_access ON public.case_status_history FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: case_status_history case_status_history_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_status_history_select_by_case_access ON public.case_status_history FOR SELECT TO authenticated USING (public.can_view_case_details(case_id));
+
+
+--
+-- Name: case_status_history case_status_history_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_status_history_update_by_case_access ON public.case_status_history FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
 -- Name: case_statuses; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.case_statuses ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_statuses case_statuses_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_statuses_delete_developer_only ON public.case_statuses FOR DELETE TO authenticated USING (public.can_delete_seed_data());
+
+
+--
+-- Name: case_statuses case_statuses_insert_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_statuses_insert_by_seed_managers ON public.case_statuses FOR INSERT TO authenticated WITH CHECK (public.can_manage_seed_data());
+
+
+--
+-- Name: case_statuses case_statuses_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_statuses_select_for_app_users ON public.case_statuses FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: case_statuses case_statuses_update_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_statuses_update_by_seed_managers ON public.case_statuses FOR UPDATE TO authenticated USING (public.can_manage_seed_data()) WITH CHECK (public.can_manage_seed_data());
+
 
 --
 -- Name: case_violations; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16823,10 +18059,66 @@ ALTER TABLE public.case_statuses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.case_violations ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: case_violations case_violations_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_violations_delete_developer_only ON public.case_violations FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_violations case_violations_insert_by_case_editors; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_violations_insert_by_case_editors ON public.case_violations FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: case_violations case_violations_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_violations_select_for_app_users ON public.case_violations FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: case_violations case_violations_update_by_case_editors; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_violations_update_by_case_editors ON public.case_violations FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
 -- Name: case_witness_details; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.case_witness_details ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_witness_details case_witness_details_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_witness_details_delete_developer_only ON public.case_witness_details FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: case_witness_details case_witness_details_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_witness_details_insert_by_case_access ON public.case_witness_details FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_participant_details((case_participant_id)::bigint));
+
+
+--
+-- Name: case_witness_details case_witness_details_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_witness_details_select_by_case_access ON public.case_witness_details FOR SELECT TO authenticated USING (public.can_view_case_participant_details((case_participant_id)::bigint));
+
+
+--
+-- Name: case_witness_details case_witness_details_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_witness_details_update_by_case_access ON public.case_witness_details FOR UPDATE TO authenticated USING (public.can_edit_case_participant_details((case_participant_id)::bigint)) WITH CHECK (public.can_edit_case_participant_details((case_participant_id)::bigint));
+
 
 --
 -- Name: cases; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16835,10 +18127,134 @@ ALTER TABLE public.case_witness_details ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cases ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: cases cases_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cases_delete_developer_only ON public.cases FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: cases cases_insert_by_case_creators; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cases_insert_by_case_creators ON public.cases FOR INSERT TO authenticated WITH CHECK (public.can_create_case());
+
+
+--
+-- Name: cases cases_select_header_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cases_select_header_for_app_users ON public.cases FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: cases cases_update_by_case_header_editors; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY cases_update_by_case_header_editors ON public.cases FOR UPDATE TO authenticated USING (public.can_edit_case_header()) WITH CHECK (public.can_edit_case_header());
+
+
+--
+-- Name: clearance_phonetic_name_tokens; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.clearance_phonetic_name_tokens ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: clearance_phonetic_name_tokens clearance_phonetic_name_tokens_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY clearance_phonetic_name_tokens_delete_developer_only ON public.clearance_phonetic_name_tokens FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: clearance_phonetic_name_tokens clearance_phonetic_name_tokens_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY clearance_phonetic_name_tokens_insert_developer_only ON public.clearance_phonetic_name_tokens FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: clearance_phonetic_name_tokens clearance_phonetic_name_tokens_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY clearance_phonetic_name_tokens_select_developer_only ON public.clearance_phonetic_name_tokens FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: clearance_phonetic_name_tokens clearance_phonetic_name_tokens_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY clearance_phonetic_name_tokens_update_developer_only ON public.clearance_phonetic_name_tokens FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: clearance_possible_name_tokens; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.clearance_possible_name_tokens ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: clearance_possible_name_tokens clearance_possible_name_tokens_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY clearance_possible_name_tokens_delete_developer_only ON public.clearance_possible_name_tokens FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: clearance_possible_name_tokens clearance_possible_name_tokens_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY clearance_possible_name_tokens_insert_developer_only ON public.clearance_possible_name_tokens FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: clearance_possible_name_tokens clearance_possible_name_tokens_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY clearance_possible_name_tokens_select_developer_only ON public.clearance_possible_name_tokens FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: clearance_possible_name_tokens clearance_possible_name_tokens_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY clearance_possible_name_tokens_update_developer_only ON public.clearance_possible_name_tokens FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
+
+--
 -- Name: courts; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.courts ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: courts courts_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY courts_delete_developer_only ON public.courts FOR DELETE TO authenticated USING (public.can_delete_seed_data());
+
+
+--
+-- Name: courts courts_insert_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY courts_insert_by_seed_managers ON public.courts FOR INSERT TO authenticated WITH CHECK (public.can_manage_seed_data());
+
+
+--
+-- Name: courts courts_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY courts_select_for_app_users ON public.courts FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: courts courts_update_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY courts_update_by_seed_managers ON public.courts FOR UPDATE TO authenticated USING (public.can_manage_seed_data()) WITH CHECK (public.can_manage_seed_data());
+
 
 --
 -- Name: docket_number_history; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16847,10 +18263,66 @@ ALTER TABLE public.courts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.docket_number_history ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: docket_number_history docket_number_history_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY docket_number_history_delete_developer_only ON public.docket_number_history FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: docket_number_history docket_number_history_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY docket_number_history_insert_by_case_access ON public.docket_number_history FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: docket_number_history docket_number_history_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY docket_number_history_select_by_case_access ON public.docket_number_history FOR SELECT TO authenticated USING (public.can_view_case_details(case_id));
+
+
+--
+-- Name: docket_number_history docket_number_history_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY docket_number_history_update_by_case_access ON public.docket_number_history FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
 -- Name: docket_sequence_counters; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.docket_sequence_counters ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: docket_sequence_counters docket_sequence_counters_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY docket_sequence_counters_delete_developer_only ON public.docket_sequence_counters FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: docket_sequence_counters docket_sequence_counters_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY docket_sequence_counters_insert_developer_only ON public.docket_sequence_counters FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: docket_sequence_counters docket_sequence_counters_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY docket_sequence_counters_select_developer_only ON public.docket_sequence_counters FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: docket_sequence_counters docket_sequence_counters_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY docket_sequence_counters_update_developer_only ON public.docket_sequence_counters FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
 
 --
 -- Name: docket_types; Type: ROW SECURITY; Schema: public; Owner: -
@@ -16859,597 +18331,65 @@ ALTER TABLE public.docket_sequence_counters ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.docket_types ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: docket_types docket_types_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY docket_types_delete_developer_only ON public.docket_types FOR DELETE TO authenticated USING (public.can_delete_seed_data());
+
+
+--
+-- Name: docket_types docket_types_insert_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY docket_types_insert_by_seed_managers ON public.docket_types FOR INSERT TO authenticated WITH CHECK (public.can_manage_seed_data());
+
+
+--
+-- Name: docket_types docket_types_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY docket_types_select_for_app_users ON public.docket_types FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: docket_types docket_types_update_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY docket_types_update_by_seed_managers ON public.docket_types FOR UPDATE TO authenticated USING (public.can_manage_seed_data()) WITH CHECK (public.can_manage_seed_data());
+
+
+--
 -- Name: migration_review_items; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.migration_review_items ENABLE ROW LEVEL SECURITY;
 
 --
--- Name: address_types mvp_admin_write_address_types; Type: POLICY; Schema: public; Owner: -
+-- Name: migration_review_items migration_review_items_delete_developer_only; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY mvp_admin_write_address_types ON public.address_types TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
+CREATE POLICY migration_review_items_delete_developer_only ON public.migration_review_items FOR DELETE TO authenticated USING (public.can_manage_system_internal());
 
 
 --
--- Name: addresses mvp_admin_write_addresses; Type: POLICY; Schema: public; Owner: -
+-- Name: migration_review_items migration_review_items_insert_developer_only; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY mvp_admin_write_addresses ON public.addresses TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
+CREATE POLICY migration_review_items_insert_developer_only ON public.migration_review_items FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
 
 
 --
--- Name: audit_logs mvp_admin_write_audit_logs; Type: POLICY; Schema: public; Owner: -
+-- Name: migration_review_items migration_review_items_select_developer_only; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY mvp_admin_write_audit_logs ON public.audit_logs TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
+CREATE POLICY migration_review_items_select_developer_only ON public.migration_review_items FOR SELECT TO authenticated USING (public.can_manage_system_internal());
 
 
 --
--- Name: case_addresses mvp_admin_write_case_addresses; Type: POLICY; Schema: public; Owner: -
+-- Name: migration_review_items migration_review_items_update_developer_only; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY mvp_admin_write_case_addresses ON public.case_addresses TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_assignments mvp_admin_write_case_assignments; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_assignments ON public.case_assignments TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_attachment_index mvp_admin_write_case_attachment_index; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_attachment_index ON public.case_attachment_index TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_classifications mvp_admin_write_case_classifications; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_classifications ON public.case_classifications TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_courts mvp_admin_write_case_courts; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_courts ON public.case_courts TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_event_types mvp_admin_write_case_event_types; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_event_types ON public.case_event_types TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_events mvp_admin_write_case_events; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_events ON public.case_events TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_legacy_attributes mvp_admin_write_case_legacy_attributes; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_legacy_attributes ON public.case_legacy_attributes TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_motions mvp_admin_write_case_motions; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_motions ON public.case_motions TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_participant_attributes mvp_admin_write_case_participant_attributes; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_participant_attributes ON public.case_participant_attributes TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_participant_relationships mvp_admin_write_case_participant_relationships; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_participant_relationships ON public.case_participant_relationships TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_participants mvp_admin_write_case_participants; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_participants ON public.case_participants TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_petitions_for_review mvp_admin_write_case_petitions_for_review; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_petitions_for_review ON public.case_petitions_for_review TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_status_colors mvp_admin_write_case_status_colors; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_status_colors ON public.case_status_colors TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_status_history mvp_admin_write_case_status_history; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_status_history ON public.case_status_history TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_statuses mvp_admin_write_case_statuses; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_statuses ON public.case_statuses TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_violations mvp_admin_write_case_violations; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_violations ON public.case_violations TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: case_witness_details mvp_admin_write_case_witness_details; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_case_witness_details ON public.case_witness_details TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: cases mvp_admin_write_cases; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_cases ON public.cases TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: courts mvp_admin_write_courts; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_courts ON public.courts TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: docket_number_history mvp_admin_write_docket_number_history; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_docket_number_history ON public.docket_number_history TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: docket_sequence_counters mvp_admin_write_docket_sequence_counters; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_docket_sequence_counters ON public.docket_sequence_counters TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: docket_types mvp_admin_write_docket_types; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_docket_types ON public.docket_types TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: migration_review_items mvp_admin_write_migration_review_items; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_migration_review_items ON public.migration_review_items TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: notes mvp_admin_write_notes; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_notes ON public.notes TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: organization_aliases mvp_admin_write_organization_aliases; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_organization_aliases ON public.organization_aliases TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: organizations mvp_admin_write_organizations; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_organizations ON public.organizations TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: participant_roles mvp_admin_write_participant_roles; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_participant_roles ON public.participant_roles TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: person_addresses mvp_admin_write_person_addresses; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_person_addresses ON public.person_addresses TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: person_aliases mvp_admin_write_person_aliases; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_person_aliases ON public.person_aliases TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: persons mvp_admin_write_persons; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_persons ON public.persons TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: positions mvp_admin_write_positions; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_positions ON public.positions TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: prosecutor_staff_assignments mvp_admin_write_prosecutor_staff_assignments; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_prosecutor_staff_assignments ON public.prosecutor_staff_assignments TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: prosecutors mvp_admin_write_prosecutors; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_prosecutors ON public.prosecutors TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: roles mvp_admin_write_roles; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_roles ON public.roles TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: staff mvp_admin_write_staff; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_staff ON public.staff TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: user_roles mvp_admin_write_user_roles; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_user_roles ON public.user_roles TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: users mvp_admin_write_users; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_users ON public.users TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: violations mvp_admin_write_violations; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_admin_write_violations ON public.violations TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin());
-
-
---
--- Name: address_types mvp_read_address_types; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_address_types ON public.address_types FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: addresses mvp_read_addresses; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_addresses ON public.addresses FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: audit_logs mvp_read_audit_logs; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_audit_logs ON public.audit_logs FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_addresses mvp_read_case_addresses; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_addresses ON public.case_addresses FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_assignments mvp_read_case_assignments; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_assignments ON public.case_assignments FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_attachment_index mvp_read_case_attachment_index; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_attachment_index ON public.case_attachment_index FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_classifications mvp_read_case_classifications; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_classifications ON public.case_classifications FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_courts mvp_read_case_courts; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_courts ON public.case_courts FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_event_types mvp_read_case_event_types; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_event_types ON public.case_event_types FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_events mvp_read_case_events; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_events ON public.case_events FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_legacy_attributes mvp_read_case_legacy_attributes; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_legacy_attributes ON public.case_legacy_attributes FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_motions mvp_read_case_motions; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_motions ON public.case_motions FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_participant_attributes mvp_read_case_participant_attributes; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_participant_attributes ON public.case_participant_attributes FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_participant_relationships mvp_read_case_participant_relationships; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_participant_relationships ON public.case_participant_relationships FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_participants mvp_read_case_participants; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_participants ON public.case_participants FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_petitions_for_review mvp_read_case_petitions_for_review; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_petitions_for_review ON public.case_petitions_for_review FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_status_colors mvp_read_case_status_colors; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_status_colors ON public.case_status_colors FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_status_history mvp_read_case_status_history; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_status_history ON public.case_status_history FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_statuses mvp_read_case_statuses; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_statuses ON public.case_statuses FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_violations mvp_read_case_violations; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_violations ON public.case_violations FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: case_witness_details mvp_read_case_witness_details; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_case_witness_details ON public.case_witness_details FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: cases mvp_read_cases; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_cases ON public.cases FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: courts mvp_read_courts; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_courts ON public.courts FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: docket_number_history mvp_read_docket_number_history; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_docket_number_history ON public.docket_number_history FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: docket_sequence_counters mvp_read_docket_sequence_counters; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_docket_sequence_counters ON public.docket_sequence_counters FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: docket_types mvp_read_docket_types; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_docket_types ON public.docket_types FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: migration_review_items mvp_read_migration_review_items; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_migration_review_items ON public.migration_review_items FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: notes mvp_read_notes; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_notes ON public.notes FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: organization_aliases mvp_read_organization_aliases; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_organization_aliases ON public.organization_aliases FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: organizations mvp_read_organizations; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_organizations ON public.organizations FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: participant_roles mvp_read_participant_roles; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_participant_roles ON public.participant_roles FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: person_addresses mvp_read_person_addresses; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_person_addresses ON public.person_addresses FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: person_aliases mvp_read_person_aliases; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_person_aliases ON public.person_aliases FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: persons mvp_read_persons; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_persons ON public.persons FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: positions mvp_read_positions; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_positions ON public.positions FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: prosecutor_staff_assignments mvp_read_prosecutor_staff_assignments; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_prosecutor_staff_assignments ON public.prosecutor_staff_assignments FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: prosecutors mvp_read_prosecutors; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_prosecutors ON public.prosecutors FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: roles mvp_read_roles; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_roles ON public.roles FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: staff mvp_read_staff; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_staff ON public.staff FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: user_roles mvp_read_user_roles; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_user_roles ON public.user_roles FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: users mvp_read_users; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_users ON public.users FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
-
-
---
--- Name: violations mvp_read_violations; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY mvp_read_violations ON public.violations FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+CREATE POLICY migration_review_items_update_developer_only ON public.migration_review_items FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
 
 
 --
@@ -17459,10 +18399,66 @@ CREATE POLICY mvp_read_violations ON public.violations FOR SELECT TO authenticat
 ALTER TABLE public.notes ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: notes notes_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY notes_delete_developer_only ON public.notes FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: notes notes_insert_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY notes_insert_by_case_access ON public.notes FOR INSERT TO authenticated WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
+-- Name: notes notes_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY notes_select_by_case_access ON public.notes FOR SELECT TO authenticated USING (public.can_view_case_details(case_id));
+
+
+--
+-- Name: notes notes_update_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY notes_update_by_case_access ON public.notes FOR UPDATE TO authenticated USING (public.can_edit_case_details(case_id)) WITH CHECK (public.can_edit_case_details(case_id));
+
+
+--
 -- Name: organization_aliases; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.organization_aliases ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: organization_aliases organization_aliases_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY organization_aliases_delete_developer_only ON public.organization_aliases FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: organization_aliases organization_aliases_insert_by_identity_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY organization_aliases_insert_by_identity_managers ON public.organization_aliases FOR INSERT TO authenticated WITH CHECK (public.can_manage_master_identity_data());
+
+
+--
+-- Name: organization_aliases organization_aliases_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY organization_aliases_select_by_case_access ON public.organization_aliases FOR SELECT TO authenticated USING ((public.can_view_organization_details(organization_id) OR public.can_manage_master_identity_data()));
+
+
+--
+-- Name: organization_aliases organization_aliases_update_by_identity_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY organization_aliases_update_by_identity_managers ON public.organization_aliases FOR UPDATE TO authenticated USING (public.can_manage_master_identity_data()) WITH CHECK (public.can_manage_master_identity_data());
+
 
 --
 -- Name: organizations; Type: ROW SECURITY; Schema: public; Owner: -
@@ -17471,10 +18467,66 @@ ALTER TABLE public.organization_aliases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: organizations organizations_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY organizations_delete_developer_only ON public.organizations FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: organizations organizations_insert_by_identity_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY organizations_insert_by_identity_managers ON public.organizations FOR INSERT TO authenticated WITH CHECK (public.can_manage_master_identity_data());
+
+
+--
+-- Name: organizations organizations_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY organizations_select_by_case_access ON public.organizations FOR SELECT TO authenticated USING ((public.can_view_organization_details(id) OR public.can_manage_master_identity_data()));
+
+
+--
+-- Name: organizations organizations_update_by_identity_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY organizations_update_by_identity_managers ON public.organizations FOR UPDATE TO authenticated USING (public.can_manage_master_identity_data()) WITH CHECK (public.can_manage_master_identity_data());
+
+
+--
 -- Name: participant_roles; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.participant_roles ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: participant_roles participant_roles_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY participant_roles_delete_developer_only ON public.participant_roles FOR DELETE TO authenticated USING (public.can_delete_seed_data());
+
+
+--
+-- Name: participant_roles participant_roles_insert_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY participant_roles_insert_by_seed_managers ON public.participant_roles FOR INSERT TO authenticated WITH CHECK (public.can_manage_seed_data());
+
+
+--
+-- Name: participant_roles participant_roles_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY participant_roles_select_for_app_users ON public.participant_roles FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: participant_roles participant_roles_update_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY participant_roles_update_by_seed_managers ON public.participant_roles FOR UPDATE TO authenticated USING (public.can_manage_seed_data()) WITH CHECK (public.can_manage_seed_data());
+
 
 --
 -- Name: person_addresses; Type: ROW SECURITY; Schema: public; Owner: -
@@ -17483,10 +18535,66 @@ ALTER TABLE public.participant_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.person_addresses ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: person_addresses person_addresses_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY person_addresses_delete_developer_only ON public.person_addresses FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: person_addresses person_addresses_insert_by_identity_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY person_addresses_insert_by_identity_managers ON public.person_addresses FOR INSERT TO authenticated WITH CHECK (public.can_manage_master_identity_data());
+
+
+--
+-- Name: person_addresses person_addresses_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY person_addresses_select_by_case_access ON public.person_addresses FOR SELECT TO authenticated USING ((public.can_view_person_details(person_id) OR public.can_manage_master_identity_data()));
+
+
+--
+-- Name: person_addresses person_addresses_update_by_identity_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY person_addresses_update_by_identity_managers ON public.person_addresses FOR UPDATE TO authenticated USING (public.can_manage_master_identity_data()) WITH CHECK (public.can_manage_master_identity_data());
+
+
+--
 -- Name: person_aliases; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.person_aliases ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: person_aliases person_aliases_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY person_aliases_delete_developer_only ON public.person_aliases FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: person_aliases person_aliases_insert_by_identity_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY person_aliases_insert_by_identity_managers ON public.person_aliases FOR INSERT TO authenticated WITH CHECK (public.can_manage_master_identity_data());
+
+
+--
+-- Name: person_aliases person_aliases_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY person_aliases_select_by_case_access ON public.person_aliases FOR SELECT TO authenticated USING ((public.can_view_person_details(person_id) OR public.can_manage_master_identity_data()));
+
+
+--
+-- Name: person_aliases person_aliases_update_by_identity_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY person_aliases_update_by_identity_managers ON public.person_aliases FOR UPDATE TO authenticated USING (public.can_manage_master_identity_data()) WITH CHECK (public.can_manage_master_identity_data());
+
 
 --
 -- Name: persons; Type: ROW SECURITY; Schema: public; Owner: -
@@ -17495,10 +18603,66 @@ ALTER TABLE public.person_aliases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.persons ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: persons persons_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY persons_delete_developer_only ON public.persons FOR DELETE TO authenticated USING (public.can_delete_case());
+
+
+--
+-- Name: persons persons_insert_by_identity_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY persons_insert_by_identity_managers ON public.persons FOR INSERT TO authenticated WITH CHECK (public.can_manage_master_identity_data());
+
+
+--
+-- Name: persons persons_select_by_case_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY persons_select_by_case_access ON public.persons FOR SELECT TO authenticated USING ((public.can_view_person_details(id) OR public.can_manage_master_identity_data()));
+
+
+--
+-- Name: persons persons_update_by_identity_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY persons_update_by_identity_managers ON public.persons FOR UPDATE TO authenticated USING (public.can_manage_master_identity_data()) WITH CHECK (public.can_manage_master_identity_data());
+
+
+--
 -- Name: positions; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.positions ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: positions positions_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY positions_delete_developer_only ON public.positions FOR DELETE TO authenticated USING (public.can_delete_seed_data());
+
+
+--
+-- Name: positions positions_insert_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY positions_insert_by_seed_managers ON public.positions FOR INSERT TO authenticated WITH CHECK (public.can_manage_seed_data());
+
+
+--
+-- Name: positions positions_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY positions_select_for_app_users ON public.positions FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: positions positions_update_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY positions_update_by_seed_managers ON public.positions FOR UPDATE TO authenticated USING (public.can_manage_seed_data()) WITH CHECK (public.can_manage_seed_data());
+
 
 --
 -- Name: prosecutor_staff_assignments; Type: ROW SECURITY; Schema: public; Owner: -
@@ -17507,10 +18671,66 @@ ALTER TABLE public.positions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.prosecutor_staff_assignments ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: prosecutor_staff_assignments prosecutor_staff_assignments_delete_by_user_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY prosecutor_staff_assignments_delete_by_user_managers ON public.prosecutor_staff_assignments FOR DELETE TO authenticated USING (public.can_manage_users());
+
+
+--
+-- Name: prosecutor_staff_assignments prosecutor_staff_assignments_insert_by_user_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY prosecutor_staff_assignments_insert_by_user_managers ON public.prosecutor_staff_assignments FOR INSERT TO authenticated WITH CHECK (public.can_manage_users());
+
+
+--
+-- Name: prosecutor_staff_assignments prosecutor_staff_assignments_select_by_access; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY prosecutor_staff_assignments_select_by_access ON public.prosecutor_staff_assignments FOR SELECT TO authenticated USING ((public.can_manage_users() OR (prosecutor_id = public.current_app_prosecutor_id()) OR (staff_id = public.current_app_staff_id())));
+
+
+--
+-- Name: prosecutor_staff_assignments prosecutor_staff_assignments_update_by_user_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY prosecutor_staff_assignments_update_by_user_managers ON public.prosecutor_staff_assignments FOR UPDATE TO authenticated USING (public.can_manage_users()) WITH CHECK (public.can_manage_users());
+
+
+--
 -- Name: prosecutors; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.prosecutors ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: prosecutors prosecutors_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY prosecutors_delete_developer_only ON public.prosecutors FOR DELETE TO authenticated USING (public.has_app_role('DEVELOPER'::text));
+
+
+--
+-- Name: prosecutors prosecutors_insert_by_user_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY prosecutors_insert_by_user_managers ON public.prosecutors FOR INSERT TO authenticated WITH CHECK (public.can_manage_users());
+
+
+--
+-- Name: prosecutors prosecutors_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY prosecutors_select_for_app_users ON public.prosecutors FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: prosecutors prosecutors_update_by_user_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY prosecutors_update_by_user_managers ON public.prosecutors FOR UPDATE TO authenticated USING (public.can_manage_users()) WITH CHECK (public.can_manage_users());
+
 
 --
 -- Name: roles; Type: ROW SECURITY; Schema: public; Owner: -
@@ -17519,10 +18739,406 @@ ALTER TABLE public.prosecutors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.roles ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: roles roles_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY roles_delete_developer_only ON public.roles FOR DELETE TO authenticated USING (public.has_app_role('DEVELOPER'::text));
+
+
+--
+-- Name: roles roles_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY roles_insert_developer_only ON public.roles FOR INSERT TO authenticated WITH CHECK (public.has_app_role('DEVELOPER'::text));
+
+
+--
+-- Name: roles roles_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY roles_select_for_app_users ON public.roles FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: roles roles_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY roles_update_developer_only ON public.roles FOR UPDATE TO authenticated USING (public.has_app_role('DEVELOPER'::text)) WITH CHECK (public.has_app_role('DEVELOPER'::text));
+
+
+--
 -- Name: staff; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.staff ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: staff staff_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_delete_developer_only ON public.staff FOR DELETE TO authenticated USING (public.has_app_role('DEVELOPER'::text));
+
+
+--
+-- Name: staff staff_insert_by_user_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_insert_by_user_managers ON public.staff FOR INSERT TO authenticated WITH CHECK (public.can_manage_users());
+
+
+--
+-- Name: staff staff_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_select_for_app_users ON public.staff FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: staff staff_update_by_user_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staff_update_by_user_managers ON public.staff FOR UPDATE TO authenticated USING (public.can_manage_users()) WITH CHECK (public.can_manage_users());
+
+
+--
+-- Name: staging_dc2025_normalized_rows; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.staging_dc2025_normalized_rows ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: staging_dc2025_normalized_rows staging_dc2025_normalized_rows_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_dc2025_normalized_rows_delete_developer_only ON public.staging_dc2025_normalized_rows FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_dc2025_normalized_rows staging_dc2025_normalized_rows_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_dc2025_normalized_rows_insert_developer_only ON public.staging_dc2025_normalized_rows FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_dc2025_normalized_rows staging_dc2025_normalized_rows_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_dc2025_normalized_rows_select_developer_only ON public.staging_dc2025_normalized_rows FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_dc2025_normalized_rows staging_dc2025_normalized_rows_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_dc2025_normalized_rows_update_developer_only ON public.staging_dc2025_normalized_rows FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2022_normalized_rows; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.staging_inq2022_normalized_rows ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: staging_inq2022_normalized_rows staging_inq2022_normalized_rows_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2022_normalized_rows_delete_developer_only ON public.staging_inq2022_normalized_rows FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2022_normalized_rows staging_inq2022_normalized_rows_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2022_normalized_rows_insert_developer_only ON public.staging_inq2022_normalized_rows FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2022_normalized_rows staging_inq2022_normalized_rows_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2022_normalized_rows_select_developer_only ON public.staging_inq2022_normalized_rows FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2022_normalized_rows staging_inq2022_normalized_rows_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2022_normalized_rows_update_developer_only ON public.staging_inq2022_normalized_rows FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2023_normalized_rows; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.staging_inq2023_normalized_rows ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: staging_inq2023_normalized_rows staging_inq2023_normalized_rows_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2023_normalized_rows_delete_developer_only ON public.staging_inq2023_normalized_rows FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2023_normalized_rows staging_inq2023_normalized_rows_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2023_normalized_rows_insert_developer_only ON public.staging_inq2023_normalized_rows FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2023_normalized_rows staging_inq2023_normalized_rows_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2023_normalized_rows_select_developer_only ON public.staging_inq2023_normalized_rows FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2023_normalized_rows staging_inq2023_normalized_rows_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2023_normalized_rows_update_developer_only ON public.staging_inq2023_normalized_rows FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2024_normalized_rows; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.staging_inq2024_normalized_rows ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: staging_inq2024_normalized_rows staging_inq2024_normalized_rows_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2024_normalized_rows_delete_developer_only ON public.staging_inq2024_normalized_rows FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2024_normalized_rows staging_inq2024_normalized_rows_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2024_normalized_rows_insert_developer_only ON public.staging_inq2024_normalized_rows FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2024_normalized_rows staging_inq2024_normalized_rows_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2024_normalized_rows_select_developer_only ON public.staging_inq2024_normalized_rows FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2024_normalized_rows staging_inq2024_normalized_rows_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2024_normalized_rows_update_developer_only ON public.staging_inq2024_normalized_rows FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2025_normalized_rows; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.staging_inq2025_normalized_rows ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: staging_inq2025_normalized_rows staging_inq2025_normalized_rows_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2025_normalized_rows_delete_developer_only ON public.staging_inq2025_normalized_rows FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2025_normalized_rows staging_inq2025_normalized_rows_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2025_normalized_rows_insert_developer_only ON public.staging_inq2025_normalized_rows FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2025_normalized_rows staging_inq2025_normalized_rows_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2025_normalized_rows_select_developer_only ON public.staging_inq2025_normalized_rows FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inq2025_normalized_rows staging_inq2025_normalized_rows_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inq2025_normalized_rows_update_developer_only ON public.staging_inq2025_normalized_rows FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2022b_normalized_rows; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.staging_inv2022b_normalized_rows ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: staging_inv2022b_normalized_rows staging_inv2022b_normalized_rows_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2022b_normalized_rows_delete_developer_only ON public.staging_inv2022b_normalized_rows FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2022b_normalized_rows staging_inv2022b_normalized_rows_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2022b_normalized_rows_insert_developer_only ON public.staging_inv2022b_normalized_rows FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2022b_normalized_rows staging_inv2022b_normalized_rows_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2022b_normalized_rows_select_developer_only ON public.staging_inv2022b_normalized_rows FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2022b_normalized_rows staging_inv2022b_normalized_rows_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2022b_normalized_rows_update_developer_only ON public.staging_inv2022b_normalized_rows FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2023_normalized_rows; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.staging_inv2023_normalized_rows ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: staging_inv2023_normalized_rows staging_inv2023_normalized_rows_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2023_normalized_rows_delete_developer_only ON public.staging_inv2023_normalized_rows FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2023_normalized_rows staging_inv2023_normalized_rows_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2023_normalized_rows_insert_developer_only ON public.staging_inv2023_normalized_rows FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2023_normalized_rows staging_inv2023_normalized_rows_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2023_normalized_rows_select_developer_only ON public.staging_inv2023_normalized_rows FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2023_normalized_rows staging_inv2023_normalized_rows_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2023_normalized_rows_update_developer_only ON public.staging_inv2023_normalized_rows FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2024_normalized_rows; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.staging_inv2024_normalized_rows ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: staging_inv2024_normalized_rows staging_inv2024_normalized_rows_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2024_normalized_rows_delete_developer_only ON public.staging_inv2024_normalized_rows FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2024_normalized_rows staging_inv2024_normalized_rows_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2024_normalized_rows_insert_developer_only ON public.staging_inv2024_normalized_rows FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2024_normalized_rows staging_inv2024_normalized_rows_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2024_normalized_rows_select_developer_only ON public.staging_inv2024_normalized_rows FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2024_normalized_rows staging_inv2024_normalized_rows_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2024_normalized_rows_update_developer_only ON public.staging_inv2024_normalized_rows FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2025_normalized_rows; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.staging_inv2025_normalized_rows ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: staging_inv2025_normalized_rows staging_inv2025_normalized_rows_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2025_normalized_rows_delete_developer_only ON public.staging_inv2025_normalized_rows FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2025_normalized_rows staging_inv2025_normalized_rows_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2025_normalized_rows_insert_developer_only ON public.staging_inv2025_normalized_rows FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2025_normalized_rows staging_inv2025_normalized_rows_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2025_normalized_rows_select_developer_only ON public.staging_inv2025_normalized_rows FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_inv2025_normalized_rows staging_inv2025_normalized_rows_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_inv2025_normalized_rows_update_developer_only ON public.staging_inv2025_normalized_rows FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_pe2024_normalized_rows; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.staging_pe2024_normalized_rows ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: staging_pe2024_normalized_rows staging_pe2024_normalized_rows_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_pe2024_normalized_rows_delete_developer_only ON public.staging_pe2024_normalized_rows FOR DELETE TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_pe2024_normalized_rows staging_pe2024_normalized_rows_insert_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_pe2024_normalized_rows_insert_developer_only ON public.staging_pe2024_normalized_rows FOR INSERT TO authenticated WITH CHECK (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_pe2024_normalized_rows staging_pe2024_normalized_rows_select_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_pe2024_normalized_rows_select_developer_only ON public.staging_pe2024_normalized_rows FOR SELECT TO authenticated USING (public.can_manage_system_internal());
+
+
+--
+-- Name: staging_pe2024_normalized_rows staging_pe2024_normalized_rows_update_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY staging_pe2024_normalized_rows_update_developer_only ON public.staging_pe2024_normalized_rows FOR UPDATE TO authenticated USING (public.can_manage_system_internal()) WITH CHECK (public.can_manage_system_internal());
+
 
 --
 -- Name: user_roles; Type: ROW SECURITY; Schema: public; Owner: -
@@ -17531,16 +19147,108 @@ ALTER TABLE public.staff ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: user_roles user_roles_delete_by_allowed_role_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY user_roles_delete_by_allowed_role_managers ON public.user_roles FOR DELETE TO authenticated USING ((public.can_manage_users() AND public.can_assign_role(( SELECT r.code
+   FROM public.roles r
+  WHERE (r.id = user_roles.role_id)))));
+
+
+--
+-- Name: user_roles user_roles_insert_by_allowed_role_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY user_roles_insert_by_allowed_role_managers ON public.user_roles FOR INSERT TO authenticated WITH CHECK ((public.can_manage_users() AND public.can_assign_role(( SELECT r.code
+   FROM public.roles r
+  WHERE (r.id = user_roles.role_id)))));
+
+
+--
+-- Name: user_roles user_roles_select_self_or_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY user_roles_select_self_or_managers ON public.user_roles FOR SELECT TO authenticated USING ((public.can_manage_users() OR (user_id = public.current_app_user_id())));
+
+
+--
+-- Name: user_roles user_roles_update_by_allowed_role_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY user_roles_update_by_allowed_role_managers ON public.user_roles FOR UPDATE TO authenticated USING ((public.can_manage_users() AND public.can_assign_role(( SELECT r.code
+   FROM public.roles r
+  WHERE (r.id = user_roles.role_id))))) WITH CHECK ((public.can_manage_users() AND public.can_assign_role(( SELECT r.code
+   FROM public.roles r
+  WHERE (r.id = user_roles.role_id)))));
+
+
+--
 -- Name: users; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: users users_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY users_delete_developer_only ON public.users FOR DELETE TO authenticated USING (public.has_app_role('DEVELOPER'::text));
+
+
+--
+-- Name: users users_insert_by_user_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY users_insert_by_user_managers ON public.users FOR INSERT TO authenticated WITH CHECK (public.can_manage_users());
+
+
+--
+-- Name: users users_select_self_or_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY users_select_self_or_managers ON public.users FOR SELECT TO authenticated USING ((public.can_manage_users() OR (id = public.current_app_user_id())));
+
+
+--
+-- Name: users users_update_by_user_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY users_update_by_user_managers ON public.users FOR UPDATE TO authenticated USING (public.can_manage_users()) WITH CHECK (public.can_manage_users());
+
+
+--
 -- Name: violations; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.violations ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: violations violations_delete_developer_only; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY violations_delete_developer_only ON public.violations FOR DELETE TO authenticated USING (public.can_delete_seed_data());
+
+
+--
+-- Name: violations violations_insert_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY violations_insert_by_seed_managers ON public.violations FOR INSERT TO authenticated WITH CHECK (public.can_manage_seed_data());
+
+
+--
+-- Name: violations violations_select_for_app_users; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY violations_select_for_app_users ON public.violations FOR SELECT TO authenticated USING (public.is_authenticated_app_user());
+
+
+--
+-- Name: violations violations_update_by_seed_managers; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY violations_update_by_seed_managers ON public.violations FOR UPDATE TO authenticated USING (public.can_manage_seed_data()) WITH CHECK (public.can_manage_seed_data());
+
 
 --
 -- Name: messages; Type: ROW SECURITY; Schema: realtime; Owner: -
@@ -17659,5 +19367,5 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Gz6cUErEY968pDfDw6j0eHdFVrIqryGQHwG5dQK1A1JnbN1xzRmamrEgxQeTYgG
+\unrestrict qnRWCXRPfxj7eilPJJnMSoFcVMsbrDKvaGZAA2xeOb6EkAUYrHuLeaxq6f31eHf
 
