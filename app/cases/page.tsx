@@ -18,11 +18,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ChevronDown, X } from 'lucide-react';
 import {
-  getCaseClassificationsForCases,
-  getCasePartyParticipantsForCases,
   getCasesDisplay,
-  type CaseClassificationSummaryRecord,
-  type CasePartyParticipantRecord,
   type CasesDisplayRecord,
 } from '@/lib/supabase/queries';
 
@@ -80,7 +76,7 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v11';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v12';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -258,26 +254,6 @@ function getCaseKey(caseDetail: CompactCase) {
   return `${caseDetail.id ?? 'case'}-${formatDisplayDocketNumber(caseDetail)}`;
 }
 
-function personName(participant: CasePartyParticipantRecord) {
-  return (
-    participant.persons?.full_name?.trim() ||
-    participant.organizations?.organization_name?.trim() ||
-    participant.display_name_snapshot?.trim() ||
-    'Unnamed participant'
-  );
-}
-
-function participantMatchesRole(participant: CasePartyParticipantRecord, roleName: 'complainant' | 'respondent') {
-  const roleText = `${participant.participant_roles?.code ?? ''} ${participant.participant_roles?.display_label ?? ''}`.toLowerCase();
-  return roleText.includes(roleName);
-}
-
-function partyNamesForRole(participants: CasePartyParticipantRecord[], roleName: 'complainant' | 'respondent') {
-  return participants
-    .filter((participant) => participantMatchesRole(participant, roleName))
-    .map(personName);
-}
-
 function compactPartyNames(names: string[]) {
   if (names.length === 0) {
     return '—';
@@ -294,55 +270,31 @@ function expandedPartyNames(names: string[]) {
   return names.join('\n');
 }
 
-function caseIdsForCases(casesToCheck: CompactCase[]) {
-  return casesToCheck
-    .map((caseDetail) => caseDetail.id)
-    .filter((caseId): caseId is number => Number.isFinite(caseId));
+function splitViewNames(value: string | null | undefined) {
+  return value?.split(' | ').map((name) => name.trim()).filter(Boolean) ?? [];
 }
 
-function shouldRefreshCachedPartyNames(
-  cachedCases: CompactCase[],
-  cachedPartyNamesByCase: Record<number, CasePartyNames>,
-) {
-  const cachedCaseIds = caseIdsForCases(cachedCases);
+function buildPartyNamesByCase(casesToMap: CompactCase[]) {
+  return casesToMap.reduce((namesByCase, caseDetail) => {
+    if (Number.isFinite(caseDetail.id)) {
+      namesByCase[caseDetail.id] = {
+        complainants: splitViewNames(caseDetail.complainant),
+        respondents: splitViewNames(caseDetail.respondent),
+      };
+    }
 
-  return (
-    cachedCaseIds.length > 0 &&
-    cachedCaseIds.some((caseId) => !(caseId in cachedPartyNamesByCase))
-  );
+    return namesByCase;
+  }, {} as Record<number, CasePartyNames>);
 }
 
-function classificationLabel(classification: CaseClassificationSummaryRecord["case_classifications"]) {
-  return classification?.display_label || null;
-}
-
-function buildClassificationsByCase(classifications: CaseClassificationSummaryRecord[]) {
-  return classifications.reduce((classificationByCase, classification) => {
-    const caseId = classification.id;
-    if (Number.isFinite(caseId)) {
-      classificationByCase[caseId] = classificationLabel(classification.case_classifications) ?? '—';
+function buildClassificationsByCase(casesToMap: CompactCase[]) {
+  return casesToMap.reduce((classificationByCase, caseDetail) => {
+    if (Number.isFinite(caseDetail.id)) {
+      classificationByCase[caseDetail.id] = caseDetail.case_classification_label ?? '—';
     }
 
     return classificationByCase;
   }, {} as CaseClassificationByCase);
-}
-
-function buildPartyNamesByCase(participants: CasePartyParticipantRecord[]) {
-  const grouped = new Map<number, CasePartyParticipantRecord[]>();
-
-  for (const participant of participants) {
-    grouped.set(participant.case_id, [...(grouped.get(participant.case_id) ?? []), participant]);
-  }
-
-  return Array.from(grouped.entries()).reduce((namesByCase, [caseId, caseParticipants]) => {
-    const complainants = partyNamesForRole(caseParticipants, 'complainant');
-    const respondents = partyNamesForRole(caseParticipants, 'respondent');
-    namesByCase[caseId] = {
-      complainants,
-      respondents,
-    };
-    return namesByCase;
-  }, {} as Record<number, CasePartyNames>);
 }
 
 export default function CasesPage() {
@@ -381,57 +333,19 @@ export default function CasesPage() {
 
     function cacheCasesPageState(
       nextCases: CompactCase[],
-      nextPartyNamesByCase: Record<number, CasePartyNames>,
       options: { hasAllCases?: boolean } = {},
     ) {
+      const nextPartyNamesByCase = buildPartyNamesByCase(nextCases);
+      const nextClassificationsByCase = buildClassificationsByCase(nextCases);
+
+      setPartyNamesByCase(nextPartyNamesByCase);
+      setClassificationsByCase(nextClassificationsByCase);
+
       writeCasesPageCache({
         cases: nextCases,
         partyNamesByCase: nextPartyNamesByCase,
-        classificationsByCase: readCasesPageCache()?.classificationsByCase ?? classificationsByCase,
-        hasAllCases: options.hasAllCases ?? readCasesPageCache()?.hasAllCases ?? false,
-        searchTerm: readCasesPageCache()?.searchTerm ?? searchTerm,
-        selectedSearchColumns: readCasesPageCache()?.selectedSearchColumns ?? selectedSearchColumns,
-        selectedDocketTypes: readCasesPageCache()?.selectedDocketTypes ?? selectedDocketTypes,
-        selectedDocketYears: readCasesPageCache()?.selectedDocketYears ?? selectedDocketYears,
-        selectedColumnFilters: readCasesPageCache()?.selectedColumnFilters ?? selectedColumnFilters,
-        showColumnFilters: readCasesPageCache()?.showColumnFilters ?? showColumnFilters,
-      });
-    }
-
-    async function loadPartyNamesForCases(
-      nextCases: CompactCase[],
-      options: { clearOnError?: boolean } = {},
-    ) {
-      const participantResult = await getCasePartyParticipantsForCases(caseIdsForCases(nextCases));
-
-      if (!isMounted) {
-        return;
-      }
-
-      if (!participantResult.error) {
-        const nextPartyNamesByCase = buildPartyNamesByCase(participantResult.data);
-        setPartyNamesByCase(nextPartyNamesByCase);
-        cacheCasesPageState(nextCases, nextPartyNamesByCase);
-      } else if (options.clearOnError) {
-        setPartyNamesByCase({});
-        cacheCasesPageState(nextCases, {});
-      }
-    }
-
-    async function loadClassificationsForCases(nextCases: CompactCase[]) {
-      const classificationResult = await getCaseClassificationsForCases(caseIdsForCases(nextCases));
-
-      if (!isMounted || classificationResult.error) {
-        return;
-      }
-
-      const nextClassificationsByCase = buildClassificationsByCase(classificationResult.data);
-      setClassificationsByCase(nextClassificationsByCase);
-      writeCasesPageCache({
-        cases: nextCases,
-        partyNamesByCase: readCasesPageCache()?.partyNamesByCase ?? partyNamesByCase,
         classificationsByCase: nextClassificationsByCase,
-        hasAllCases: readCasesPageCache()?.hasAllCases ?? false,
+        hasAllCases: options.hasAllCases ?? readCasesPageCache()?.hasAllCases ?? false,
         searchTerm: readCasesPageCache()?.searchTerm ?? searchTerm,
         selectedSearchColumns: readCasesPageCache()?.selectedSearchColumns ?? selectedSearchColumns,
         selectedDocketTypes: readCasesPageCache()?.selectedDocketTypes ?? selectedDocketTypes,
@@ -456,26 +370,12 @@ export default function CasesPage() {
       }
 
       setCases(allCasesResult.data);
-      cacheCasesPageState(
-        allCasesResult.data,
-        readCasesPageCache()?.partyNamesByCase ?? partyNamesByCase,
-        { hasAllCases: true },
-      );
-      void loadPartyNamesForCases(allCasesResult.data);
-      void loadClassificationsForCases(allCasesResult.data);
+      cacheCasesPageState(allCasesResult.data, { hasAllCases: true });
     }
 
     async function loadCases() {
       if (cachedInitialState) {
         setIsLoading(false);
-
-        if (shouldRefreshCachedPartyNames(cachedInitialState.cases, cachedInitialState.partyNamesByCase)) {
-          void loadPartyNamesForCases(cachedInitialState.cases);
-        }
-
-        if (Object.keys(cachedInitialState.classificationsByCase ?? {}).length === 0) {
-          void loadClassificationsForCases(cachedInitialState.cases);
-        }
 
         if (!cachedInitialState.hasAllCases) {
           void loadAllCasesInBackground();
@@ -500,9 +400,7 @@ export default function CasesPage() {
       } else {
         setErrorMessage(null);
         setCases(initialCasesResult.data);
-        cacheCasesPageState(initialCasesResult.data, {});
-        void loadPartyNamesForCases(initialCasesResult.data, { clearOnError: true });
-        void loadClassificationsForCases(initialCasesResult.data);
+        cacheCasesPageState(initialCasesResult.data);
       }
 
       setIsLoading(false);

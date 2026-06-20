@@ -375,28 +375,109 @@ export async function getCases(
   );
 }
 
-export type CasesDisplayRecord = Pick<
-  ViewRow<"v_cases_display">,
-  | "id"
-  | "docket_type_id"
-  | "docket_year"
-  | "docket_number"
-  | "docket_month_code"
-  | "docket_display_number"
-  | "docket_type_prefix"
-  | "docket_type_name"
-  | "date_received"
-  | "summary_text"
-  | "current_status_code"
-  | "current_status_label"
-  | "prosecutor_full_name"
-  | "prosecutor_short_name"
-  | "violations"
-  | "created_at"
->;
+export type DocketParticipantsRecord = {
+  id: number;
+  docket_type_id: number;
+  docket_year: number;
+  docket_number: number;
+  docket_month_code: string | null;
+  docket_display_number: string | null;
+  docket_type_prefix: string | null;
+  docket_type_name: string | null;
+  complainant: string | null;
+  respondent: string | null;
+  violations: string | null;
+  summary_text: string | null;
+  case_classification_label: string | null;
+  created_at: string;
+};
 
-const CASES_DISPLAY_COLUMNS =
-  "id, docket_type_id, docket_year, docket_number, docket_month_code, docket_display_number, docket_type_prefix, docket_type_name, date_received, summary_text, current_status_code, current_status_label, prosecutor_full_name, prosecutor_short_name, violations, created_at";
+export type DocketQuickDetailsRecord = {
+  id: number;
+  date_received: string | null;
+  current_status_code: string | null;
+  current_status_label: string | null;
+  prosecutor_full_name: string | null;
+  prosecutor_short_name: string | null;
+};
+
+export type CasesDisplayRecord = DocketParticipantsRecord & DocketQuickDetailsRecord;
+
+const DOCKET_PARTICIPANTS_COLUMNS =
+  "id, docket_type_id, docket_year, docket_number, docket_month_code, docket_display_number, docket_type_prefix, docket_type_name, complainant, respondent, violations, summary_text, case_classification_label, created_at";
+
+const DOCKET_QUICK_DETAILS_COLUMNS =
+  "id, date_received, current_status_code, current_status_label, prosecutor_full_name, prosecutor_short_name";
+
+const EMPTY_DOCKET_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, "id"> = {
+  date_received: null,
+  current_status_code: null,
+  current_status_label: null,
+  prosecutor_full_name: null,
+  prosecutor_short_name: null,
+};
+
+function mergeDocketViews(
+  participants: DocketParticipantsRecord[],
+  quickDetails: DocketQuickDetailsRecord[],
+): CasesDisplayRecord[] {
+  const quickDetailsByCaseId = new Map(quickDetails.map((detail) => [detail.id, detail]));
+
+  return participants.map((participant) => ({
+    ...participant,
+    ...(quickDetailsByCaseId.get(participant.id) ?? EMPTY_DOCKET_QUICK_DETAILS),
+  }));
+}
+
+async function getDocketQuickDetailsForCases(
+  caseIds: number[],
+): Promise<SupabaseQueryResult<DocketQuickDetailsRecord[]>> {
+  const safeCaseIds = Array.from(new Set(caseIds.filter((caseId) => Number.isFinite(caseId))));
+  const caseIdChunkSize = 1000;
+
+  if (safeCaseIds.length === 0) {
+    return ok([]);
+  }
+
+  return runSupabaseQuery(
+    "getDocketQuickDetailsForCases",
+    "v_cases_display",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      const chunks = [] as Promise<{
+        data: DocketQuickDetailsRecord[] | null;
+        error: unknown;
+      }>[];
+
+      for (let start = 0; start < safeCaseIds.length; start += caseIdChunkSize) {
+        const caseIdChunk = safeCaseIds.slice(start, start + caseIdChunkSize);
+        const query = supabase
+          .from("v_docket_quickdetails" as never)
+          .select(DOCKET_QUICK_DETAILS_COLUMNS)
+          .in("id" as never, caseIdChunk) as unknown as Promise<{
+            data: DocketQuickDetailsRecord[] | null;
+            error: unknown;
+          }>;
+
+        chunks.push(query);
+      }
+
+      const responses = await Promise.all(chunks);
+      const allQuickDetails: DocketQuickDetailsRecord[] = [];
+
+      for (const response of responses) {
+        if (response.error) {
+          return { data: null, error: response.error };
+        }
+
+        allQuickDetails.push(...(response.data ?? []));
+      }
+
+      return { data: allQuickDetails, error: null };
+    },
+    [],
+  );
+}
 
 function dedupeRowsById<Row extends { id: number | null }>(rows: Row[]): Row[] {
   const seenCaseIds = new Set<number>();
@@ -435,30 +516,39 @@ export async function getCasesDisplay(
 
       for (let start = 0; ; start += pageSize) {
         let query = supabase
-          .from("v_cases_display")
-          .select(CASES_DISPLAY_COLUMNS)
-          .order("created_at", { ascending: false, nullsFirst: false })
-          .order("id", { ascending: false })
+          .from("v_docket_participants" as never)
+          .select(DOCKET_PARTICIPANTS_COLUMNS)
+          .order("created_at" as never, { ascending: false, nullsFirst: false })
+          .order("id" as never, { ascending: false })
           .range(start, start + pageSize - 1);
 
         if (docketType && docketType !== "All") {
-          query = query.eq("docket_type_prefix", docketType);
+          query = query.eq("docket_type_prefix" as never, docketType);
         }
 
         if (docketYear !== undefined) {
-          query = query.eq("docket_year", docketYear);
+          query = query.eq("docket_year" as never, docketYear);
         }
 
         const response = (await query) as unknown as {
-          data: CasesDisplayRecord[] | null;
+          data: DocketParticipantsRecord[] | null;
           error: unknown;
         };
 
         if (response.error) {
-          return response;
+          return { data: null, error: response.error };
         }
 
-        const page = response.data ?? [];
+        const participantPage = response.data ?? [];
+        const quickDetailsResult = await getDocketQuickDetailsForCases(
+          participantPage.map((caseDetail) => caseDetail.id),
+        );
+
+        if (quickDetailsResult.error) {
+          return { data: null, error: quickDetailsResult.error };
+        }
+
+        const page = mergeDocketViews(participantPage, quickDetailsResult.data);
         allCases.push(...page);
 
         if (!shouldFetchAllPages || page.length < pageSize) {
