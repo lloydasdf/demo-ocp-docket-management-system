@@ -18,8 +18,11 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ChevronDown, X } from 'lucide-react';
 import {
-  getCasesDisplay,
+  getDocketParticipantsDisplay,
+  getDocketQuickDetailsForCases,
   type CasesDisplayRecord,
+  type DocketParticipantsRecord,
+  type DocketQuickDetailsRecord,
 } from '@/lib/supabase/queries';
 
 type CompactCase = CasesDisplayRecord;
@@ -27,7 +30,6 @@ type DocketTypeFilter = string;
 type DocketYearFilter = string;
 
 const DEFAULT_DOCKET_TYPE = 'All';
-const INITIAL_CASE_LIMIT = 500;
 const CASE_ROW_HEIGHT = 49;
 const EXPANDED_CASE_ROW_HEIGHT = 96;
 const VIRTUAL_ROW_OVERSCAN = 12;
@@ -76,7 +78,7 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v12';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v13';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -270,6 +272,33 @@ function expandedPartyNames(names: string[]) {
   return names.join('\n');
 }
 
+const EMPTY_CASE_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, 'id'> = {
+  date_received: null,
+  current_status_code: null,
+  current_status_label: null,
+  prosecutor_full_name: null,
+  prosecutor_short_name: null,
+};
+
+function withEmptyQuickDetails(participants: DocketParticipantsRecord[]): CompactCase[] {
+  return participants.map((participant) => ({
+    ...participant,
+    ...EMPTY_CASE_QUICK_DETAILS,
+  }));
+}
+
+function mergeQuickDetailsIntoCases(
+  caseRows: CompactCase[],
+  quickDetails: DocketQuickDetailsRecord[],
+): CompactCase[] {
+  const quickDetailsByCaseId = new Map(quickDetails.map((detail) => [detail.id, detail]));
+
+  return caseRows.map((caseDetail) => ({
+    ...caseDetail,
+    ...(quickDetailsByCaseId.get(caseDetail.id) ?? EMPTY_CASE_QUICK_DETAILS),
+  }));
+}
+
 function splitViewNames(value: string | null | undefined) {
   return value?.split(' | ').map((name) => name.trim()).filter(Boolean) ?? [];
 }
@@ -355,9 +384,11 @@ export default function CasesPage() {
       });
     }
 
-    async function loadAllCasesInBackground() {
+    async function hydrateQuickDetails(nextCases: CompactCase[]) {
       setIsLoadingAllCases(true);
-      const allCasesResult = await getCasesDisplay();
+      const quickDetailsResult = await getDocketQuickDetailsForCases(
+        nextCases.map((caseDetail) => caseDetail.id),
+      );
 
       if (!isMounted) {
         return;
@@ -365,12 +396,13 @@ export default function CasesPage() {
 
       setIsLoadingAllCases(false);
 
-      if (allCasesResult.error) {
+      if (quickDetailsResult.error) {
         return;
       }
 
-      setCases(allCasesResult.data);
-      cacheCasesPageState(allCasesResult.data, { hasAllCases: true });
+      const hydratedCases = mergeQuickDetailsIntoCases(nextCases, quickDetailsResult.data);
+      setCases(hydratedCases);
+      cacheCasesPageState(hydratedCases, { hasAllCases: true });
     }
 
     async function loadCases() {
@@ -378,36 +410,34 @@ export default function CasesPage() {
         setIsLoading(false);
 
         if (!cachedInitialState.hasAllCases) {
-          void loadAllCasesInBackground();
+          void hydrateQuickDetails(cachedInitialState.cases);
         }
 
         return;
       }
 
       setIsLoading(true);
-      const initialCasesResult = await getCasesDisplay({
-        limit: INITIAL_CASE_LIMIT,
-      });
+      const participantResult = await getDocketParticipantsDisplay();
 
       if (!isMounted) {
         return;
       }
 
-      if (initialCasesResult.error) {
-        setErrorMessage(initialCasesResult.error.message);
+      if (participantResult.error) {
+        setErrorMessage(participantResult.error.message);
         setCases([]);
         setPartyNamesByCase({});
-      } else {
-        setErrorMessage(null);
-        setCases(initialCasesResult.data);
-        cacheCasesPageState(initialCasesResult.data);
+        setIsLoading(false);
+        return;
       }
 
+      const participantCases = withEmptyQuickDetails(participantResult.data);
+      setErrorMessage(null);
+      setCases(participantCases);
+      cacheCasesPageState(participantCases);
       setIsLoading(false);
 
-      if (!initialCasesResult.error) {
-        void loadAllCasesInBackground();
-      }
+      void hydrateQuickDetails(participantCases);
     }
 
     loadCases();

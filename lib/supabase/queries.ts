@@ -429,7 +429,7 @@ function mergeDocketViews(
   }));
 }
 
-async function getDocketQuickDetailsForCases(
+export async function getDocketQuickDetailsForCases(
   caseIds: number[],
 ): Promise<SupabaseQueryResult<DocketQuickDetailsRecord[]>> {
   const safeCaseIds = Array.from(new Set(caseIds.filter((caseId) => Number.isFinite(caseId))));
@@ -500,19 +500,19 @@ function dedupeRowsById<Row extends { id: number | null }>(rows: Row[]): Row[] {
   return uniqueRows;
 }
 
-export async function getCasesDisplay(
+export async function getDocketParticipantsDisplay(
   params: CasesCompactQueryParams = {},
-): Promise<SupabaseQueryResult<CasesDisplayRecord[]>> {
+): Promise<SupabaseQueryResult<DocketParticipantsRecord[]>> {
   const { docketType, docketYear, limit } = params;
 
   return runSupabaseQuery(
-    "getCasesDisplay",
+    "getDocketParticipantsDisplay",
     "v_cases_display",
     async () => {
       const supabase = await getSupabaseBrowserClient();
       const pageSize = limit === undefined ? 1000 : normalizeLimit(limit, 50, 500);
       const shouldFetchAllPages = limit === undefined;
-      const allCases: CasesDisplayRecord[] = [];
+      const allParticipants: DocketParticipantsRecord[] = [];
 
       for (let start = 0; ; start += pageSize) {
         let query = supabase
@@ -539,27 +539,41 @@ export async function getCasesDisplay(
           return { data: null, error: response.error };
         }
 
-        const participantPage = response.data ?? [];
-        const quickDetailsResult = await getDocketQuickDetailsForCases(
-          participantPage.map((caseDetail) => caseDetail.id),
-        );
-
-        if (quickDetailsResult.error) {
-          return { data: null, error: quickDetailsResult.error };
-        }
-
-        const page = mergeDocketViews(participantPage, quickDetailsResult.data);
-        allCases.push(...page);
+        const page = response.data ?? [];
+        allParticipants.push(...page);
 
         if (!shouldFetchAllPages || page.length < pageSize) {
           break;
         }
       }
 
-      return { data: dedupeRowsById(allCases), error: null };
+      return { data: dedupeRowsById(allParticipants), error: null };
     },
     [],
   );
+}
+
+export async function getCasesDisplay(
+  params: CasesCompactQueryParams = {},
+): Promise<SupabaseQueryResult<CasesDisplayRecord[]>> {
+  const participantResult = await getDocketParticipantsDisplay(params);
+
+  if (participantResult.error) {
+    return participantResult;
+  }
+
+  const quickDetailsResult = await getDocketQuickDetailsForCases(
+    participantResult.data.map((caseDetail) => caseDetail.id),
+  );
+
+  if (quickDetailsResult.error) {
+    return quickDetailsResult;
+  }
+
+  return {
+    data: mergeDocketViews(participantResult.data, quickDetailsResult.data),
+    error: null,
+  };
 }
 
 export type CasePartyParticipantRecord = Pick<
@@ -1557,7 +1571,6 @@ export async function getCaseCourtDetails(
   );
 }
 
-
 export type CasePetitionForReviewRecord = {
   id: number;
   case_id: number;
@@ -1608,7 +1621,6 @@ export async function getCaseMotions(
     [],
   );
 }
-
 
 export async function getCasePetitionsForReview(
   caseId: number,
