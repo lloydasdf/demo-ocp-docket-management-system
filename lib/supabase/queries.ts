@@ -375,7 +375,7 @@ export async function getCases(
   );
 }
 
-export type DocketParticipantsRecord = {
+export type DocketShellRecord = {
   id: number;
   docket_type_id: number;
   docket_year: number;
@@ -384,12 +384,16 @@ export type DocketParticipantsRecord = {
   docket_display_number: string | null;
   docket_type_prefix: string | null;
   docket_type_name: string | null;
-  complainant: string | null;
-  respondent: string | null;
   violations: string | null;
   summary_text: string | null;
   case_classification_label: string | null;
   created_at: string;
+};
+
+export type DocketParticipantsRecord = {
+  id: number;
+  complainant: string | null;
+  respondent: string | null;
 };
 
 export type DocketQuickDetailsRecord = {
@@ -401,13 +405,20 @@ export type DocketQuickDetailsRecord = {
   prosecutor_short_name: string | null;
 };
 
-export type CasesDisplayRecord = DocketParticipantsRecord & DocketQuickDetailsRecord;
+export type CasesDisplayRecord = DocketShellRecord & DocketParticipantsRecord & DocketQuickDetailsRecord;
 
-const DOCKET_PARTICIPANTS_COLUMNS =
-  "id, docket_type_id, docket_year, docket_number, docket_month_code, docket_display_number, docket_type_prefix, docket_type_name, complainant, respondent, violations, summary_text, case_classification_label, created_at";
+const DOCKET_SHELL_COLUMNS =
+  "id, docket_type_id, docket_year, docket_number, docket_month_code, docket_display_number, docket_type_prefix, docket_type_name, violations, summary_text, case_classification_label, created_at";
+
+const DOCKET_PARTICIPANTS_COLUMNS = "id, complainant, respondent";
 
 const DOCKET_QUICK_DETAILS_COLUMNS =
   "id, date_received, current_status_code, current_status_label, prosecutor_full_name, prosecutor_short_name";
+
+const EMPTY_DOCKET_PARTICIPANTS: Omit<DocketParticipantsRecord, "id"> = {
+  complainant: null,
+  respondent: null,
+};
 
 const EMPTY_DOCKET_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, "id"> = {
   date_received: null,
@@ -418,20 +429,26 @@ const EMPTY_DOCKET_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, "id"> = {
 };
 
 function mergeDocketViews(
+  shellRows: DocketShellRecord[],
   participants: DocketParticipantsRecord[],
   quickDetails: DocketQuickDetailsRecord[],
 ): CasesDisplayRecord[] {
+  const participantsByCaseId = new Map(participants.map((participant) => [participant.id, participant]));
   const quickDetailsByCaseId = new Map(quickDetails.map((detail) => [detail.id, detail]));
 
-  return participants.map((participant) => ({
-    ...participant,
-    ...(quickDetailsByCaseId.get(participant.id) ?? EMPTY_DOCKET_QUICK_DETAILS),
+  return shellRows.map((shellRow) => ({
+    ...shellRow,
+    ...(participantsByCaseId.get(shellRow.id) ?? EMPTY_DOCKET_PARTICIPANTS),
+    ...(quickDetailsByCaseId.get(shellRow.id) ?? EMPTY_DOCKET_QUICK_DETAILS),
   }));
 }
 
-export async function getDocketQuickDetailsForCases(
+async function getRowsByCaseIds<Row extends { id: number }>(
+  operation: string,
+  viewName: string,
+  columns: string,
   caseIds: number[],
-): Promise<SupabaseQueryResult<DocketQuickDetailsRecord[]>> {
+): Promise<SupabaseQueryResult<Row[]>> {
   const safeCaseIds = Array.from(new Set(caseIds.filter((caseId) => Number.isFinite(caseId))));
   const caseIdChunkSize = 1000;
 
@@ -440,22 +457,22 @@ export async function getDocketQuickDetailsForCases(
   }
 
   return runSupabaseQuery(
-    "getDocketQuickDetailsForCases",
+    operation,
     "v_cases_display",
     async () => {
       const supabase = await getSupabaseBrowserClient();
       const chunks = [] as Promise<{
-        data: DocketQuickDetailsRecord[] | null;
+        data: Row[] | null;
         error: unknown;
       }>[];
 
       for (let start = 0; start < safeCaseIds.length; start += caseIdChunkSize) {
         const caseIdChunk = safeCaseIds.slice(start, start + caseIdChunkSize);
         const query = supabase
-          .from("v_docket_quickdetails" as never)
-          .select(DOCKET_QUICK_DETAILS_COLUMNS)
+          .from(viewName as never)
+          .select(columns)
           .in("id" as never, caseIdChunk) as unknown as Promise<{
-            data: DocketQuickDetailsRecord[] | null;
+            data: Row[] | null;
             error: unknown;
           }>;
 
@@ -463,19 +480,41 @@ export async function getDocketQuickDetailsForCases(
       }
 
       const responses = await Promise.all(chunks);
-      const allQuickDetails: DocketQuickDetailsRecord[] = [];
+      const rows: Row[] = [];
 
       for (const response of responses) {
         if (response.error) {
           return { data: null, error: response.error };
         }
 
-        allQuickDetails.push(...(response.data ?? []));
+        rows.push(...(response.data ?? []));
       }
 
-      return { data: allQuickDetails, error: null };
+      return { data: rows, error: null };
     },
     [],
+  );
+}
+
+export async function getDocketParticipantsForCases(
+  caseIds: number[],
+): Promise<SupabaseQueryResult<DocketParticipantsRecord[]>> {
+  return getRowsByCaseIds<DocketParticipantsRecord>(
+    "getDocketParticipantsForCases",
+    "v_docket_participants",
+    DOCKET_PARTICIPANTS_COLUMNS,
+    caseIds,
+  );
+}
+
+export async function getDocketQuickDetailsForCases(
+  caseIds: number[],
+): Promise<SupabaseQueryResult<DocketQuickDetailsRecord[]>> {
+  return getRowsByCaseIds<DocketQuickDetailsRecord>(
+    "getDocketQuickDetailsForCases",
+    "v_docket_quickdetails",
+    DOCKET_QUICK_DETAILS_COLUMNS,
+    caseIds,
   );
 }
 
@@ -500,24 +539,24 @@ function dedupeRowsById<Row extends { id: number | null }>(rows: Row[]): Row[] {
   return uniqueRows;
 }
 
-export async function getDocketParticipantsDisplay(
+export async function getDocketShellDisplay(
   params: CasesCompactQueryParams = {},
-): Promise<SupabaseQueryResult<DocketParticipantsRecord[]>> {
+): Promise<SupabaseQueryResult<DocketShellRecord[]>> {
   const { docketType, docketYear, limit } = params;
 
   return runSupabaseQuery(
-    "getDocketParticipantsDisplay",
+    "getDocketShellDisplay",
     "v_cases_display",
     async () => {
       const supabase = await getSupabaseBrowserClient();
       const pageSize = limit === undefined ? 1000 : normalizeLimit(limit, 50, 500);
       const shouldFetchAllPages = limit === undefined;
-      const allParticipants: DocketParticipantsRecord[] = [];
+      const allShellRows: DocketShellRecord[] = [];
 
       for (let start = 0; ; start += pageSize) {
         let query = supabase
-          .from("v_docket_participants" as never)
-          .select(DOCKET_PARTICIPANTS_COLUMNS)
+          .from("v_docket_shell" as never)
+          .select(DOCKET_SHELL_COLUMNS)
           .order("created_at" as never, { ascending: false, nullsFirst: false })
           .order("id" as never, { ascending: false })
           .range(start, start + pageSize - 1);
@@ -531,7 +570,7 @@ export async function getDocketParticipantsDisplay(
         }
 
         const response = (await query) as unknown as {
-          data: DocketParticipantsRecord[] | null;
+          data: DocketShellRecord[] | null;
           error: unknown;
         };
 
@@ -540,38 +579,73 @@ export async function getDocketParticipantsDisplay(
         }
 
         const page = response.data ?? [];
-        allParticipants.push(...page);
+        allShellRows.push(...page);
 
         if (!shouldFetchAllPages || page.length < pageSize) {
           break;
         }
       }
 
-      return { data: dedupeRowsById(allParticipants), error: null };
+      return { data: dedupeRowsById(allShellRows), error: null };
     },
     [],
   );
 }
 
+export async function getDocketParticipantsDisplay(
+  params: CasesCompactQueryParams = {},
+): Promise<SupabaseQueryResult<(DocketShellRecord & DocketParticipantsRecord)[]>> {
+  const shellResult = await getDocketShellDisplay(params);
+
+  if (shellResult.error) {
+    return shellResult;
+  }
+
+  const participantsResult = await getDocketParticipantsForCases(
+    shellResult.data.map((caseDetail) => caseDetail.id),
+  );
+
+  if (participantsResult.error) {
+    return participantsResult;
+  }
+
+  const participantsByCaseId = new Map(
+    participantsResult.data.map((participant) => [participant.id, participant]),
+  );
+
+  return {
+    data: shellResult.data.map((shellRow) => ({
+      ...shellRow,
+      ...(participantsByCaseId.get(shellRow.id) ?? EMPTY_DOCKET_PARTICIPANTS),
+    })),
+    error: null,
+  };
+}
+
 export async function getCasesDisplay(
   params: CasesCompactQueryParams = {},
 ): Promise<SupabaseQueryResult<CasesDisplayRecord[]>> {
-  const participantResult = await getDocketParticipantsDisplay(params);
+  const shellResult = await getDocketShellDisplay(params);
 
-  if (participantResult.error) {
-    return participantResult;
+  if (shellResult.error) {
+    return shellResult;
   }
 
-  const quickDetailsResult = await getDocketQuickDetailsForCases(
-    participantResult.data.map((caseDetail) => caseDetail.id),
-  );
+  const caseIds = shellResult.data.map((caseDetail) => caseDetail.id);
+  const participantsResult = await getDocketParticipantsForCases(caseIds);
+
+  if (participantsResult.error) {
+    return participantsResult;
+  }
+
+  const quickDetailsResult = await getDocketQuickDetailsForCases(caseIds);
 
   if (quickDetailsResult.error) {
     return quickDetailsResult;
   }
 
   return {
-    data: mergeDocketViews(participantResult.data, quickDetailsResult.data),
+    data: mergeDocketViews(shellResult.data, participantsResult.data, quickDetailsResult.data),
     error: null,
   };
 }

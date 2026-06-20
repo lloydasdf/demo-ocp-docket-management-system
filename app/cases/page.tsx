@@ -18,11 +18,13 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ChevronDown, X } from 'lucide-react';
 import {
-  getDocketParticipantsDisplay,
+  getDocketParticipantsForCases,
   getDocketQuickDetailsForCases,
+  getDocketShellDisplay,
   type CasesDisplayRecord,
   type DocketParticipantsRecord,
   type DocketQuickDetailsRecord,
+  type DocketShellRecord,
 } from '@/lib/supabase/queries';
 
 type CompactCase = CasesDisplayRecord;
@@ -78,7 +80,7 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v13';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v14';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -272,6 +274,11 @@ function expandedPartyNames(names: string[]) {
   return names.join('\n');
 }
 
+const EMPTY_CASE_PARTICIPANTS: Omit<DocketParticipantsRecord, 'id'> = {
+  complainant: null,
+  respondent: null,
+};
+
 const EMPTY_CASE_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, 'id'> = {
   date_received: null,
   current_status_code: null,
@@ -280,10 +287,23 @@ const EMPTY_CASE_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, 'id'> = {
   prosecutor_short_name: null,
 };
 
-function withEmptyQuickDetails(participants: DocketParticipantsRecord[]): CompactCase[] {
-  return participants.map((participant) => ({
-    ...participant,
+function withEmptyHydratedColumns(shellRows: DocketShellRecord[]): CompactCase[] {
+  return shellRows.map((shellRow) => ({
+    ...shellRow,
+    ...EMPTY_CASE_PARTICIPANTS,
     ...EMPTY_CASE_QUICK_DETAILS,
+  }));
+}
+
+function mergeParticipantsIntoCases(
+  caseRows: CompactCase[],
+  participants: DocketParticipantsRecord[],
+): CompactCase[] {
+  const participantsByCaseId = new Map(participants.map((participant) => [participant.id, participant]));
+
+  return caseRows.map((caseDetail) => ({
+    ...caseDetail,
+    ...(participantsByCaseId.get(caseDetail.id) ?? EMPTY_CASE_PARTICIPANTS),
   }));
 }
 
@@ -384,11 +404,25 @@ export default function CasesPage() {
       });
     }
 
-    async function hydrateQuickDetails(nextCases: CompactCase[]) {
+    async function hydrateParticipantsAndQuickDetails(shellCases: CompactCase[]) {
       setIsLoadingAllCases(true);
-      const quickDetailsResult = await getDocketQuickDetailsForCases(
-        nextCases.map((caseDetail) => caseDetail.id),
-      );
+      const caseIds = shellCases.map((caseDetail) => caseDetail.id);
+      const participantsResult = await getDocketParticipantsForCases(caseIds);
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (participantsResult.error) {
+        setIsLoadingAllCases(false);
+        return;
+      }
+
+      const participantCases = mergeParticipantsIntoCases(shellCases, participantsResult.data);
+      setCases(participantCases);
+      cacheCasesPageState(participantCases);
+
+      const quickDetailsResult = await getDocketQuickDetailsForCases(caseIds);
 
       if (!isMounted) {
         return;
@@ -400,7 +434,7 @@ export default function CasesPage() {
         return;
       }
 
-      const hydratedCases = mergeQuickDetailsIntoCases(nextCases, quickDetailsResult.data);
+      const hydratedCases = mergeQuickDetailsIntoCases(participantCases, quickDetailsResult.data);
       setCases(hydratedCases);
       cacheCasesPageState(hydratedCases, { hasAllCases: true });
     }
@@ -410,34 +444,34 @@ export default function CasesPage() {
         setIsLoading(false);
 
         if (!cachedInitialState.hasAllCases) {
-          void hydrateQuickDetails(cachedInitialState.cases);
+          void hydrateParticipantsAndQuickDetails(cachedInitialState.cases);
         }
 
         return;
       }
 
       setIsLoading(true);
-      const participantResult = await getDocketParticipantsDisplay();
+      const shellResult = await getDocketShellDisplay();
 
       if (!isMounted) {
         return;
       }
 
-      if (participantResult.error) {
-        setErrorMessage(participantResult.error.message);
+      if (shellResult.error) {
+        setErrorMessage(shellResult.error.message);
         setCases([]);
         setPartyNamesByCase({});
         setIsLoading(false);
         return;
       }
 
-      const participantCases = withEmptyQuickDetails(participantResult.data);
+      const shellCases = withEmptyHydratedColumns(shellResult.data);
       setErrorMessage(null);
-      setCases(participantCases);
-      cacheCasesPageState(participantCases);
+      setCases(shellCases);
+      cacheCasesPageState(shellCases);
       setIsLoading(false);
 
-      void hydrateQuickDetails(participantCases);
+      void hydrateParticipantsAndQuickDetails(shellCases);
     }
 
     loadCases();
