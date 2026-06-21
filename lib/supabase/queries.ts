@@ -998,11 +998,140 @@ export type CaseDetailsRecord = TableRow<"cases"> & {
   status_approved_date?: string | null;
   status_approved_date_raw?: string | null;
   case_classification_id?: number | null;
-  docket_types: Pick<TableRow<"docket_types">, "name" | "prefix"> | null;
+  docket_types: { name?: string | null; prefix?: string | null } | null;
   case_classifications:
     | { code?: string | null; display_label?: string | null; name?: string | null }
     | null;
 };
+
+export type CaseDetailsPageViewRecord = Pick<
+  CaseDetailsRecord,
+  | "id"
+  | "docket_type_id"
+  | "docket_year"
+  | "docket_number"
+  | "docket_month_code"
+  | "date_received"
+  | "created_by_user_id"
+  | "updated_by_user_id"
+  | "is_archived"
+  | "created_at"
+  | "updated_at"
+  | "region_code"
+  | "case_classification_id"
+  | "current_status_id"
+  | "current_status_date"
+  | "current_status_raw"
+  | "current_status_remarks"
+  | "status_approved_date"
+  | "status_approved_date_raw"
+> & {
+  docket_display_number: string | null;
+  docket_type_prefix: string | null;
+  docket_type_name: string | null;
+  violations: string | null;
+  summary_text: string | null;
+  source: string | null;
+  remarks: string | null;
+  legacy_source_file: string | null;
+  legacy_source_sheet: string | null;
+  legacy_row_number: number | null;
+  legacy_raw_json: Json | null;
+  is_summary_procedure: boolean | null;
+  current_status_code: string | null;
+  current_status_label: string | null;
+  current_status: { code?: string | null; display_label?: string | null } | null;
+  current_prosecutor_id: number | null;
+  prosecutor_short_name: string | null;
+  prosecutor_full_name: string | null;
+  current_staff_id: number | null;
+  staff_short_name: string | null;
+  staff_full_name: string | null;
+  current_assigned_at: string | null;
+  case_classification_code: string | null;
+  case_classification_name: string | null;
+  case_classification_label: string | null;
+  case_classification_description: string | null;
+  case_classifications:
+    | { code?: string | null; display_label?: string | null; name?: string | null }
+    | null;
+  docket_types: { name?: string | null; prefix?: string | null } | null;
+  gdrive_folder_id: string | null;
+  gdrive_folder_link: string | null;
+  gdrive_folder_name: string | null;
+  gdrive_folder_status: string | null;
+  gdrive_folder_last_scanned_at: string | null;
+  court_codes: string | null;
+  criminal_case_numbers: string | null;
+  court_needs_review: boolean | null;
+};
+
+type CaseDetailsPageViewRawRecord = Omit<
+  CaseDetailsPageViewRecord,
+  "case_classifications" | "current_status" | "docket_types"
+>;
+
+function withCaseDetailsPageRelations(
+  record: CaseDetailsPageViewRawRecord,
+): CaseDetailsPageViewRecord {
+  return {
+    ...record,
+    current_status: record.current_status_code || record.current_status_label
+      ? {
+          code: record.current_status_code,
+          display_label: record.current_status_label,
+        }
+      : null,
+    docket_types: record.docket_type_name || record.docket_type_prefix
+      ? {
+          name: record.docket_type_name,
+          prefix: record.docket_type_prefix,
+        }
+      : null,
+    case_classifications:
+      record.case_classification_code || record.case_classification_label || record.case_classification_name
+        ? {
+            code: record.case_classification_code,
+            display_label: record.case_classification_label,
+            name: record.case_classification_name,
+          }
+        : null,
+  };
+}
+
+export async function getCaseDetailsPageById(
+  caseId: number,
+): Promise<SupabaseQueryResult<CaseDetailsPageViewRecord | null>> {
+  return runSupabaseQuery(
+    "getCaseDetailsPageById",
+    "v_cases_display",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      const response = (await supabase
+        .from("v_case_details_page" as never)
+        .select("*")
+        .eq("id" as never, caseId)
+        .maybeSingle()) as unknown as {
+        data: CaseDetailsPageViewRawRecord | null;
+        error: unknown;
+      };
+
+      if (response.error) {
+        return { data: null, error: response.error };
+      }
+
+      if (!response.data) {
+        return { data: null, error: null };
+      }
+
+      return {
+        data: withCaseDetailsPageRelations(response.data),
+        error: null,
+      };
+    },
+    null,
+  );
+}
 
 export type PersonAddressRecord = Pick<
   TableRow<"person_addresses">,
@@ -1250,8 +1379,12 @@ export async function getCaseDetailsById(
         error: unknown;
       };
 
-      if (response.error || !response.data) {
-        return response;
+      if (response.error) {
+        return { data: null, error: response.error };
+      }
+
+      if (!response.data) {
+        return { data: null, error: null };
       }
 
       return {

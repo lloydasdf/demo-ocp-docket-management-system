@@ -26,28 +26,24 @@ import {
 import { Separator } from "@/components/ui/separator";
 import {
   getCaseAttachmentsIndex,
-  getCaseCompactById,
   getCaseCourtDetails,
-  getCaseDetailsById,
+  getCaseDetailsPageById,
   getCaseMotions,
   getCaseParticipants,
   getCasePetitionsForReview,
   getCaseTimelineEvents,
   type CaseCourtRecord,
-  type CaseDetailsRecord,
+  type CaseDetailsPageViewRecord,
   type CaseMotionRecord,
   type CaseParticipantRecord,
   type CasePetitionForReviewRecord,
   type CaseTimelineEventRecord,
 } from "@/lib/supabase/queries";
-import type {
-  TableRow as SupabaseTableRow,
-  ViewRow,
-} from "@/lib/supabase/types";
+import type { TableRow as SupabaseTableRow } from "@/lib/supabase/types";
 
 type CaseDetailsState = {
-  compact: ViewRow<"v_cases_display"> | null;
-  details: CaseDetailsRecord | null;
+  compact: CaseDetailsPageViewRecord | null;
+  details: CaseDetailsPageViewRecord | null;
   participants: CaseParticipantRecord[];
   timeline: CaseTimelineEventRecord[];
   courts: CaseCourtRecord[];
@@ -530,8 +526,7 @@ export default function CaseDetailsPage() {
       setErrorMessage(null);
 
       const [
-        compact,
-        details,
+        caseDetailsPage,
         participants,
         attachments,
         timeline,
@@ -539,8 +534,7 @@ export default function CaseDetailsPage() {
         motions,
         petitionsForReview,
       ] = await Promise.all([
-        getCaseCompactById(caseId),
-        getCaseDetailsById(caseId),
+        getCaseDetailsPageById(caseId),
         getCaseParticipants(caseId),
         getCaseAttachmentsIndex(caseId),
         getCaseTimelineEvents(caseId),
@@ -553,7 +547,7 @@ export default function CaseDetailsPage() {
         return;
       }
 
-      const criticalError = details.error ?? compact.error;
+      const criticalError = caseDetailsPage.error;
 
       if (criticalError) {
         setErrorMessage(criticalError.message);
@@ -574,8 +568,8 @@ export default function CaseDetailsPage() {
         .filter((message): message is string => Boolean(message));
 
       setData({
-        compact: compact.data,
-        details: details.data,
+        compact: caseDetailsPage.data,
+        details: caseDetailsPage.data,
         participants: participants.data ?? [],
         attachments: attachments.data ?? [],
         timeline: timeline.data ?? [],
