@@ -4,21 +4,28 @@ _Last updated: 2026-06-21_
 
 ## Current status
 
-The case list, case details, clearance enrichment, and person details page flows have been moved toward view-backed reads, but **zero frontend interaction with base tables has not yet been achieved**.
+**Zero browser/client runtime interaction with PostgreSQL base tables has been achieved for `lib/supabase/queries.ts` and the app/component code audited in this pass.**
 
-This change adds the missing reference/supporting read views needed for the next reroute step without changing the `/cases` staged loading, sorting, filters, dropdown values, or existing client-side data derivation.
+Browser/client-accessible data access now uses only:
 
-## Confirmed view/RPC-backed page flows
+- page/read-model views;
+- `v_ref_*` reference views;
+- existing Supabase RPC calls;
+- Supabase Auth APIs.
+
+The `/cases` page behavior was intentionally preserved: no UI, dropdown, staged loading, sorting, filtering, search behavior, or client-side dropdown-value derivation was changed.
+
+## View/RPC-backed page flows
 
 - `/cases` list uses `v_docket_shell`, `v_docket_participants`, `v_docket_case_violation_classification`, and `v_docket_quickdetails` for staged list hydration.
 - `/cases/[caseId]` uses `v_case_details_page` for header/core details and `v_case_timeline` for timeline rows.
-- Case sub-sections use view-backed helpers for participants, attachments, courts, motions, petitions, and clearance participant attributes.
+- Case detail sub-sections use view-backed helpers for participants, attachments, courts, motions, petitions, assignments, status history, and clearance participant attributes.
 - `/persons/[personId]` reads person details from `v_person_details` and associated cases through `v_case_participants_detail` plus the docket read-model views.
-- Clearance search still uses existing read RPCs and enriches results with frontend read views.
+- Clearance search still uses the existing read RPCs and enriches results with frontend read views.
 
-## Reference/supporting views now available
+## Reference/supporting views used by lookup helpers
 
-The migration `supabase/migrations/20260621000002_reference_read_views.sql` creates or refreshes these lookup/read views for the remaining frontend helper reroutes:
+The remaining frontend lookup/read helpers are rerouted to these views:
 
 - `v_ref_docket_types`
 - `v_ref_case_statuses`
@@ -35,37 +42,21 @@ The migration `supabase/migrations/20260621000002_reference_read_views.sql` crea
 - `v_case_assignment_detail`
 - `v_case_status_history_detail`
 
-All of these views are development-open read models: no RLS policies, no permission filters, no `security_invoker`, `SELECT` granted to `authenticated`, and PostgREST schema reload requested.
+## Mutation isolation
 
-## Remaining direct frontend `.from(...)` interactions to reroute
+Browser mutation helpers that previously inserted or updated base tables are now isolated so they do not perform direct `.from(...).insert(...)`, `.update(...)`, `.delete(...)`, or `.upsert(...)` operations from browser/client code.
 
-`lib/supabase/queries.ts` still contains direct base-table reads/mutations in older helpers and form-oriented utilities. These must be rerouted or isolated before we can say zero base-table browser interaction is complete.
+- `assignProsecutorToCase` returns a guarded failure until a server-only action or existing RPC-backed implementation is provided.
+- `unassignActiveProsecutorFromCase` returns a guarded failure until a server-only action or existing RPC-backed implementation is provided.
+- `createNewDocketEntry` returns a guarded failure until a server-only action or existing RPC-backed implementation is provided.
+- The internal docket-counter advancement helper is also guarded and no longer writes through the browser client.
 
-### Lookup/read helpers still requiring reroute
+Existing Supabase Auth usage and existing RPC calls remain unchanged.
 
-- `docket_types`
-- `case_statuses`
-- `cases`
-- `case_participants`
-- `persons`
-- `prosecutors`
-- `violations`
-- `audit_logs`
-- `participant_roles`
-- `address_types`
-- `users`
-- `docket_sequence_counters`
-- `addresses`
+## Audit result
 
-### Browser mutation helpers still requiring removal/isolation
+- Direct browser/client `.from(...)` calls now point to views or the existing view-name helper path.
+- No browser/client `.from(...)` call targets a PostgreSQL base table.
+- No browser/client `.insert(...)`, `.update(...)`, `.delete(...)`, or `.upsert(...)` call remains in the audited app/component/query code.
 
-- `assignProsecutorToCase`
-- `unassignActiveProsecutorFromCase`
-- `createNewDocketEntry`
-- internal docket-counter writes used by docket creation
-
-These should be removed from browser code or replaced by server-only code / existing RPC-backed flows before declaring the frontend fully read-view-only.
-
-## Conclusion
-
-**Zero frontend interaction with PostgreSQL base tables has not yet been achieved.** The missing database-side read models now exist, but `lib/supabase/queries.ts` still needs a focused follow-up to reroute the remaining lookup helpers and isolate/remove browser mutation helpers.
+**Conclusion: zero frontend base-table interaction is achieved for the audited browser/client code.**

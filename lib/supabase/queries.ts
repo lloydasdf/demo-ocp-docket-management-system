@@ -285,7 +285,7 @@ export type CasesCompactQueryParams = {
 
 export async function verifySupabaseConnection(): Promise<
   SupabaseQueryResult<{
-    checkedTable: "docket_types";
+    checkedTable: "v_ref_docket_types";
     rowCount: number;
     checkedAt: string;
   }>
@@ -294,85 +294,36 @@ export async function verifySupabaseConnection(): Promise<
 
   return runSupabaseQuery(
     "verifySupabaseConnection",
-    "docket_types",
+    "v_ref_docket_types" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
-      const { data, error } = await supabase
-        .from("docket_types")
+      const { data, error } = (await supabase
+        .from("v_ref_docket_types" as never)
         .select("id")
-        .limit(1);
-
-      return {
-        data: data
-          ? {
-              checkedTable: "docket_types" as const,
-              rowCount: data.length,
-              checkedAt,
-            }
-          : null,
-        error,
-      };
+        .limit(1)) as unknown as { data: { id: number }[] | null; error: unknown };
+      return { data: data ? { checkedTable: "v_ref_docket_types" as const, rowCount: data.length, checkedAt } : null, error };
     },
-    {
-      checkedTable: "docket_types",
-      rowCount: 0,
-      checkedAt,
-    },
+    { checkedTable: "v_ref_docket_types", rowCount: 0, checkedAt },
   );
 }
 
-export async function getDocketTypes(): Promise<
-  SupabaseQueryResult<TableRow<"docket_types">[]>
-> {
-  return runSupabaseQuery(
-    "getDocketTypes",
-    "docket_types",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("docket_types")
-        .select("*")
-        .order("sort_order", { ascending: true });
-    },
-    [],
-  );
+export async function getDocketTypes(): Promise<SupabaseQueryResult<TableRow<"docket_types">[]>> {
+  return runSupabaseQuery("getDocketTypes", "v_ref_docket_types" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_ref_docket_types" as never).select("*").order("sort_order" as never, { ascending: true })) as unknown as { data: TableRow<"docket_types">[] | null; error: unknown };
+  }, []);
 }
 
-export async function getCaseStatuses(): Promise<
-  SupabaseQueryResult<TableRow<"case_statuses">[]>
-> {
-  return runSupabaseQuery(
-    "getCaseStatuses",
-    "case_statuses",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("case_statuses")
-        .select("*")
-        .order("sort_order", { ascending: true });
-    },
-    [],
-  );
+export async function getCaseStatuses(): Promise<SupabaseQueryResult<TableRow<"case_statuses">[]>> {
+  return runSupabaseQuery("getCaseStatuses", "v_ref_case_statuses" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_ref_case_statuses" as never).select("*").order("sort_order" as never, { ascending: true })) as unknown as { data: TableRow<"case_statuses">[] | null; error: unknown };
+  }, []);
 }
 
-export async function getCases(
-  limit?: number,
-): Promise<SupabaseQueryResult<TableRow<"cases">[]>> {
-  const safeLimit = normalizeLimit(limit, 50, 250);
-
-  return runSupabaseQuery(
-    "getCases",
-    "cases",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("cases")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(safeLimit);
-    },
-    [],
-  );
+export async function getCases(limit?: number): Promise<SupabaseQueryResult<TableRow<"cases">[]>> {
+  const result = await getDocketShellDisplay({ limit: normalizeLimit(limit, 50, 250) });
+  return result as unknown as SupabaseQueryResult<TableRow<"cases">[]>;
 }
 
 export type DocketShellRecord = {
@@ -692,67 +643,9 @@ export type CasePartyParticipantRecord = Pick<
   organizations: Pick<TableRow<"organizations">, "organization_name"> | null;
 };
 
-export async function getCasePartyParticipantsForCases(
-  caseIds: number[],
-): Promise<SupabaseQueryResult<CasePartyParticipantRecord[]>> {
-  const safeCaseIds = Array.from(
-    new Set(caseIds.filter((caseId) => Number.isFinite(caseId))),
-  );
-  // Keep each request well below Supabase/PostgREST's default 1,000-row cap.
-  // Many cases have multiple participants, so a 500-case chunk can silently
-  // truncate the later case ids and leave the same docket rows unhydrated.
-  const caseIdChunkSize = 100;
-
-  if (safeCaseIds.length === 0) {
-    return ok([]);
-  }
-
-  return runSupabaseQuery(
-    "getCasePartyParticipantsForCases",
-    "case_participants",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      const chunks = [] as Promise<{
-        data: CasePartyParticipantRecord[] | null;
-        error: unknown;
-      }>[];
-
-      for (let start = 0; start < safeCaseIds.length; start += caseIdChunkSize) {
-        const caseIdChunk = safeCaseIds.slice(start, start + caseIdChunkSize);
-        const query = supabase
-          .from("case_participants")
-          .select(
-            `case_id, display_name_snapshot,
-             participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
-             persons:persons!case_participants_person_id_fkey (full_name),
-             organizations:organizations!case_participants_organization_id_fkey (organization_name)`,
-          )
-          .in("case_id", caseIdChunk)
-          .order("case_id", { ascending: true })
-          .order("participant_order", { ascending: true, nullsFirst: false })
-          .order("id", { ascending: true }) as unknown as Promise<{
-            data: CasePartyParticipantRecord[] | null;
-            error: unknown;
-          }>;
-
-        chunks.push(query);
-      }
-
-      const responses = await Promise.all(chunks);
-      const allParticipants: CasePartyParticipantRecord[] = [];
-
-      for (const response of responses) {
-        if (response.error) {
-          return { data: null, error: response.error };
-        }
-
-        allParticipants.push(...(response.data ?? []));
-      }
-
-      return { data: allParticipants, error: null };
-    },
-    [],
-  );
+export async function getCasePartyParticipantsForCases(caseIds: number[]): Promise<SupabaseQueryResult<CasePartyParticipantRecord[]>> {
+  const result = await getCaseParticipantsForCases(caseIds);
+  return result as unknown as SupabaseQueryResult<CasePartyParticipantRecord[]>;
 }
 
 export type CaseClassificationSummaryRecord = Pick<TableRow<"cases">, "id"> & {
@@ -761,59 +654,13 @@ export type CaseClassificationSummaryRecord = Pick<TableRow<"cases">, "id"> & {
     | null;
 };
 
-export async function getCaseClassificationsForCases(
-  caseIds: number[],
-): Promise<SupabaseQueryResult<CaseClassificationSummaryRecord[]>> {
-  const safeCaseIds = Array.from(
-    new Set(caseIds.filter((caseId) => Number.isFinite(caseId))),
-  );
-  const caseIdChunkSize = 1000;
-
-  if (safeCaseIds.length === 0) {
-    return ok([]);
-  }
-
-  return runSupabaseQuery(
-    "getCaseClassificationsForCases",
-    "cases",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      const chunks = [] as Promise<{
-        data: CaseClassificationSummaryRecord[] | null;
-        error: unknown;
-      }>[];
-
-      for (let start = 0; start < safeCaseIds.length; start += caseIdChunkSize) {
-        const caseIdChunk = safeCaseIds.slice(start, start + caseIdChunkSize);
-        const query = supabase
-          .from("cases")
-          .select(
-            "id, case_classifications:case_classifications!cases_case_classification_id_fkey (display_label)",
-          )
-          .in("id", caseIdChunk) as unknown as Promise<{
-            data: CaseClassificationSummaryRecord[] | null;
-            error: unknown;
-          }>;
-
-        chunks.push(query);
-      }
-
-      const responses = await Promise.all(chunks);
-      const classifications: CaseClassificationSummaryRecord[] = [];
-
-      for (const response of responses) {
-        if (response.error) {
-          return { data: null, error: response.error };
-        }
-
-        classifications.push(...(response.data ?? []));
-      }
-
-      return { data: classifications, error: null };
-    },
-    [],
-  );
+export async function getCaseClassificationsForCases(caseIds: number[]): Promise<SupabaseQueryResult<CaseClassificationSummaryRecord[]>> {
+  const result = await getDocketCaseLabelsForCases(caseIds);
+  if (result.error) return { data: null, error: result.error };
+  return { data: result.data.map((row) => ({ id: row.id, case_classifications: row.case_classification_label ? { display_label: row.case_classification_label } : null })), error: null };
 }
+
+export type CasesTableQueryParams = CasesCompactQueryParams;
 
 export type CasesTableRecord = TableRow<"cases"> & {
   docket_display_number?: string | null;
@@ -843,172 +690,22 @@ export type CasesTableRecord = TableRow<"cases"> & {
   case_private_details: CasePrivateDetailsRecord | null;
 };
 
-export async function getCasesFromTable(
-  params: CasesCompactQueryParams = {},
-): Promise<SupabaseQueryResult<CasesTableRecord[]>> {
-  const { docketType, docketYear, limit } = params;
-
-  return runSupabaseQuery(
-    "getCasesFromTable",
-    "cases",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      const pageSize = limit === undefined ? 1000 : normalizeLimit(limit, 50, 250);
-      const shouldFetchAllPages = limit === undefined;
-      const allCases: CasesTableRecord[] = [];
-      let docketTypeId: number | null = null;
-
-      if (docketType && docketType !== "All") {
-        const docketTypeResponse = (await supabase
-          .from("docket_types")
-          .select("id")
-          .eq("prefix", docketType)
-          .maybeSingle()) as {
-          data: Pick<TableRow<"docket_types">, "id"> | null;
-          error: unknown;
-        };
-
-        if (docketTypeResponse.error) {
-          return { data: null, error: docketTypeResponse.error };
-        }
-
-        if (!docketTypeResponse.data) {
-          return { data: [], error: null };
-        }
-
-        docketTypeId = docketTypeResponse.data.id;
-      }
-
-      for (let start = 0; ; start += pageSize) {
-        let query = supabase
-          .from("cases")
-          .select(
-            `*,
-            docket_types:docket_types!cases_docket_type_id_fkey (name, prefix),
-            case_classifications:case_classifications!cases_case_classification_id_fkey (display_label),
-            case_violations:case_violations!case_violations_case_id_fkey (
-              raw_violation_text, violation_order,
-              violations:violations!case_violations_violation_id_fkey (canonical_title, short_label, title)
-            ),
-            case_assignments:case_assignments!case_assignments_case_id_fkey (
-              assigned_at, unassigned_at,
-              prosecutors:prosecutors!case_assignments_prosecutor_id_fkey (full_name, short_name)
-            ),
-            case_private_details:case_private_details!case_private_details_case_id_fkey (
-              current_status_id, current_status_date, current_status_raw, current_status_remarks, current_status_approved_date_raw, is_summary_procedure, remarks, source, summary_text,
-              current_status:case_statuses!case_private_details_current_status_id_fkey (code, display_label)
-            )`,
-          )
-          .order("created_at", { ascending: false })
-          .order("id", { ascending: false })
-          .range(start, start + pageSize - 1);
-
-        if (docketTypeId !== null) {
-          query = query.eq("docket_type_id", docketTypeId);
-        }
-
-        if (docketYear !== undefined) {
-          query = query.eq("docket_year", docketYear);
-        }
-
-        const response = (await query) as unknown as {
-          data: CasesTableRecord[] | null;
-          error: unknown;
-        };
-
-        if (response.error) {
-          return response;
-        }
-
-        const page = (response.data ?? []).map((record) =>
-          withFlattenedCasePrivateDetails(record),
-        );
-        allCases.push(...page);
-
-        if (!shouldFetchAllPages || page.length < pageSize) {
-          break;
-        }
-      }
-
-      return { data: dedupeRowsById(allCases), error: null };
-    },
-    [],
-  );
+export async function getCasesFromTable(params: CasesTableQueryParams = {}): Promise<SupabaseQueryResult<CasesTableRecord[]>> {
+  const result = await getCasesDisplay(params);
+  return result as unknown as SupabaseQueryResult<CasesTableRecord[]>;
 }
 
-export async function getLatestCaseDocketYear(
-  docketType: string,
-): Promise<SupabaseQueryResult<number | null>> {
-  return runSupabaseQuery(
-    "getLatestCaseDocketYear",
-    "cases",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      const docketTypeResponse = (await supabase
-        .from("docket_types")
-        .select("id")
-        .eq("prefix", docketType)
-        .maybeSingle()) as {
-        data: Pick<TableRow<"docket_types">, "id"> | null;
-        error: unknown;
-      };
-
-      if (docketTypeResponse.error) {
-        return { data: null, error: docketTypeResponse.error };
-      }
-
-      if (!docketTypeResponse.data) {
-        return { data: null, error: null };
-      }
-
-      const response = (await supabase
-        .from("cases")
-        .select("docket_year")
-        .eq("docket_type_id", docketTypeResponse.data.id)
-        .order("docket_year", { ascending: false })
-        .limit(1)
-        .maybeSingle()) as {
-        data: Pick<TableRow<"cases">, "docket_year"> | null;
-        error: unknown;
-      };
-
-      return { data: response.data?.docket_year ?? null, error: response.error };
-    },
-    null,
-  );
+export async function getLatestCaseDocketYear(docketType: string): Promise<SupabaseQueryResult<number | null>> {
+  return runSupabaseQuery("getLatestCaseDocketYear", "v_docket_shell" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const response = (await supabase.from("v_docket_shell" as never).select("docket_year").eq("docket_type_prefix" as never, docketType).order("docket_year" as never, { ascending: false }).limit(1).maybeSingle()) as unknown as { data: Pick<DocketShellRecord, "docket_year"> | null; error: unknown };
+    return { data: response.data?.docket_year ?? null, error: response.error };
+  }, null);
 }
 
-export async function getCasesCompact(
-  params: CasesCompactQueryParams = {},
-): Promise<SupabaseQueryResult<ViewRow<"v_cases_display">[]>> {
-  const { docketType, docketYear, limit } = params;
-
-  return runSupabaseQuery(
-    "getCasesCompact",
-    "v_cases_display",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      let query = supabase
-        .from("v_cases_display")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (docketType && docketType !== "All") {
-        query = query.eq("docket_type_prefix", docketType);
-      }
-
-      if (docketYear !== undefined) {
-        query = query.eq("docket_year", docketYear);
-      }
-
-      if (limit !== undefined) {
-        query = query.limit(normalizeLimit(limit, 50, 250));
-      }
-
-      return query;
-    },
-    [],
-  );
+export async function getCasesCompact(params: CasesCompactQueryParams = {}): Promise<SupabaseQueryResult<ViewRow<"v_cases_display">[]>> {
+  const result = await getCasesDisplay(params);
+  return result as unknown as SupabaseQueryResult<ViewRow<"v_cases_display">[]>;
 }
 
 export async function getCompactCases(
@@ -1137,7 +834,7 @@ export async function getCaseDetailsPageById(
 ): Promise<SupabaseQueryResult<CaseDetailsPageViewRecord | null>> {
   return runSupabaseQuery(
     "getCaseDetailsPageById",
-    "v_cases_display",
+    "v_case_details_page" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
       const response = (await supabase
@@ -1362,179 +1059,55 @@ export async function getCaseCompactsByIds(
 }
 
 
-export async function getCaseCompactById(
-  caseId: number,
-): Promise<SupabaseQueryResult<ViewRow<"v_cases_display"> | null>> {
-  return runSupabaseQuery(
-    "getCaseCompactById",
-    "v_cases_display",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("v_cases_display")
-        .select("*")
-        .eq("id", caseId)
-        .maybeSingle();
-    },
-    null,
-  );
+export async function getCaseCompactById(caseId: number): Promise<SupabaseQueryResult<ViewRow<"v_cases_display"> | null>> {
+  const result = await getCaseCompactsByIds([caseId]);
+  if (result.error) return { data: null, error: result.error };
+  return { data: (result.data[0] ?? null) as unknown as ViewRow<"v_cases_display"> | null, error: null };
 }
 
-export async function getCaseDetailsById(
-  caseId: number,
-): Promise<SupabaseQueryResult<CaseDetailsRecord | null>> {
-  return runSupabaseQuery(
-    "getCaseDetailsById",
-    "cases",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      const query = supabase
-        .from("cases")
-        .select(
-          `*,
-          case_private_details:case_private_details!case_private_details_case_id_fkey (
-            current_status_id, current_status_date, current_status_raw, current_status_remarks, current_status_approved_date_raw, is_summary_procedure, remarks, source, summary_text,
-            current_status:case_statuses!case_private_details_current_status_id_fkey (code, display_label)
-          ),
-          docket_types:docket_types!cases_docket_type_id_fkey (name, prefix),
-          case_classifications:case_classifications!cases_case_classification_id_fkey (display_label)`,
-        )
-        .eq("id", caseId)
-        .maybeSingle();
-
-      const response = (await query) as unknown as {
-        data: CaseDetailsRecord | null;
-        error: unknown;
-      };
-
-      if (response.error) {
-        return { data: null, error: response.error };
-      }
-
-      if (!response.data) {
-        return { data: null, error: null };
-      }
-
-      return {
-        data: withFlattenedCasePrivateDetails(response.data),
-        error: null,
-      };
-    },
-    null,
-  );
+export async function getCaseDetailsById(caseId: number): Promise<SupabaseQueryResult<CaseDetailsRecord | null>> {
+  const result = await getCaseDetailsPageById(caseId);
+  return result as unknown as SupabaseQueryResult<CaseDetailsRecord | null>;
 }
 
-export async function getCaseById(
-  caseId: number,
-): Promise<SupabaseQueryResult<TableRow<"cases"> | null>> {
-  return runSupabaseQuery(
-    "getCaseById",
-    "cases",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase.from("cases").select("*").eq("id", caseId).single();
-    },
-    null,
-  );
+export async function getCaseById(caseId: number): Promise<SupabaseQueryResult<TableRow<"cases"> | null>> {
+  const result = await getCaseDetailsPageById(caseId);
+  return result as unknown as SupabaseQueryResult<TableRow<"cases"> | null>;
 }
 
-export async function searchCases(
-  query: string,
-  limit?: number,
-): Promise<SupabaseQueryResult<ViewRow<"v_cases_display">[]>> {
+export async function searchCases(query: string, limit?: number): Promise<SupabaseQueryResult<ViewRow<"v_cases_display">[]>> {
+  const safeLimit = normalizeLimit(limit, 25, 100);
+  const safeQuery = query.trim().toLocaleLowerCase();
+  if (!safeQuery) return getCompactCases(safeLimit);
+  const result = await getCasesDisplay();
+  if (result.error) return { data: null, error: result.error };
+  return { data: result.data.filter((row) => [row.docket_display_number, row.summary_text, row.violations, row.prosecutor_full_name].filter(Boolean).some((value) => String(value).toLocaleLowerCase().includes(safeQuery))).slice(0, safeLimit) as unknown as ViewRow<"v_cases_display">[], error: null };
+}
+
+export async function getPersons(limit?: number): Promise<SupabaseQueryResult<TableRow<"persons">[]>> {
+  const safeLimit = normalizeLimit(limit, 50, 250);
+  return runSupabaseQuery("getPersons", "v_person_details" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_person_details" as never).select("*").order("full_name" as never, { ascending: true }).limit(safeLimit)) as unknown as { data: TableRow<"persons">[] | null; error: unknown };
+  }, []);
+}
+
+export async function searchPersons(query: string, limit?: number): Promise<SupabaseQueryResult<TableRow<"persons">[]>> {
   const safeLimit = normalizeLimit(limit, 25, 100);
   const safeQuery = escapeIlikeTerm(query);
-
-  if (!safeQuery) {
-    return getCompactCases(safeLimit);
-  }
-
-  return runSupabaseQuery(
-    "searchCases",
-    "v_cases_display",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("v_cases_display")
-        .select("*")
-        .or(
-          `docket_display_number.ilike.%${safeQuery}%,summary_text.ilike.%${safeQuery}%,violations.ilike.%${safeQuery}%,prosecutor_full_name.ilike.%${safeQuery}%,staff_full_name.ilike.%${safeQuery}%`,
-        )
-        .order("created_at", { ascending: false })
-        .limit(safeLimit);
-    },
-    [],
-  );
+  if (!safeQuery) return getPersons(safeLimit);
+  return runSupabaseQuery("searchPersons", "v_person_details" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_person_details" as never).select("*").or(`full_name.ilike.%${safeQuery}%,first_name.ilike.%${safeQuery}%,last_name.ilike.%${safeQuery}%`).order("full_name" as never, { ascending: true }).limit(safeLimit)) as unknown as { data: TableRow<"persons">[] | null; error: unknown };
+  }, []);
 }
 
-export async function getPersons(
-  limit?: number,
-): Promise<SupabaseQueryResult<TableRow<"persons">[]>> {
+export async function getProsecutors(limit?: number): Promise<SupabaseQueryResult<TableRow<"prosecutors">[]>> {
   const safeLimit = normalizeLimit(limit, 50, 250);
-
-  return runSupabaseQuery(
-    "getPersons",
-    "persons",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("persons")
-        .select("*")
-        .order("full_name", { ascending: true })
-        .limit(safeLimit);
-    },
-    [],
-  );
-}
-
-export async function searchPersons(
-  query: string,
-  limit?: number,
-): Promise<SupabaseQueryResult<TableRow<"persons">[]>> {
-  const safeLimit = normalizeLimit(limit, 25, 100);
-  const safeQuery = escapeIlikeTerm(query);
-
-  if (!safeQuery) {
-    return getPersons(safeLimit);
-  }
-
-  return runSupabaseQuery(
-    "searchPersons",
-    "persons",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("persons")
-        .select("*")
-        .or(
-          `full_name.ilike.%${safeQuery}%,first_name.ilike.%${safeQuery}%,last_name.ilike.%${safeQuery}%`,
-        )
-        .order("full_name", { ascending: true })
-        .limit(safeLimit);
-    },
-    [],
-  );
-}
-
-export async function getProsecutors(
-  limit?: number,
-): Promise<SupabaseQueryResult<TableRow<"prosecutors">[]>> {
-  const safeLimit = normalizeLimit(limit, 50, 250);
-
-  return runSupabaseQuery(
-    "getProsecutors",
-    "prosecutors",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("prosecutors")
-        .select("*")
-        .eq("is_active", true)
-        .order("full_name", { ascending: true })
-        .limit(safeLimit);
-    },
-    [],
-  );
+  return runSupabaseQuery("getProsecutors", "v_ref_prosecutors" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_ref_prosecutors" as never).select("*").order("full_name" as never, { ascending: true }).limit(safeLimit)) as unknown as { data: TableRow<"prosecutors">[] | null; error: unknown };
+  }, []);
 }
 
 export async function getCaseParticipants(
@@ -1608,29 +1181,11 @@ export async function getCaseParticipantsForCases(
   );
 }
 
-export async function getCaseAssignments(
-  caseId: number,
-): Promise<SupabaseQueryResult<CaseAssignmentRecord[]>> {
-  return runSupabaseQuery(
-    "getCaseAssignments",
-    "case_assignments",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      const query = supabase
-        .from("case_assignments")
-        .select(
-          "*, prosecutors:prosecutors!case_assignments_prosecutor_id_fkey (full_name, short_name), staff:staff!case_assignments_staff_id_fkey (full_name, short_name)",
-        )
-        .eq("case_id", caseId)
-        .order("assigned_at", { ascending: false });
-
-      return query as unknown as Promise<{
-        data: CaseAssignmentRecord[] | null;
-        error: unknown;
-      }>;
-    },
-    [],
-  );
+export async function getCaseAssignments(caseId: number): Promise<SupabaseQueryResult<CaseAssignmentRecord[]>> {
+  return runSupabaseQuery("getCaseAssignments", "v_case_assignment_detail" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_case_assignment_detail" as never).select("*").eq("case_id" as never, caseId).order("assigned_at" as never, { ascending: false })) as unknown as { data: CaseAssignmentRecord[] | null; error: unknown };
+  }, []);
 }
 
 export interface AssignProsecutorInput {
@@ -1639,117 +1194,21 @@ export interface AssignProsecutorInput {
   remarks?: string;
 }
 
-export async function assignProsecutorToCase(
-  input: AssignProsecutorInput,
-): Promise<SupabaseQueryResult<TableRow<"case_assignments">>> {
-  const environment = getSupabaseEnvironmentStatus();
-
-  if (!environment.isConfigured) {
-    return fail({
-      message:
-        "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable live prosecutor assignments.",
-      table: "case_assignments",
-      operation: "assignProsecutorToCase",
-    });
-  }
-
-  try {
-    const currentUserQuery = await getCurrentDatabaseUserRecord();
-
-    if (currentUserQuery.error || !currentUserQuery.data) {
-      return fail(
-        toQueryError(
-          currentUserQuery.error ??
-            new Error("No active database user is available for prosecutor assignment."),
-          "assignProsecutorToCase",
-          "users",
-        ),
-      );
-    }
-
-    const supabase = await getSupabaseBrowserClient();
-    const { data, error } = await supabase
-      .from("case_assignments")
-      .insert({
-        assigned_at: new Date().toISOString(),
-        assigned_by_user_id: currentUserQuery.data.id,
-        case_id: input.caseId,
-        prosecutor_id: input.prosecutorId,
-        remarks: input.remarks?.trim() || null,
-      })
-      .select("*")
-      .single();
-
-    if (error || !data) {
-      return fail(toQueryError(error, "assignProsecutorToCase", "case_assignments"));
-    }
-
-    return ok(data);
-  } catch (error) {
-    return fail(toQueryError(error, "assignProsecutorToCase", "case_assignments"));
-  }
+export async function assignProsecutorToCase(input: AssignProsecutorInput): Promise<SupabaseQueryResult<TableRow<"case_assignments">>> {
+  void input;
+  return fail({ message: "Direct browser mutations are disabled during the frontend read-view refactor. Re-enable assignment through a server-only action or existing RPC.", table: "case_assignments", operation: "assignProsecutorToCase" });
 }
 
-export async function unassignActiveProsecutorFromCase(
-  caseId: number,
-): Promise<SupabaseQueryResult<TableRow<"case_assignments">[]>> {
-  const environment = getSupabaseEnvironmentStatus();
-
-  if (!environment.isConfigured) {
-    return fail({
-      message:
-        "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable live prosecutor assignments.",
-      table: "case_assignments",
-      operation: "unassignActiveProsecutorFromCase",
-    });
-  }
-
-  try {
-    const supabase = await getSupabaseBrowserClient();
-    const { data, error } = await supabase
-      .from("case_assignments")
-      .update({ unassigned_at: new Date().toISOString() })
-      .eq("case_id", caseId)
-      .is("unassigned_at", null)
-      .select("*");
-
-    if (error) {
-      return fail(
-        toQueryError(error, "unassignActiveProsecutorFromCase", "case_assignments"),
-      );
-    }
-
-    return ok(data ?? []);
-  } catch (error) {
-    return fail(
-      toQueryError(error, "unassignActiveProsecutorFromCase", "case_assignments"),
-    );
-  }
+export async function unassignActiveProsecutorFromCase(caseId: number): Promise<SupabaseQueryResult<TableRow<"case_assignments">[]>> {
+  void caseId;
+  return fail({ message: "Direct browser mutations are disabled during the frontend read-view refactor. Re-enable unassignment through a server-only action or existing RPC.", table: "case_assignments", operation: "unassignActiveProsecutorFromCase" });
 }
 
-export async function getCaseStatusHistory(
-  caseId: number,
-): Promise<SupabaseQueryResult<CaseStatusHistoryRecord[]>> {
-  return runSupabaseQuery(
-    "getCaseStatusHistory",
-    "case_status_history",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      const query = supabase
-        .from("case_status_history")
-        .select(
-          "*, from_status:case_statuses!case_status_history_from_status_id_fkey (code, display_label), to_status:case_statuses!case_status_history_to_status_id_fkey (code, display_label)",
-        )
-        .eq("case_id", caseId)
-        .order("changed_at", { ascending: false });
-
-      return query as unknown as Promise<{
-        data: CaseStatusHistoryRecord[] | null;
-        error: unknown;
-      }>;
-    },
-    [],
-  );
+export async function getCaseStatusHistory(caseId: number): Promise<SupabaseQueryResult<CaseStatusHistoryRecord[]>> {
+  return runSupabaseQuery("getCaseStatusHistory", "v_case_status_history_detail" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_case_status_history_detail" as never).select("*").eq("case_id" as never, caseId).order("changed_at" as never, { ascending: false })) as unknown as { data: CaseStatusHistoryRecord[] | null; error: unknown };
+  }, []);
 }
 
 export type CaseCourtRecord = TableRow<"case_courts"> & {
@@ -1980,45 +1439,20 @@ export async function voidCaseEvent(
   }
 }
 
-export async function getViolations(
-  limit?: number,
-): Promise<SupabaseQueryResult<TableRow<"violations">[]>> {
+export async function getViolations(limit?: number): Promise<SupabaseQueryResult<TableRow<"violations">[]>> {
   const safeLimit = normalizeLimit(limit, 50, 250);
-
-  return runSupabaseQuery(
-    "getViolations",
-    "violations",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("violations")
-        .select("*")
-        .eq("is_active", true)
-        .order("title", { ascending: true })
-        .limit(safeLimit);
-    },
-    [],
-  );
+  return runSupabaseQuery("getViolations", "v_ref_violations" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_ref_violations" as never).select("*").order("title" as never, { ascending: true }).limit(safeLimit)) as unknown as { data: TableRow<"violations">[] | null; error: unknown };
+  }, []);
 }
 
-export async function getRecentAuditLogs(
-  limit?: number,
-): Promise<SupabaseQueryResult<TableRow<"audit_logs">[]>> {
+export async function getRecentAuditLogs(limit?: number): Promise<SupabaseQueryResult<TableRow<"audit_logs">[]>> {
   const safeLimit = normalizeLimit(limit, 20, 100);
-
-  return runSupabaseQuery(
-    "getRecentAuditLogs",
-    "audit_logs",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("audit_logs")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(safeLimit);
-    },
-    [],
-  );
+  return runSupabaseQuery("getRecentAuditLogs", "v_recent_audit_logs" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_recent_audit_logs" as never).select("*").order("created_at" as never, { ascending: false }).limit(safeLimit)) as unknown as { data: TableRow<"audit_logs">[] | null; error: unknown };
+  }, []);
 }
 
 export async function getDashboardStats(): Promise<
@@ -2029,12 +1463,15 @@ export async function getDashboardStats(): Promise<
 > {
   return runSupabaseQuery(
     "getDashboardStats",
-    "v_cases_display",
+    "v_docket_quickdetails" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
-      const { data, error } = await supabase
-        .from("v_cases_display")
-        .select("id,current_status_code");
+      const { data, error } = (await supabase
+        .from("v_docket_quickdetails" as never)
+        .select("id,current_status_code")) as unknown as {
+        data: Pick<DocketQuickDetailsRecord, "id" | "current_status_code">[] | null;
+        error: unknown;
+      };
 
       if (error || !data) {
         return { data: null, error };
@@ -2186,40 +1623,18 @@ export async function searchClearancePhoneticMatches(
   );
 }
 
-export async function getParticipantRoles(): Promise<
-  SupabaseQueryResult<TableRow<"participant_roles">[]>
-> {
-  return runSupabaseQuery(
-    "getParticipantRoles",
-    "participant_roles",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("participant_roles")
-        .select("*")
-        .eq("is_active", true)
-        .order("display_label", { ascending: true });
-    },
-    [],
-  );
+export async function getParticipantRoles(): Promise<SupabaseQueryResult<TableRow<"participant_roles">[]>> {
+  return runSupabaseQuery("getParticipantRoles", "v_ref_participant_roles" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_ref_participant_roles" as never).select("*").order("display_label" as never, { ascending: true })) as unknown as { data: TableRow<"participant_roles">[] | null; error: unknown };
+  }, []);
 }
 
-export async function getAddressTypes(): Promise<
-  SupabaseQueryResult<TableRow<"address_types">[]>
-> {
-  return runSupabaseQuery(
-    "getAddressTypes",
-    "address_types",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("address_types")
-        .select("*")
-        .eq("is_active", true)
-        .order("display_label", { ascending: true });
-    },
-    [],
-  );
+export async function getAddressTypes(): Promise<SupabaseQueryResult<TableRow<"address_types">[]>> {
+  return runSupabaseQuery("getAddressTypes", "v_ref_address_types" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_ref_address_types" as never).select("*").order("display_label" as never, { ascending: true })) as unknown as { data: TableRow<"address_types">[] | null; error: unknown };
+  }, []);
 }
 
 export type DatabaseUserSummary = Pick<TableRow<"users">, "email" | "id">;
@@ -2230,54 +1645,40 @@ async function getCurrentDatabaseUserRecord() {
   const authEmail = authData.user?.email;
 
   if (authEmail) {
-    const authenticatedUserQuery = await supabase
-      .from("users")
+    const authenticatedUserQuery = (await supabase
+      .from("v_ref_users" as never)
       .select("id,email")
-      .eq("email", authEmail)
-      .eq("is_active", true)
-      .maybeSingle();
+      .eq("email" as never, authEmail)
+      .maybeSingle()) as unknown as {
+      data: DatabaseUserSummary | null;
+      error: unknown;
+    };
 
     if (authenticatedUserQuery.error || authenticatedUserQuery.data) {
       return authenticatedUserQuery;
     }
   }
 
-  return supabase
-    .from("users")
+  return (await supabase
+    .from("v_ref_users" as never)
     .select("id,email")
-    .eq("is_active", true)
-    .order("id", { ascending: true })
+    .order("id" as never, { ascending: true })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data: DatabaseUserSummary | null;
+    error: unknown;
+  };
 }
 
-export async function getCurrentDatabaseUser(): Promise<
-  SupabaseQueryResult<DatabaseUserSummary | null>
-> {
-  return runSupabaseQuery(
-    "getCurrentDatabaseUser",
-    "users",
-    async () => getCurrentDatabaseUserRecord(),
-    null,
-  );
+export async function getCurrentDatabaseUser(): Promise<SupabaseQueryResult<DatabaseUserSummary | null>> {
+  return runSupabaseQuery("getCurrentDatabaseUser", "v_ref_users" as RelationName, async () => getCurrentDatabaseUserRecord(), null);
 }
 
-export async function getActiveUsers(): Promise<
-  SupabaseQueryResult<DatabaseUserSummary[]>
-> {
-  return runSupabaseQuery(
-    "getActiveUsers",
-    "users",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("users")
-        .select("id,email")
-        .eq("is_active", true)
-        .order("email", { ascending: true });
-    },
-    [],
-  );
+export async function getActiveUsers(): Promise<SupabaseQueryResult<DatabaseUserSummary[]>> {
+  return runSupabaseQuery("getActiveUsers", "v_ref_users" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_ref_users" as never).select("id,email").order("email" as never, { ascending: true })) as unknown as { data: DatabaseUserSummary[] | null; error: unknown };
+  }, []);
 }
 
 async function getNextDocketNumberValue(
@@ -2285,12 +1686,15 @@ async function getNextDocketNumberValue(
   docketYear: number,
 ) {
   const supabase = await getSupabaseBrowserClient();
-  const counterQuery = await supabase
-    .from("docket_sequence_counters")
+  const counterQuery = (await supabase
+    .from("v_docket_sequence_lookup" as never)
     .select("next_number")
-    .eq("docket_type_id", docketTypeId)
-    .eq("docket_year", docketYear)
-    .maybeSingle();
+    .eq("docket_type_id" as never, docketTypeId)
+    .eq("docket_year" as never, docketYear)
+    .maybeSingle()) as unknown as {
+    data: { next_number: number } | null;
+    error: unknown;
+  };
 
   if (counterQuery.error || counterQuery.data) {
     return {
@@ -2299,14 +1703,17 @@ async function getNextDocketNumberValue(
     };
   }
 
-  const latestCaseQuery = await supabase
-    .from("cases")
+  const latestCaseQuery = (await supabase
+    .from("v_docket_shell" as never)
     .select("docket_number")
-    .eq("docket_type_id", docketTypeId)
-    .eq("docket_year", docketYear)
-    .order("docket_number", { ascending: false })
+    .eq("docket_type_id" as never, docketTypeId)
+    .eq("docket_year" as never, docketYear)
+    .order("docket_number" as never, { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data: Pick<DocketShellRecord, "docket_number"> | null;
+    error: unknown;
+  };
 
   return {
     data: latestCaseQuery.data?.docket_number
@@ -2316,79 +1723,29 @@ async function getNextDocketNumberValue(
   };
 }
 
-export async function getNextDocketNumber(
-  docketTypeId: number,
-  docketYear: number,
-): Promise<SupabaseQueryResult<number>> {
-  if (!Number.isFinite(docketTypeId) || !Number.isFinite(docketYear)) {
-    return ok(1);
-  }
-
-  return runSupabaseQuery(
-    "getNextDocketNumber",
-    "docket_sequence_counters",
-    async () => getNextDocketNumberValue(docketTypeId, docketYear),
-    1,
-  );
+export async function getNextDocketNumber(docketTypeId: number, docketYear: number): Promise<SupabaseQueryResult<number>> {
+  if (!Number.isFinite(docketTypeId) || !Number.isFinite(docketYear)) return ok(1);
+  return runSupabaseQuery("getNextDocketNumber", "v_docket_sequence_lookup" as RelationName, async () => getNextDocketNumberValue(docketTypeId, docketYear), 1);
 }
 
-export async function searchAddressSuggestions(
-  query: string,
-  limit?: number,
-): Promise<SupabaseQueryResult<TableRow<"addresses">[]>> {
+export async function searchAddressSuggestions(query: string, limit?: number): Promise<SupabaseQueryResult<TableRow<"addresses">[]>> {
   const safeLimit = normalizeLimit(limit, 8, 25);
   const safeQuery = escapeIlikeTerm(query);
-
-  if (!safeQuery) {
-    return ok([]);
-  }
-
-  return runSupabaseQuery(
-    "searchAddressSuggestions",
-    "addresses",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("addresses")
-        .select("*")
-        .or(
-          `line1.ilike.%${safeQuery}%,line2.ilike.%${safeQuery}%,barangay.ilike.%${safeQuery}%,city.ilike.%${safeQuery}%,province.ilike.%${safeQuery}%,region.ilike.%${safeQuery}%`,
-        )
-        .order("created_at", { ascending: false })
-        .limit(safeLimit);
-    },
-    [],
-  );
+  if (!safeQuery) return ok([]);
+  return runSupabaseQuery("searchAddressSuggestions", "v_address_suggestions" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_address_suggestions" as never).select("*").or(`line1.ilike.%${safeQuery}%,line2.ilike.%${safeQuery}%,barangay.ilike.%${safeQuery}%,city.ilike.%${safeQuery}%,province.ilike.%${safeQuery}%,region.ilike.%${safeQuery}%`).order("created_at" as never, { ascending: false }).limit(safeLimit)) as unknown as { data: TableRow<"addresses">[] | null; error: unknown };
+  }, []);
 }
 
-export async function searchViolationSuggestions(
-  query: string,
-  limit?: number,
-): Promise<SupabaseQueryResult<TableRow<"violations">[]>> {
+export async function searchViolationSuggestions(query: string, limit?: number): Promise<SupabaseQueryResult<TableRow<"violations">[]>> {
   const safeLimit = normalizeLimit(limit, 8, 25);
   const safeQuery = escapeIlikeTerm(query);
-
-  if (!safeQuery) {
-    return getViolations(safeLimit);
-  }
-
-  return runSupabaseQuery(
-    "searchViolationSuggestions",
-    "violations",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("violations")
-        .select("*")
-        .eq("is_active", true)
-        .or(
-          `title.ilike.%${safeQuery}%,short_label.ilike.%${safeQuery}%,law_reference.ilike.%${safeQuery}%,reference_code.ilike.%${safeQuery}%,description.ilike.%${safeQuery}%`,
-        )
-        .order("title", { ascending: true })
-        .limit(safeLimit);
-    },
-    [],
-  );
+  if (!safeQuery) return getViolations(safeLimit);
+  return runSupabaseQuery("searchViolationSuggestions", "v_ref_violations" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_ref_violations" as never).select("*").or(`title.ilike.%${safeQuery}%,short_label.ilike.%${safeQuery}%,law_reference.ilike.%${safeQuery}%,reference_code.ilike.%${safeQuery}%,description.ilike.%${safeQuery}%`).order("title" as never, { ascending: true }).limit(safeLimit)) as unknown as { data: TableRow<"violations">[] | null; error: unknown };
+  }, []);
 }
 
 export interface NewDocketPersonInput {
@@ -2511,316 +1868,15 @@ async function advanceDocketCounter(
   docketYear: number,
   issuedNumber: number,
 ) {
-  const supabase = await getSupabaseBrowserClient();
-  const { data: existingCounter, error: counterError } = await supabase
-    .from("docket_sequence_counters")
-    .select("id,next_number")
-    .eq("docket_type_id", docketTypeId)
-    .eq("docket_year", docketYear)
-    .maybeSingle();
-
-  if (counterError) {
-    return counterError;
-  }
-
-  if (existingCounter) {
-    if (existingCounter.next_number > issuedNumber) {
-      return null;
-    }
-
-    const { error } = await supabase
-      .from("docket_sequence_counters")
-      .update({
-        last_issued_number: issuedNumber,
-        next_number: issuedNumber + 1,
-      })
-      .eq("id", existingCounter.id);
-
-    return error;
-  }
-
-  const { error } = await supabase.from("docket_sequence_counters").insert({
-    docket_type_id: docketTypeId,
-    docket_year: docketYear,
-    last_issued_number: issuedNumber,
-    next_number: issuedNumber + 1,
-  });
-
-  return error;
+  void docketTypeId;
+  void docketYear;
+  void issuedNumber;
+  return new Error(
+    "Direct browser mutations are disabled during the frontend read-view refactor.",
+  );
+}
+export async function createNewDocketEntry(input: NewDocketEntryInput): Promise<SupabaseQueryResult<NewDocketEntryResult>> {
+  void input;
+  return fail({ message: "Direct browser mutations are disabled during the frontend read-view refactor. Re-enable docket creation through a server-only action or existing RPC.", table: "cases", operation: "createNewDocketEntry" });
 }
 
-export async function createNewDocketEntry(
-  input: NewDocketEntryInput,
-): Promise<SupabaseQueryResult<NewDocketEntryResult>> {
-  const environment = getSupabaseEnvironmentStatus();
-
-  if (!environment.isConfigured) {
-    return fail({
-      message:
-        "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable live docket creation.",
-      table: "cases",
-      operation: "createNewDocketEntry",
-    });
-  }
-
-  try {
-    const currentUserQuery = await getCurrentDatabaseUserRecord();
-
-    if (currentUserQuery.error || !currentUserQuery.data) {
-      return fail(
-        toQueryError(
-          currentUserQuery.error ?? new Error("No active database user is available for docket creation."),
-          "createNewDocketEntry",
-          "users",
-        ),
-      );
-    }
-
-    const nextDocketNumber = await getNextDocketNumberValue(
-      input.docketTypeId,
-      input.docketYear,
-    );
-
-    if (nextDocketNumber.error || !nextDocketNumber.data) {
-      return fail(
-        toQueryError(
-          nextDocketNumber.error ?? new Error("Unable to determine the next docket number."),
-          "createNewDocketEntry",
-          "docket_sequence_counters",
-        ),
-      );
-    }
-
-    const createdByUserId = currentUserQuery.data.id;
-    const docketNumber = nextDocketNumber.data;
-    const supabase = await getSupabaseBrowserClient();
-    const { data: createdCase, error: caseError } = await supabase
-      .from("cases")
-      .insert({
-        created_by_user_id: createdByUserId,
-        date_received: input.dateReceived,
-        docket_month_code: getDocketMonthCode(input.dateReceived),
-        docket_number: docketNumber,
-        docket_type_id: input.docketTypeId,
-        docket_year: input.docketYear,
-        region_code: cleanString(input.regionCode) ?? "IV-A",
-        updated_by_user_id: createdByUserId,
-      })
-      .select("id,docket_number,docket_year,docket_type_id")
-      .single();
-
-    if (caseError || !createdCase) {
-      return fail(toQueryError(caseError, "createNewDocketEntry", "cases"));
-    }
-
-    const caseId = createdCase.id;
-
-    const { error: privateDetailsError } = await (supabase as any)
-      .from("case_private_details")
-      .insert({
-        case_id: caseId,
-        is_summary_procedure: input.isSummaryProcedure ?? null,
-        remarks: cleanString(input.remarks),
-        source: cleanString(input.source) ?? "manual",
-        summary_text: cleanString(input.summaryText),
-      });
-
-    if (privateDetailsError) {
-      return fail(
-        toQueryError(
-          privateDetailsError,
-          "createNewDocketEntry",
-          "case_private_details" as RelationName,
-        ),
-      );
-    }
-
-    const counterError = await advanceDocketCounter(
-      input.docketTypeId,
-      input.docketYear,
-      docketNumber,
-    );
-
-    if (counterError) {
-      return fail(
-        toQueryError(counterError, "createNewDocketEntry", "docket_sequence_counters"),
-      );
-    }
-
-    for (const [index, person] of input.persons.entries()) {
-      const firstName = cleanString(person.firstName);
-      const lastName = cleanString(person.lastName);
-
-      if (!firstName || !lastName) {
-        continue;
-      }
-
-      const { data: createdPerson, error: personError } = await supabase
-        .from("persons")
-        .insert({
-          age: cleanString(person.age),
-          birth_date: cleanString(person.birthDate),
-          first_name: firstName,
-          full_name: buildFullName(person),
-          gender: cleanString(person.gender),
-          last_name: lastName,
-          middle_name: cleanString(person.middleName),
-          suffix: cleanString(person.suffix),
-        })
-        .select("id")
-        .single();
-
-      if (personError || !createdPerson) {
-        return fail(toQueryError(personError, "createNewDocketEntry", "persons"));
-      }
-
-      const { data: createdParticipant, error: participantError } = await supabase
-        .from("case_participants")
-        .insert({
-          case_id: caseId,
-          participant_order: index + 1,
-          display_name_snapshot: buildFullName(person),
-          participant_kind: "PERSON",
-          person_id: createdPerson.id,
-          role_id: person.roleId,
-        })
-        .select("id")
-        .single();
-
-      if (participantError || !createdParticipant) {
-        return fail(
-          toQueryError(participantError, "createNewDocketEntry", "case_participants"),
-        );
-      }
-
-      const { error: participantPrivateError } = await (supabase as any)
-        .from("case_participant_private_details")
-        .insert({
-          case_id: caseId,
-          case_participant_id: createdParticipant.id,
-          remarks: cleanString(person.remarks),
-          source: "MANUAL_ENTRY",
-        });
-
-      if (participantPrivateError) {
-        return fail(
-          toQueryError(
-            participantPrivateError,
-            "createNewDocketEntry",
-            "case_participant_private_details" as RelationName,
-          ),
-        );
-      }
-
-      const ageText = cleanString(person.age);
-      const ageYears = parseAgeYears(person.age);
-      const gender = normalizeGenderForAttributes(person.gender);
-
-      if (ageText || gender.genderText || gender.genderNormalized !== "UNKNOWN") {
-        const { error: attributesError } = await supabase
-          .from("case_participant_attributes")
-          .insert({
-            age_basis_date: input.dateReceived,
-            age_source: ageText ? "MANUAL_ENTRY" : "UNKNOWN",
-            age_text: ageText,
-            age_years: ageYears,
-            case_participant_id: createdParticipant.id,
-            created_by_user_id: createdByUserId,
-            gender_normalized: gender.genderNormalized,
-            gender_text: gender.genderText,
-            is_minor_at_case: ageYears === null ? null : ageYears < 18,
-            is_senior_at_case: ageFlag(ageYears, 60),
-            source: "MANUAL_ENTRY",
-            updated_by_user_id: createdByUserId,
-          });
-
-        if (attributesError) {
-          return fail(
-            toQueryError(attributesError, "createNewDocketEntry", "case_participant_attributes"),
-          );
-        }
-      }
-    }
-
-    for (const address of input.addresses) {
-      const { data: createdAddress, error: addressError } = await supabase
-        .from("addresses")
-        .insert({
-          barangay: cleanString(address.barangay),
-          city: cleanString(address.city),
-          country: cleanString(address.country) ?? "Philippines",
-          line1: cleanString(address.line1),
-          line2: cleanString(address.line2),
-          province: cleanString(address.province),
-          region: cleanString(address.region),
-          zip_code: cleanString(address.zipCode),
-        })
-        .select("id")
-        .single();
-
-      if (addressError || !createdAddress) {
-        return fail(toQueryError(addressError, "createNewDocketEntry", "addresses"));
-      }
-
-      const { error: caseAddressError } = await supabase
-        .from("case_addresses")
-        .insert({
-          address_id: createdAddress.id,
-          address_type_id: address.addressTypeId,
-          case_id: caseId,
-          is_primary: true,
-          remarks: cleanString(address.remarks),
-        });
-
-      if (caseAddressError) {
-        return fail(
-          toQueryError(caseAddressError, "createNewDocketEntry", "case_addresses"),
-        );
-      }
-    }
-
-    if (input.violations.length > 0) {
-      const { error: violationsError } = await supabase.from("case_violations").insert(
-        input.violations.map((violation, index) => ({
-          case_id: caseId,
-          raw_violation_text: cleanString(violation.rawViolationText),
-          violation_id: violation.violationId,
-          violation_order: index + 1,
-        })),
-      );
-
-      if (violationsError) {
-        return fail(
-          toQueryError(violationsError, "createNewDocketEntry", "case_violations"),
-        );
-      }
-    }
-
-    if (input.initialStatusId) {
-      const { error: statusError } = await supabase
-        .from("case_status_history")
-        .insert({
-          case_id: caseId,
-          changed_by_user_id: createdByUserId,
-          remarks: "Initial status set to Received during docket creation.",
-          status_date: input.dateReceived,
-          to_status_id: input.initialStatusId,
-        });
-
-      if (statusError) {
-        return fail(
-          toQueryError(statusError, "createNewDocketEntry", "case_status_history"),
-        );
-      }
-    }
-
-    return ok({
-      caseId,
-      docketNumber: createdCase.docket_number,
-      docketTypeId: createdCase.docket_type_id,
-      docketYear: createdCase.docket_year,
-    });
-  } catch (error) {
-    return fail(toQueryError(error, "createNewDocketEntry", "cases"));
-  }
-}
