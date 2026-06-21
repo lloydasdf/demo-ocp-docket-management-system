@@ -1,17 +1,121 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { StatusBadge } from '@/components/status-badge';
 import { dockets } from '@/lib/dummy-data';
-import { CaseStatus } from '@/lib/types';
+import { getCasesDisplay, type CasesDisplayRecord } from '@/lib/supabase/queries';
+import type { CaseStatus } from '@/lib/types';
 import { Search as SearchIcon, CheckCircle } from 'lucide-react';
+
+type CompactCase = CasesDisplayRecord;
+
+type CasesPageCache = {
+  cases?: CompactCase[];
+};
+
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v15';
+
+function getFallbackCases(): CompactCase[] {
+  return dockets.flatMap((docket) =>
+    docket.cases.map((caseDetail) => ({
+      prosecutor_full_name: caseDetail.prosecutor ?? null,
+      prosecutor_short_name: caseDetail.prosecutor ?? null,
+      id: Number.parseInt(caseDetail.id.replace(/\D/g, ''), 10) || 0,
+      docket_type_id: 0,
+      complainant:
+        caseDetail.complainants.length > 0
+          ? caseDetail.complainants.map((person) => `${person.firstName} ${person.lastName}`).join(' | ')
+          : null,
+      respondent:
+        caseDetail.respondents.length > 0
+          ? caseDetail.respondents.map((person) => `${person.firstName} ${person.lastName}`).join(' | ')
+          : null,
+      case_classification_label: null,
+      summary_text:
+        caseDetail.complainants.length > 0
+          ? `Complainant: ${caseDetail.complainants[0].firstName} ${caseDetail.complainants[0].lastName}${
+              caseDetail.complainants.length > 1 ? ' et al.' : ''
+            }`
+          : null,
+      created_at: docket.createdDate,
+      current_status_label: caseDetail.status,
+      current_status_code: caseDetail.status,
+      date_received: caseDetail.dateOfIncident,
+      docket_month_code: null,
+      docket_display_number: docket.docketNumber,
+      docket_number: Number.parseInt(docket.docketNumber.match(/\d+$/)?.[0] ?? '', 10) || null,
+      docket_type_prefix: docket.docketNumber.split('-')[0] ?? null,
+      docket_type_name: docket.docketNumber.split('-')[0] ?? null,
+      docket_year: Number.parseInt(docket.docketNumber.match(/\d{4}/)?.[0] ?? '', 10) || null,
+      updated_at: null,
+      violations:
+        caseDetail.violations.length > 0
+          ? caseDetail.violations.map((violation) => violation.statute).join(', ')
+          : null,
+    })) as CompactCase[],
+  );
+}
+
+function readCasesPageCache(): CompactCase[] | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const cachedValue = window.sessionStorage.getItem(CASES_PAGE_CACHE_KEY);
+    if (!cachedValue) {
+      return null;
+    }
+
+    const cache = JSON.parse(cachedValue) as CasesPageCache;
+    return Array.isArray(cache.cases) ? cache.cases : null;
+  } catch {
+    return null;
+  }
+}
+
+function getDocketNumber(caseDetail: CompactCase) {
+  return (
+    caseDetail.docket_display_number ||
+    `${caseDetail.docket_type_prefix ?? 'Case'}-${caseDetail.docket_year ?? '—'}-${String(
+      caseDetail.docket_number ?? '',
+    ).padStart(6, '0')}`
+  );
+}
+
+function getCurrentStatus(caseDetail: CompactCase) {
+  return caseDetail.current_status_label || caseDetail.current_status_code || '—';
+}
+
+function getProsecutor(caseDetail: CompactCase) {
+  return caseDetail.prosecutor_full_name || caseDetail.prosecutor_short_name || 'Unassigned';
+}
+
+function getCaseSearchText(caseDetail: CompactCase) {
+  return [
+    getDocketNumber(caseDetail),
+    caseDetail.summary_text,
+    caseDetail.complainant,
+    caseDetail.respondent,
+    caseDetail.violations,
+    caseDetail.case_classification_label,
+    getProsecutor(caseDetail),
+    getCurrentStatus(caseDetail),
+    caseDetail.docket_type_name,
+    caseDetail.docket_type_prefix,
+    caseDetail.docket_year,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
 
 interface StatusUpdateRecord {
   id: string;
@@ -30,28 +134,66 @@ export default function StatusUpdate() {
   const [updatedBy, setUpdatedBy] = useState('Admin User');
   const [statusUpdates, setStatusUpdates] = useState<StatusUpdateRecord[]>([]);
   const [successMessage, setSuccessMessage] = useState('');
+  const fallbackCases = useMemo(getFallbackCases, []);
+  const [allCases, setAllCases] = useState<CompactCase[]>(fallbackCases);
+  const [isLoadingCases, setIsLoadingCases] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [isUsingFallback, setIsUsingFallback] = useState(false);
 
-  // Get all cases from dockets
-  const allCases = useMemo(() => {
-    return dockets.flatMap((d) =>
-      d.cases.map((c) => ({
-        ...c,
-        docketNumber: d.docketNumber,
-      }))
-    );
-  }, []);
+  useEffect(() => {
+    let isMounted = true;
+    const cachedCases = readCasesPageCache();
 
-  // Filter cases for status update
+    if (cachedCases?.length) {
+      setAllCases(cachedCases);
+      setIsUsingFallback(false);
+      setIsLoadingCases(false);
+    }
+
+    async function loadCases() {
+      if (!cachedCases?.length) {
+        setIsLoadingCases(true);
+      }
+
+      const casesResult = await getCasesDisplay();
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (casesResult.error) {
+        setLoadError(casesResult.error.message);
+        if (!cachedCases?.length) {
+          setAllCases(fallbackCases);
+          setIsUsingFallback(true);
+        }
+      } else {
+        setLoadError(null);
+        setAllCases(casesResult.data);
+        setIsUsingFallback(false);
+      }
+
+      setIsLoadingCases(false);
+    }
+
+    loadCases();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [fallbackCases]);
+
   const filteredCases = useMemo(() => {
-    return allCases.filter(
-      (c) =>
-        searchQuery === '' ||
-        c.caseNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.docketNumber.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    if (!normalizedQuery) {
+      return allCases;
+    }
+
+    return allCases.filter((caseDetail) => getCaseSearchText(caseDetail).includes(normalizedQuery));
   }, [allCases, searchQuery]);
 
-  const selectedCase = allCases.find((c) => c.caseNumber === selectedCaseNumber);
+  const selectedCase = allCases.find((caseDetail) => String(caseDetail.id) === selectedCaseNumber);
 
   const handleStatusUpdate = () => {
     if (!selectedCaseNumber || !newStatus || !remarks.trim()) {
@@ -60,7 +202,7 @@ export default function StatusUpdate() {
 
     const update: StatusUpdateRecord = {
       id: `update-${Date.now()}`,
-      caseNumber: selectedCaseNumber,
+      caseNumber: selectedCase ? getDocketNumber(selectedCase) : selectedCaseNumber,
       newStatus,
       remarks,
       updateDate: new Date().toISOString().split('T')[0],
@@ -93,6 +235,16 @@ export default function StatusUpdate() {
         </div>
       )}
 
+      {loadError ? (
+        <Alert variant="destructive">
+          <AlertTitle>Unable to refresh live cases</AlertTitle>
+          <AlertDescription>
+            {loadError}{' '}
+            {isUsingFallback ? 'Showing fallback docket data.' : 'Showing the cases already loaded from the Cases page.'}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       {/* Status Update Form */}
       <Card>
         <CardHeader>
@@ -101,13 +253,16 @@ export default function StatusUpdate() {
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Case Selection */}
-          <div>
+          <div className="relative">
             <Label htmlFor="case-search">Select Case</Label>
+            <p className="text-sm text-muted-foreground">
+              Searches all cases loaded on the Cases page, then refreshes from live case data.
+            </p>
             <div className="relative mt-1">
               <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 id="case-search"
-                placeholder="Search by case number or docket..."
+                placeholder="Search loaded cases by docket, party, violation, prosecutor, or status..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-10"
@@ -115,21 +270,39 @@ export default function StatusUpdate() {
             </div>
 
             {/* Search Results Dropdown */}
-            {searchQuery && filteredCases.length > 0 && (
-              <div className="absolute z-10 w-full mt-1 bg-background border border-border rounded-md shadow-lg max-h-48 overflow-y-auto">
-                {filteredCases.slice(0, 5).map((c) => (
-                  <button
-                    key={c.caseNumber}
-                    onClick={() => {
-                      setSelectedCaseNumber(c.caseNumber);
-                      setSearchQuery('');
-                    }}
-                    className="w-full text-left px-4 py-3 hover:bg-muted border-b border-border last:border-b-0"
-                  >
-                    <p className="font-medium">{c.caseNumber}</p>
-                    <p className="text-xs text-muted-foreground">{c.docketNumber}</p>
-                  </button>
-                ))}
+            {searchQuery.trim() && (
+              <div className="absolute z-10 mt-1 max-h-72 w-full overflow-y-auto rounded-md border border-border bg-background shadow-lg">
+                {isLoadingCases ? (
+                  <p className="px-4 py-3 text-sm text-muted-foreground">Loading cases...</p>
+                ) : filteredCases.length > 0 ? (
+                  filteredCases.slice(0, 25).map((caseDetail) => {
+                    const docketNumber = getDocketNumber(caseDetail);
+                    const caseId = String(caseDetail.id ?? docketNumber);
+
+                    return (
+                      <button
+                        key={`${caseId}-${docketNumber}`}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCaseNumber(caseId);
+                          setSearchQuery('');
+                        }}
+                        className="w-full border-b border-border px-4 py-3 text-left last:border-b-0 hover:bg-muted"
+                      >
+                        <p className="font-medium">{docketNumber}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {caseDetail.summary_text ||
+                            caseDetail.complainant ||
+                            caseDetail.respondent ||
+                            caseDetail.violations ||
+                            'No summary available'}
+                        </p>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <p className="px-4 py-3 text-sm text-muted-foreground">No loaded cases match this search.</p>
+                )}
               </div>
             )}
           </div>
@@ -141,17 +314,17 @@ export default function StatusUpdate() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                 <div>
                   <span className="text-muted-foreground">Case Number:</span>
-                  <p className="font-medium">{selectedCase.caseNumber}</p>
+                  <p className="font-medium">{getDocketNumber(selectedCase)}</p>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Current Status:</span>
                   <div className="mt-1">
-                    <StatusBadge status={selectedCase.status} size="sm" />
+                    <StatusBadge status={getCurrentStatus(selectedCase)} size="sm" />
                   </div>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Prosecutor:</span>
-                  <p className="font-medium">{selectedCase.prosecutor || 'Unassigned'}</p>
+                  <p className="font-medium">{getProsecutor(selectedCase)}</p>
                 </div>
               </div>
             </div>
