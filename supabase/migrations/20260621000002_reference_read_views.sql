@@ -58,7 +58,16 @@ FROM public.docket_sequence_counters;
 
 
 CREATE OR REPLACE VIEW public.v_recent_audit_logs AS
-SELECT id, actor_user_id, action, entity_type, entity_id, metadata, created_at
+SELECT
+  id,
+  actor_user_id,
+  entity_name,
+  entity_id,
+  action,
+  old_data,
+  new_data,
+  ip_address,
+  created_at
 FROM public.audit_logs;
 
 CREATE OR REPLACE VIEW public.v_case_assignment_detail AS
