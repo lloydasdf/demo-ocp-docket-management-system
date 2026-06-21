@@ -1,53 +1,71 @@
-# Frontend Supabase read audit
+# Frontend read audit
 
-Generated during the read-model refactor. Scope is browser/client helpers in `lib/supabase/queries.ts` and their frontend consumers.
+_Last updated: 2026-06-21_
 
-## Rerouted in this change
+## Current status
 
-- `app/persons/[personId]/page.tsx`
-  - `getPersonDetailsById` now reads `public.v_person_details` instead of `public.persons` with nested aliases/addresses.
-  - `getCaseParticipantsForPerson` already reads `public.v_case_participants_detail`.
-  - `getCaseCompactsByIds` now composes `public.v_docket_shell`, `public.v_docket_case_violation_classification`, and `public.v_docket_quickdetails` instead of `public.v_cases_display`.
+The case list, case details, clearance enrichment, and person details page flows have been moved toward view-backed reads, but **zero frontend interaction with base tables has not yet been achieved**.
 
-## Case-page and clearance reads already view/RPC-backed
+This change adds the missing reference/supporting read views needed for the next reroute step without changing the `/cases` staged loading, sorting, filters, dropdown values, or existing client-side data derivation.
 
-- `/cases` list:
-  - `public.v_docket_shell`
-  - `public.v_docket_participants`
-  - `public.v_docket_case_violation_classification`
-  - `public.v_docket_quickdetails`
-- `/cases/[caseId]` details:
-  - `public.v_case_details_page`
-  - `public.v_case_participants_detail`
-  - `public.v_case_timeline`
-  - `public.v_case_attachments`
-  - `public.v_case_courts_detail`
-  - `public.v_case_motions_detail`
-  - `public.v_case_petitions_for_review_detail`
-- `/clearance-search`:
-  - RPCs: `search_clearance_records`, `search_clearance_possible_matches`, `search_clearance_phonetic_matches`
-  - Enrichment views: `public.v_docket_case_violation_classification`, `public.v_clearance_participant_attributes`
+## Confirmed view/RPC-backed page flows
 
-## Remaining direct base-table SELECT helpers to review
+- `/cases` list uses `v_docket_shell`, `v_docket_participants`, `v_docket_case_violation_classification`, and `v_docket_quickdetails` for staged list hydration.
+- `/cases/[caseId]` uses `v_case_details_page` for header/core details and `v_case_timeline` for timeline rows.
+- Case sub-sections use view-backed helpers for participants, attachments, courts, motions, petitions, and clearance participant attributes.
+- `/persons/[personId]` reads person details from `v_person_details` and associated cases through `v_case_participants_detail` plus the docket read-model views.
+- Clearance search still uses existing read RPCs and enriches results with frontend read views.
 
-These helpers still perform browser/client `.select()` reads from base tables and should either be converted to views/RPCs or confirmed as admin/reference-data exceptions:
+## Reference/supporting views now available
 
-- Reference data:
-  - `getDocketTypes` / `getActiveDocketTypes` → `public.docket_types`
-  - `getCaseStatuses` → `public.case_statuses`
-  - `getParticipantRoles` → `public.participant_roles`
-  - `getAddressTypes` → `public.address_types`
-  - `getViolations` / `searchViolations` → `public.violations`
-  - `getProsecutors` → `public.prosecutors`
-- Legacy/general case helpers:
-  - `getCases` / `getCasesFromTable` / `getCaseDetailsById` / `getCaseById` → `public.cases` and related base tables
-  - `getLatestCaseDocketYear` / docket sequence helpers → `public.cases`, `public.docket_sequence_counters`
-  - `getCaseAssignments` / assignment mutations → `public.case_assignments`
-  - `getCaseStatusHistory` → `public.case_status_history`
-  - `searchCases` / `getCasesCompact` / `getCompactCases` / `getCaseCompactById` still use legacy `public.v_cases_display` and should be migrated or deprecated.
-- Person/search helpers outside the person details route:
-  - `getPersons` / `searchPersons` → `public.persons`
-- Auth/user helpers:
-  - current-user and staff/prosecutor assignment helpers → `public.users` and related assignment tables
-- Write flows:
-  - `createNewDocketEntry` and assignment helpers intentionally insert/update base tables; these are write paths, not read-model SELECT paths.
+The migration `supabase/migrations/20260621000002_reference_read_views.sql` creates or refreshes these lookup/read views for the remaining frontend helper reroutes:
+
+- `v_ref_docket_types`
+- `v_ref_case_statuses`
+- `v_ref_case_classifications`
+- `v_ref_participant_roles`
+- `v_ref_address_types`
+- `v_ref_courts`
+- `v_ref_violations`
+- `v_ref_prosecutors`
+- `v_ref_users`
+- `v_address_suggestions`
+- `v_docket_sequence_lookup`
+- `v_recent_audit_logs`
+- `v_case_assignment_detail`
+- `v_case_status_history_detail`
+
+All of these views are development-open read models: no RLS policies, no permission filters, no `security_invoker`, `SELECT` granted to `authenticated`, and PostgREST schema reload requested.
+
+## Remaining direct frontend `.from(...)` interactions to reroute
+
+`lib/supabase/queries.ts` still contains direct base-table reads/mutations in older helpers and form-oriented utilities. These must be rerouted or isolated before we can say zero base-table browser interaction is complete.
+
+### Lookup/read helpers still requiring reroute
+
+- `docket_types`
+- `case_statuses`
+- `cases`
+- `case_participants`
+- `persons`
+- `prosecutors`
+- `violations`
+- `audit_logs`
+- `participant_roles`
+- `address_types`
+- `users`
+- `docket_sequence_counters`
+- `addresses`
+
+### Browser mutation helpers still requiring removal/isolation
+
+- `assignProsecutorToCase`
+- `unassignActiveProsecutorFromCase`
+- `createNewDocketEntry`
+- internal docket-counter writes used by docket creation
+
+These should be removed from browser code or replaced by server-only code / existing RPC-backed flows before declaring the frontend fully read-view-only.
+
+## Conclusion
+
+**Zero frontend interaction with PostgreSQL base tables has not yet been achieved.** The missing database-side read models now exist, but `lib/supabase/queries.ts` still needs a focused follow-up to reroute the remaining lookup helpers and isolate/remove browser mutation helpers.
