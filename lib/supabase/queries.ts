@@ -1278,20 +1278,13 @@ export async function getPersonDetailsById(
 ): Promise<SupabaseQueryResult<PersonDetailsRecord | null>> {
   return runSupabaseQuery(
     "getPersonDetailsById",
-    "persons",
+    "v_person_details" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
       const query = supabase
-        .from("persons")
-        .select(
-          `*,
-        person_aliases:person_aliases!person_aliases_person_id_fkey (alias_name, alias_type, is_active),
-        person_addresses:person_addresses!person_addresses_person_id_fkey (
-          id, is_primary, remarks,
-          addresses:addresses!person_addresses_address_id_fkey (barangay, city, country, line1, line2, province, region, zip_code)
-        )`,
-        )
-        .eq("id", personId)
+        .from("v_person_details" as never)
+        .select("*")
+        .eq("id" as never, personId)
         .maybeSingle();
 
       return query as unknown as Promise<{
@@ -1330,7 +1323,7 @@ export async function getCaseParticipantsForPerson(
 
 export async function getCaseCompactsByIds(
   caseIds: number[],
-): Promise<SupabaseQueryResult<ViewRow<"v_cases_display">[]>> {
+): Promise<SupabaseQueryResult<CasesDisplayRecord[]>> {
   const safeCaseIds = Array.from(
     new Set(caseIds.filter((caseId) => Number.isFinite(caseId))),
   );
@@ -1339,21 +1332,35 @@ export async function getCaseCompactsByIds(
     return ok([]);
   }
 
-  return runSupabaseQuery(
+  const shellResult = await getRowsByCaseIds<DocketShellRecord>(
     "getCaseCompactsByIds",
-    "v_cases_display",
-    async () => {
-      const supabase = await getSupabaseBrowserClient();
-      return supabase
-        .from("v_cases_display")
-        .select("*")
-        .in("id", safeCaseIds)
-        .order("date_received", { ascending: false, nullsFirst: false })
-        .order("created_at", { ascending: false });
-    },
-    [],
+    "v_docket_shell",
+    DOCKET_SHELL_COLUMNS,
+    safeCaseIds,
   );
+
+  if (shellResult.error) {
+    return shellResult;
+  }
+
+  const labelsResult = await getDocketCaseLabelsForCases(safeCaseIds);
+
+  if (labelsResult.error) {
+    return labelsResult;
+  }
+
+  const quickDetailsResult = await getDocketQuickDetailsForCases(safeCaseIds);
+
+  if (quickDetailsResult.error) {
+    return quickDetailsResult;
+  }
+
+  return {
+    data: mergeDocketViews(shellResult.data, [], labelsResult.data, quickDetailsResult.data),
+    error: null,
+  };
 }
+
 
 export async function getCaseCompactById(
   caseId: number,

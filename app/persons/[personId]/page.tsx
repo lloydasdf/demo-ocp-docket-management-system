@@ -21,14 +21,14 @@ import {
   getCaseParticipantsForPerson,
   getPersonDetailsById,
   type CaseParticipantRecord,
+  type CasesDisplayRecord,
   type PersonDetailsRecord,
 } from "@/lib/supabase/queries";
-import type { ViewRow } from "@/lib/supabase/types";
 
 type PersonDetailsState = {
   person: PersonDetailsRecord | null;
   participants: CaseParticipantRecord[];
-  cases: ViewRow<"v_cases_display">[];
+  cases: CasesDisplayRecord[];
   warnings: string[];
 };
 
