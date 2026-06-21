@@ -7,6 +7,7 @@ import type { User } from '@supabase/supabase-js';
 import {
   FileText,
   Search,
+  RefreshCw,
   PanelLeftClose,
   PanelLeftOpen,
   LogOut,
@@ -29,6 +30,12 @@ const navigation = [
     href: '/clearance-search',
     icon: Search,
     description: 'Search clearance records',
+  },
+  {
+    name: 'Status Update',
+    href: '/status-update',
+    icon: RefreshCw,
+    description: 'Review and update case statuses',
   },
 ];
 
