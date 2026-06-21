@@ -18,10 +18,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ChevronDown, X } from 'lucide-react';
 import {
+  getDocketCaseLabelsForCases,
   getDocketParticipantsForCases,
   getDocketQuickDetailsForCases,
   getDocketShellDisplay,
   type CasesDisplayRecord,
+  type DocketCaseLabelsRecord,
   type DocketParticipantsRecord,
   type DocketQuickDetailsRecord,
   type DocketShellRecord,
@@ -80,7 +82,7 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v14';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v15';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -279,6 +281,12 @@ const EMPTY_CASE_PARTICIPANTS: Omit<DocketParticipantsRecord, 'id'> = {
   respondent: null,
 };
 
+const EMPTY_CASE_LABELS: Omit<DocketCaseLabelsRecord, 'id'> = {
+  violations: null,
+  summary_text: null,
+  case_classification_label: null,
+};
+
 const EMPTY_CASE_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, 'id'> = {
   date_received: null,
   current_status_code: null,
@@ -291,6 +299,7 @@ function withEmptyHydratedColumns(shellRows: DocketShellRecord[]): CompactCase[]
   return shellRows.map((shellRow) => ({
     ...shellRow,
     ...EMPTY_CASE_PARTICIPANTS,
+    ...EMPTY_CASE_LABELS,
     ...EMPTY_CASE_QUICK_DETAILS,
   }));
 }
@@ -304,6 +313,19 @@ function mergeParticipantsIntoCases(
   return caseRows.map((caseDetail) => ({
     ...caseDetail,
     ...(participantsByCaseId.get(caseDetail.id) ?? EMPTY_CASE_PARTICIPANTS),
+  }));
+}
+
+
+function mergeLabelsIntoCases(
+  caseRows: CompactCase[],
+  labels: DocketCaseLabelsRecord[],
+): CompactCase[] {
+  const labelsByCaseId = new Map(labels.map((label) => [label.id, label]));
+
+  return caseRows.map((caseDetail) => ({
+    ...caseDetail,
+    ...(labelsByCaseId.get(caseDetail.id) ?? EMPTY_CASE_LABELS),
   }));
 }
 
@@ -404,7 +426,7 @@ export default function CasesPage() {
       });
     }
 
-    async function hydrateParticipantsAndQuickDetails(shellCases: CompactCase[]) {
+    async function hydrateParticipantsLabelsAndQuickDetails(shellCases: CompactCase[]) {
       setIsLoadingAllCases(true);
       const caseIds = shellCases.map((caseDetail) => caseDetail.id);
       const participantsResult = await getDocketParticipantsForCases(caseIds);
@@ -422,6 +444,21 @@ export default function CasesPage() {
       setCases(participantCases);
       cacheCasesPageState(participantCases);
 
+      const labelsResult = await getDocketCaseLabelsForCases(caseIds);
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (labelsResult.error) {
+        setIsLoadingAllCases(false);
+        return;
+      }
+
+      const labeledCases = mergeLabelsIntoCases(participantCases, labelsResult.data);
+      setCases(labeledCases);
+      cacheCasesPageState(labeledCases);
+
       const quickDetailsResult = await getDocketQuickDetailsForCases(caseIds);
 
       if (!isMounted) {
@@ -434,7 +471,7 @@ export default function CasesPage() {
         return;
       }
 
-      const hydratedCases = mergeQuickDetailsIntoCases(participantCases, quickDetailsResult.data);
+      const hydratedCases = mergeQuickDetailsIntoCases(labeledCases, quickDetailsResult.data);
       setCases(hydratedCases);
       cacheCasesPageState(hydratedCases, { hasAllCases: true });
     }
@@ -444,7 +481,7 @@ export default function CasesPage() {
         setIsLoading(false);
 
         if (!cachedInitialState.hasAllCases) {
-          void hydrateParticipantsAndQuickDetails(cachedInitialState.cases);
+          void hydrateParticipantsLabelsAndQuickDetails(cachedInitialState.cases);
         }
 
         return;
@@ -471,7 +508,7 @@ export default function CasesPage() {
       cacheCasesPageState(shellCases);
       setIsLoading(false);
 
-      void hydrateParticipantsAndQuickDetails(shellCases);
+      void hydrateParticipantsLabelsAndQuickDetails(shellCases);
     }
 
     loadCases();

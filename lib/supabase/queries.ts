@@ -384,9 +384,6 @@ export type DocketShellRecord = {
   docket_display_number: string | null;
   docket_type_prefix: string | null;
   docket_type_name: string | null;
-  violations: string | null;
-  summary_text: string | null;
-  case_classification_label: string | null;
   created_at: string;
 };
 
@@ -394,6 +391,13 @@ export type DocketParticipantsRecord = {
   id: number;
   complainant: string | null;
   respondent: string | null;
+};
+
+export type DocketCaseLabelsRecord = {
+  id: number;
+  violations: string | null;
+  summary_text: string | null;
+  case_classification_label: string | null;
 };
 
 export type DocketQuickDetailsRecord = {
@@ -405,12 +409,15 @@ export type DocketQuickDetailsRecord = {
   prosecutor_short_name: string | null;
 };
 
-export type CasesDisplayRecord = DocketShellRecord & DocketParticipantsRecord & DocketQuickDetailsRecord;
+export type CasesDisplayRecord = DocketShellRecord & DocketParticipantsRecord & DocketCaseLabelsRecord & DocketQuickDetailsRecord;
 
 const DOCKET_SHELL_COLUMNS =
-  "id, docket_type_id, docket_year, docket_number, docket_month_code, docket_display_number, docket_type_prefix, docket_type_name, violations, summary_text, case_classification_label, created_at";
+  "id, docket_type_id, docket_year, docket_number, docket_month_code, docket_display_number, docket_type_prefix, docket_type_name, created_at";
 
 const DOCKET_PARTICIPANTS_COLUMNS = "id, complainant, respondent";
+
+const DOCKET_CASE_LABELS_COLUMNS =
+  "id, violations, summary_text, case_classification_label";
 
 const DOCKET_QUICK_DETAILS_COLUMNS =
   "id, date_received, current_status_code, current_status_label, prosecutor_full_name, prosecutor_short_name";
@@ -418,6 +425,12 @@ const DOCKET_QUICK_DETAILS_COLUMNS =
 const EMPTY_DOCKET_PARTICIPANTS: Omit<DocketParticipantsRecord, "id"> = {
   complainant: null,
   respondent: null,
+};
+
+const EMPTY_DOCKET_CASE_LABELS: Omit<DocketCaseLabelsRecord, "id"> = {
+  violations: null,
+  summary_text: null,
+  case_classification_label: null,
 };
 
 const EMPTY_DOCKET_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, "id"> = {
@@ -431,14 +444,17 @@ const EMPTY_DOCKET_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, "id"> = {
 function mergeDocketViews(
   shellRows: DocketShellRecord[],
   participants: DocketParticipantsRecord[],
+  labels: DocketCaseLabelsRecord[],
   quickDetails: DocketQuickDetailsRecord[],
 ): CasesDisplayRecord[] {
   const participantsByCaseId = new Map(participants.map((participant) => [participant.id, participant]));
+  const labelsByCaseId = new Map(labels.map((label) => [label.id, label]));
   const quickDetailsByCaseId = new Map(quickDetails.map((detail) => [detail.id, detail]));
 
   return shellRows.map((shellRow) => ({
     ...shellRow,
     ...(participantsByCaseId.get(shellRow.id) ?? EMPTY_DOCKET_PARTICIPANTS),
+    ...(labelsByCaseId.get(shellRow.id) ?? EMPTY_DOCKET_CASE_LABELS),
     ...(quickDetailsByCaseId.get(shellRow.id) ?? EMPTY_DOCKET_QUICK_DETAILS),
   }));
 }
@@ -503,6 +519,17 @@ export async function getDocketParticipantsForCases(
     "getDocketParticipantsForCases",
     "v_docket_participants",
     DOCKET_PARTICIPANTS_COLUMNS,
+    caseIds,
+  );
+}
+
+export async function getDocketCaseLabelsForCases(
+  caseIds: number[],
+): Promise<SupabaseQueryResult<DocketCaseLabelsRecord[]>> {
+  return getRowsByCaseIds<DocketCaseLabelsRecord>(
+    "getDocketCaseLabelsForCases",
+    "v_docket_case_violation_classification",
+    DOCKET_CASE_LABELS_COLUMNS,
     caseIds,
   );
 }
@@ -638,6 +665,12 @@ export async function getCasesDisplay(
     return participantsResult;
   }
 
+  const labelsResult = await getDocketCaseLabelsForCases(caseIds);
+
+  if (labelsResult.error) {
+    return labelsResult;
+  }
+
   const quickDetailsResult = await getDocketQuickDetailsForCases(caseIds);
 
   if (quickDetailsResult.error) {
@@ -645,7 +678,7 @@ export async function getCasesDisplay(
   }
 
   return {
-    data: mergeDocketViews(shellResult.data, participantsResult.data, quickDetailsResult.data),
+    data: mergeDocketViews(shellResult.data, participantsResult.data, labelsResult.data, quickDetailsResult.data),
     error: null,
   };
 }
@@ -1275,24 +1308,12 @@ export async function getCaseParticipantsForPerson(
 ): Promise<SupabaseQueryResult<CaseParticipantRecord[]>> {
   return runSupabaseQuery(
     "getCaseParticipantsForPerson",
-    "case_participants",
+    "v_case_participants_detail" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
       const query = supabase
-        .from("case_participants")
-        .select(
-          `id, case_id, person_id, organization_id, role_id, participant_order, participant_kind, display_name_snapshot, created_at,
-        case_participant_private_details:case_participant_private_details!case_participant_private_details_case_participant_id_fkey (remarks, source, source_detail, legacy_source_file, legacy_source_sheet, legacy_row_number, legacy_raw_text),
-        case_participant_attributes:case_participant_attributes!case_participant_attributes_case_participant_id_fkey (age_text, age_years, gender_text, gender_normalized, is_minor_at_case, is_senior_at_case, is_pwd_at_case),
-        participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
-        persons:persons!case_participants_person_id_fkey (
-          age, birth_date, first_name, full_name, gender, id, is_minor, is_pwd, is_senior, last_name, middle_name, notes, person_descriptor, suffix,
-          person_addresses:person_addresses!person_addresses_person_id_fkey (
-            id, is_primary, remarks,
-            addresses:addresses!person_addresses_address_id_fkey (barangay, city, country, line1, line2, province, region, zip_code)
-          )
-        )`,
-        )
+        .from("v_case_participants_detail" as never)
+        .select("*")
         .eq("person_id", personId)
         .order("case_id", { ascending: false })
         .order("participant_order", { ascending: true, nullsFirst: false })
@@ -1514,24 +1535,12 @@ export async function getCaseParticipants(
 ): Promise<SupabaseQueryResult<CaseParticipantRecord[]>> {
   return runSupabaseQuery(
     "getCaseParticipants",
-    "case_participants",
+    "v_case_participants_detail" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
       const query = supabase
-        .from("case_participants")
-        .select(
-          `id, case_id, person_id, organization_id, role_id, participant_order, participant_kind, display_name_snapshot, created_at,
-        case_participant_private_details:case_participant_private_details!case_participant_private_details_case_participant_id_fkey (remarks, source, source_detail, legacy_source_file, legacy_source_sheet, legacy_row_number, legacy_raw_text),
-        case_participant_attributes:case_participant_attributes!case_participant_attributes_case_participant_id_fkey (age_text, age_years, gender_text, gender_normalized, is_minor_at_case, is_senior_at_case, is_pwd_at_case),
-        participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
-        persons:persons!case_participants_person_id_fkey (
-          age, birth_date, first_name, full_name, gender, id, is_minor, is_pwd, is_senior, last_name, middle_name, notes, person_descriptor, suffix,
-          person_addresses:person_addresses!person_addresses_person_id_fkey (
-            id, is_primary, remarks,
-            addresses:addresses!person_addresses_address_id_fkey (barangay, city, country, line1, line2, province, region, zip_code)
-          )
-        )`,
-        )
+        .from("v_case_participants_detail" as never)
+        .select("*")
         .eq("case_id", caseId)
         .order("participant_order", { ascending: true, nullsFirst: false })
         .order("id", { ascending: true });
@@ -1559,7 +1568,7 @@ export async function getCaseParticipantsForCases(
 
   return runSupabaseQuery(
     "getCaseParticipantsForCases",
-    "case_participants",
+    "v_case_participants_detail" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
       const allParticipants: CaseParticipantRecord[] = [];
@@ -1567,24 +1576,12 @@ export async function getCaseParticipantsForCases(
       for (let start = 0; start < safeCaseIds.length; start += caseIdChunkSize) {
         const caseIdChunk = safeCaseIds.slice(start, start + caseIdChunkSize);
         const query = supabase
-          .from("case_participants")
-          .select(
-            `id, case_id, person_id, organization_id, role_id, participant_order, participant_kind, display_name_snapshot, created_at,
-        case_participant_private_details:case_participant_private_details!case_participant_private_details_case_participant_id_fkey (remarks, source, source_detail, legacy_source_file, legacy_source_sheet, legacy_row_number, legacy_raw_text),
-        case_participant_attributes:case_participant_attributes!case_participant_attributes_case_participant_id_fkey (age_text, age_years, gender_text, gender_normalized, is_minor_at_case, is_senior_at_case, is_pwd_at_case),
-        participant_roles:participant_roles!case_participants_role_id_fkey (code, display_label),
-        persons:persons!case_participants_person_id_fkey (
-          age, birth_date, first_name, full_name, gender, id, is_minor, is_pwd, is_senior, last_name, middle_name, notes, person_descriptor, suffix,
-          person_addresses:person_addresses!person_addresses_person_id_fkey (
-            id, is_primary, remarks,
-            addresses:addresses!person_addresses_address_id_fkey (barangay, city, country, line1, line2, province, region, zip_code)
-          )
-        )`,
-          )
-          .in("case_id", caseIdChunk)
-          .order("case_id", { ascending: true })
-          .order("participant_order", { ascending: true, nullsFirst: false })
-          .order("id", { ascending: true });
+          .from("v_case_participants_detail" as never)
+          .select("*")
+          .in("case_id" as never, caseIdChunk)
+          .order("case_id" as never, { ascending: true })
+          .order("participant_order" as never, { ascending: true, nullsFirst: false })
+          .order("id" as never, { ascending: true });
 
         const { data, error } = (await query) as unknown as {
           data: CaseParticipantRecord[] | null;
@@ -1757,14 +1754,12 @@ export async function getCaseCourtDetails(
 ): Promise<SupabaseQueryResult<CaseCourtRecord[]>> {
   return runSupabaseQuery(
     "getCaseCourtDetails",
-    "case_courts",
+    "v_case_courts_detail" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
       const query = supabase
-        .from("case_courts")
-        .select(
-          "*, courts:courts!case_courts_court_id_fkey (code, court_type, name)",
-        )
+        .from("v_case_courts_detail" as never)
+        .select("*")
         .eq("case_id", caseId)
         .order("court_order", { ascending: true })
         .order("created_at", { ascending: true });
@@ -1811,11 +1806,11 @@ export async function getCaseMotions(
 ): Promise<SupabaseQueryResult<CaseMotionRecord[]>> {
   return runSupabaseQuery(
     "getCaseMotions",
-    "case_motions",
+    "v_case_motions_detail" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
       return (await supabase
-        .from("case_motions")
+        .from("v_case_motions_detail" as never)
         .select("*")
         .eq("case_id", caseId)
         .order("motion_order", { ascending: true, nullsFirst: false })
@@ -1834,11 +1829,11 @@ export async function getCasePetitionsForReview(
 ): Promise<SupabaseQueryResult<CasePetitionForReviewRecord[]>> {
   return runSupabaseQuery(
     "getCasePetitionsForReview",
-    "case_petitions_for_review" as RelationName,
+    "v_case_petitions_for_review_detail" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
       return (await supabase
-        .from("case_petitions_for_review" as never)
+        .from("v_case_petitions_for_review_detail" as never)
         .select(
           "id, case_id, petition_title, handling_prosecutor_text, date_received, date_received_raw, filed_by, petition_status, date_resolved, date_resolved_raw, date_approved, date_approved_raw, remarks",
         )
@@ -1857,11 +1852,11 @@ export async function getCaseAttachmentsIndex(
 ): Promise<SupabaseQueryResult<TableRow<"case_attachment_index">[]>> {
   return runSupabaseQuery(
     "getCaseAttachmentsIndex",
-    "case_attachment_index",
+    "v_case_attachments" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
       return supabase
-        .from("case_attachment_index")
+        .from("v_case_attachments" as never)
         .select("*")
         .eq("case_id", caseId)
         .order("last_seen_at", { ascending: false });
@@ -2105,18 +2100,19 @@ async function searchClearanceRpc(
 
       const [caseSummaries, participantAttributes] = await Promise.all([
         supabase
-          .from("v_docket_shell" as never)
+          .from("v_docket_case_violation_classification" as never)
           .select("id,violations")
           .in("id" as never, caseIds) as unknown as Promise<{
-            data: Pick<DocketShellRecord, "id" | "violations">[] | null;
+            data: Pick<DocketCaseLabelsRecord, "id" | "violations">[] | null;
             error: unknown;
           }>,
         supabase
-          .from("case_participants")
-          .select(
-            "case_id, person_id, case_participant_attributes:case_participant_attributes!case_participant_attributes_case_participant_id_fkey (age_text, age_years)",
-          )
-          .in("case_id", caseIds),
+          .from("v_clearance_participant_attributes" as never)
+          .select("case_id, person_id, age_text, age_years")
+          .in("case_id" as never, caseIds) as unknown as Promise<{
+            data: { case_id: number; person_id: number; age_text: string | null; age_years: number | null }[] | null;
+            error: unknown;
+          }>,
       ]);
 
       if (caseSummaries.error) {
@@ -2133,11 +2129,7 @@ async function searchClearanceRpc(
       const ageByCasePersonKey = new Map<string, string>();
 
       for (const row of participantAttributes.data ?? []) {
-        const rawAttributes = row.case_participant_attributes;
-        const attributes = Array.isArray(rawAttributes)
-          ? rawAttributes[0]
-          : rawAttributes;
-        const age = attributes?.age_text ?? attributes?.age_years?.toString();
+        const age = row.age_text ?? row.age_years?.toString();
 
         if (age) {
           ageByCasePersonKey.set(`${row.case_id}-${row.person_id}`, age);
