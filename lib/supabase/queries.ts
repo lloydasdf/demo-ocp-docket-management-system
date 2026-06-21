@@ -2080,7 +2080,7 @@ async function searchClearanceRpc(
 
   return runSupabaseQuery(
     operation,
-    "case_participants",
+    "v_docket_shell" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
       const { data, error } = await supabase.rpc(
@@ -2105,9 +2105,12 @@ async function searchClearanceRpc(
 
       const [caseSummaries, participantAttributes] = await Promise.all([
         supabase
-          .from("v_cases_display")
+          .from("v_docket_shell" as never)
           .select("id,violations")
-          .in("id", caseIds),
+          .in("id" as never, caseIds) as unknown as Promise<{
+            data: Pick<DocketShellRecord, "id" | "violations">[] | null;
+            error: unknown;
+          }>,
         supabase
           .from("case_participants")
           .select(
