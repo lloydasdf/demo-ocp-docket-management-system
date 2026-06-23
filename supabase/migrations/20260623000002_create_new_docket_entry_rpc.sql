@@ -7,8 +7,11 @@ DECLARE
   v_user_id bigint;
   v_case_id bigint;
   v_status_event_id bigint;
+  v_assignment_event_id bigint;
   v_status_history_id bigint;
-  v_event_type_id bigint;
+  v_assignment_id bigint;
+  v_received_event_type_id bigint;
+  v_raffled_event_type_id bigint;
   v_assigned_prosecutor_id bigint := nullif(p_payload->>'assignedProsecutorId','')::bigint;
   v_docket_type_id bigint := (p_payload->>'docketTypeId')::bigint;
   v_docket_year int := (p_payload->>'docketYear')::int;
@@ -61,13 +64,15 @@ BEGIN
   IF v_case_classification_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.case_classifications WHERE id = v_case_classification_id) THEN RAISE EXCEPTION 'Invalid case classification id %', v_case_classification_id; END IF;
   IF v_assigned_prosecutor_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.prosecutors WHERE id = v_assigned_prosecutor_id AND is_active IS TRUE) THEN RAISE EXCEPTION 'Invalid assigned prosecutor id %', v_assigned_prosecutor_id; END IF;
 
-  SELECT id INTO v_event_type_id
-  FROM public.case_event_types
-  WHERE is_active IS TRUE AND code IN ('CASE_CREATED','STATUS_UPDATE','CASE_STATUS_UPDATED','STATUS_CHANGED','DOCKET_CREATED')
-  ORDER BY CASE code WHEN 'CASE_CREATED' THEN 1 WHEN 'STATUS_UPDATE' THEN 2 WHEN 'CASE_STATUS_UPDATED' THEN 3 WHEN 'STATUS_CHANGED' THEN 4 ELSE 5 END
-  LIMIT 1;
-  IF v_event_type_id IS NULL THEN
-    RAISE EXCEPTION 'No active case_event_types row is configured for manual docket creation';
+  SELECT id INTO v_received_event_type_id FROM public.case_event_types WHERE is_active IS TRUE AND code = 'CASE_RECEIVED' LIMIT 1;
+  IF v_received_event_type_id IS NULL THEN
+    RAISE EXCEPTION 'No active CASE_RECEIVED case_event_types row is configured';
+  END IF;
+  IF v_assigned_prosecutor_id IS NOT NULL THEN
+    SELECT id INTO v_raffled_event_type_id FROM public.case_event_types WHERE is_active IS TRUE AND code = 'CASE_RAFFLED' LIMIT 1;
+    IF v_raffled_event_type_id IS NULL THEN
+      RAISE EXCEPTION 'No active CASE_RAFFLED case_event_types row is configured';
+    END IF;
   END IF;
 
   PERFORM pg_advisory_xact_lock(v_docket_type_id::int, v_docket_year);
@@ -145,8 +150,8 @@ BEGIN
     v_violation_count := v_violation_count + 1;
   END LOOP;
 
-  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_order,title,description,status_id,prosecutor_id,details_jsonb,source,source_table,created_by_user_id,updated_by_user_id)
-  VALUES (v_case_id,v_event_type_id,v_date_received,1,'Manual docket creation','Initial status set during manual docket creation',v_initial_status_id,v_assigned_prosecutor_id,jsonb_build_object('docketDisplayNumber',v_display),'MANUAL_ENTRY','case_status_history',v_user_id,v_user_id)
+  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_order,title,description,status_id,details_jsonb,source,source_table,created_by_user_id,updated_by_user_id)
+  VALUES (v_case_id,v_received_event_type_id,v_date_received,1,'Case received','Initial status set during manual docket creation',v_initial_status_id,jsonb_build_object('docketDisplayNumber',v_display),'MANUAL_ENTRY','case_status_history',v_user_id,v_user_id)
   RETURNING id INTO v_status_event_id;
 
   INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id)
@@ -156,8 +161,15 @@ BEGIN
   UPDATE public.case_events SET source_id = v_status_history_id WHERE id = v_status_event_id;
 
   IF v_assigned_prosecutor_id IS NOT NULL THEN
-    INSERT INTO public.case_assignments(case_id,prosecutor_id,assigned_by_user_id,assigned_at,remarks,case_event_id)
-    VALUES (v_case_id,v_assigned_prosecutor_id,v_user_id,now(),'Assigned during manual docket creation',v_status_event_id);
+    INSERT INTO public.case_assignments(case_id,prosecutor_id,assigned_by_user_id,assigned_at,remarks)
+    VALUES (v_case_id,v_assigned_prosecutor_id,v_user_id,now(),'Assigned during manual docket creation')
+    RETURNING id INTO v_assignment_id;
+
+    INSERT INTO public.case_events(case_id,event_type_id,event_date,event_order,title,description,prosecutor_id,details_jsonb,source,source_table,source_id,created_by_user_id,updated_by_user_id)
+    VALUES (v_case_id,v_raffled_event_type_id,v_date_received,2,'Case raffled','Assigned during manual docket creation',v_assigned_prosecutor_id,jsonb_build_object('docketDisplayNumber',v_display),'MANUAL_ENTRY','case_assignments',v_assignment_id,v_user_id,v_user_id)
+    RETURNING id INTO v_assignment_event_id;
+
+    UPDATE public.case_assignments SET case_event_id = v_assignment_event_id WHERE id = v_assignment_id;
   END IF;
 
   RETURN jsonb_build_object('caseId',v_case_id,'docketTypeId',v_docket_type_id,'docketYear',v_docket_year,'docketNumber',v_docket_number,'docketMonthCode',v_month_code,'docketDisplayNumber',v_display,'createdPersonCount',v_created_persons,'reusedPersonCount',v_reused_persons,'createdAddressCount',v_created_addresses,'reusedAddressCount',v_reused_addresses,'createdViolationCount',v_created_violations,'reusedViolationCount',v_reused_violations,'participantCount',v_participant_count,'violationCount',v_violation_count);

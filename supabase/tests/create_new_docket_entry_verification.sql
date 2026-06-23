@@ -10,7 +10,8 @@ DECLARE
   v_status_id bigint;
   v_role_id bigint;
   v_address_type_id bigint;
-  v_event_type_id bigint;
+  v_received_event_type_id bigint;
+  v_raffled_event_type_id bigint;
   v_prosecutor_id bigint;
   v_result jsonb;
   v_case_id bigint;
@@ -41,10 +42,11 @@ BEGIN
   VALUES ('VERIFICATION_' || substring(replace(v_auth_uid::text,'-','') from 9 for 8),'Verification Address',true)
   RETURNING id INTO v_address_type_id;
 
-  INSERT INTO public.case_event_types(code,display_label,category,sort_order,is_active)
-  VALUES ('CASE_CREATED','Case Created','STATUS',0,true)
-  ON CONFLICT (code) DO UPDATE SET is_active = true
-  RETURNING id INTO v_event_type_id;
+  SELECT id INTO v_received_event_type_id FROM public.case_event_types WHERE code = 'CASE_RECEIVED' AND is_active IS TRUE LIMIT 1;
+  IF v_received_event_type_id IS NULL THEN RAISE EXCEPTION 'Required CASE_RECEIVED event type is missing'; END IF;
+
+  SELECT id INTO v_raffled_event_type_id FROM public.case_event_types WHERE code = 'CASE_RAFFLED' AND is_active IS TRUE LIMIT 1;
+  IF v_raffled_event_type_id IS NULL THEN RAISE EXCEPTION 'Required CASE_RAFFLED event type is missing'; END IF;
 
   v_result := public.create_new_docket_entry(jsonb_build_object(
     'docketTypeId', v_docket_type_id,
@@ -82,10 +84,12 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.case_participant_attributes cpa JOIN public.case_participants cp ON cp.id = cpa.case_participant_id WHERE cp.case_id = v_case_id) THEN RAISE EXCEPTION 'case_participant_attributes row missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.case_addresses WHERE case_id = v_case_id) THEN RAISE EXCEPTION 'case_addresses row missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.case_violations WHERE case_id = v_case_id) THEN RAISE EXCEPTION 'case_violations row missing'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.case_events WHERE case_id = v_case_id AND status_id = v_status_id) THEN RAISE EXCEPTION 'case_events row missing'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.case_events WHERE case_id = v_case_id AND status_id = v_status_id AND event_type_id = v_received_event_type_id AND source_table = 'case_status_history' AND source_id IS NOT NULL) THEN RAISE EXCEPTION 'CASE_RECEIVED case_events row missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.case_status_history WHERE case_id = v_case_id AND case_event_id IS NOT NULL) THEN RAISE EXCEPTION 'linked case_status_history row missing'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.case_assignments WHERE case_id = v_case_id AND prosecutor_id = v_prosecutor_id) THEN RAISE EXCEPTION 'case_assignments row missing'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.v_case_details_page WHERE id = v_case_id AND prosecutor_full_name IS NOT NULL AND jsonb_array_length(case_addresses) = 1) THEN RAISE EXCEPTION 'v_case_details_page did not expose assignment/address'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.case_assignments WHERE case_id = v_case_id AND prosecutor_id = v_prosecutor_id AND case_event_id IS NOT NULL) THEN RAISE EXCEPTION 'case_assignments row missing'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.case_events WHERE case_id = v_case_id AND prosecutor_id = v_prosecutor_id AND event_type_id = v_raffled_event_type_id AND source_table = 'case_assignments' AND source_id IS NOT NULL) THEN RAISE EXCEPTION 'CASE_RAFFLED case_events row missing'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.v_case_details_page WHERE id = v_case_id AND prosecutor_full_name IS NOT NULL AND docket_display_number = v_result->>'docketDisplayNumber' AND jsonb_array_length(case_addresses) = 1) THEN RAISE EXCEPTION 'v_case_details_page did not expose assignment/address/display number'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.docket_number_history WHERE case_id = v_case_id AND docket_display_number = v_result->>'docketDisplayNumber') THEN RAISE EXCEPTION 'docket display number mismatch in history'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.v_case_participants_detail WHERE case_id = v_case_id) THEN RAISE EXCEPTION 'v_case_participants_detail row missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.v_case_timeline WHERE case_id = v_case_id) THEN RAISE EXCEPTION 'v_case_timeline row missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.v_case_assignment_detail WHERE case_id = v_case_id) THEN RAISE EXCEPTION 'v_case_assignment_detail row missing'; END IF;
