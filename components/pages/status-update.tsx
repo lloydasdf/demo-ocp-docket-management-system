@@ -1,18 +1,20 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { StatusBadge } from '@/components/status-badge';
 import { dockets } from '@/lib/dummy-data';
-import { getCasesDisplay, type CasesDisplayRecord } from '@/lib/supabase/queries';
+import { getCaseEventTypes, getCasesDisplay, type CaseEventTypeReference, type CasesDisplayRecord } from '@/lib/supabase/queries';
 import type { CaseStatus } from '@/lib/types';
-import { Search as SearchIcon, CheckCircle } from 'lucide-react';
+import Link from 'next/link';
+import { CheckCircle, ExternalLink, Search as SearchIcon } from 'lucide-react';
 
 type CompactCase = CasesDisplayRecord;
 
@@ -129,9 +131,10 @@ interface StatusUpdateRecord {
 export default function StatusUpdate() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCaseNumber, setSelectedCaseNumber] = useState('');
-  const [newStatus, setNewStatus] = useState<CaseStatus>('Pending');
+  const [activityTypeCode, setActivityTypeCode] = useState('');
+  const [notes, setNotes] = useState('');
   const [remarks, setRemarks] = useState('');
-  const [updatedBy, setUpdatedBy] = useState('Admin User');
+  const [alsoUpdateCurrentStatus, setAlsoUpdateCurrentStatus] = useState(false);
   const [statusUpdates, setStatusUpdates] = useState<StatusUpdateRecord[]>([]);
   const [successMessage, setSuccessMessage] = useState('');
   const fallbackCases = useMemo(getFallbackCases, []);
@@ -139,6 +142,8 @@ export default function StatusUpdate() {
   const [isLoadingCases, setIsLoadingCases] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isUsingFallback, setIsUsingFallback] = useState(false);
+  const [activityTypes, setActivityTypes] = useState<CaseEventTypeReference[]>([]);
+  const [activityTypeError, setActivityTypeError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -183,6 +188,33 @@ export default function StatusUpdate() {
     };
   }, [fallbackCases]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadActivityTypes() {
+      const result = await getCaseEventTypes();
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (result.error) {
+        setActivityTypeError(result.error.message);
+        setActivityTypes([]);
+      } else {
+        setActivityTypeError(null);
+        setActivityTypes(result.data);
+        setActivityTypeCode((currentCode) => currentCode || result.data[0]?.code || '');
+      }
+    }
+
+    loadActivityTypes();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const filteredCases = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
 
@@ -194,40 +226,33 @@ export default function StatusUpdate() {
   }, [allCases, searchQuery]);
 
   const selectedCase = allCases.find((caseDetail) => String(caseDetail.id) === selectedCaseNumber);
+  const selectedActivityType = activityTypes.find((type) => type.code === activityTypeCode);
 
   const handleStatusUpdate = () => {
-    if (!selectedCaseNumber || !newStatus || !remarks.trim()) {
+    if (!selectedCaseNumber || !activityTypeCode || !remarks.trim()) {
       return;
     }
 
     const update: StatusUpdateRecord = {
       id: `update-${Date.now()}`,
       caseNumber: selectedCase ? getDocketNumber(selectedCase) : selectedCaseNumber,
-      newStatus,
-      remarks,
+      newStatus: (selectedActivityType?.display_label as CaseStatus | undefined) ?? 'Pending',
+      remarks: [notes.trim(), remarks.trim()].filter(Boolean).join('\n\n'),
       updateDate: new Date().toISOString().split('T')[0],
-      updatedBy,
+      updatedBy: alsoUpdateCurrentStatus ? 'Admin User · current status updated' : 'Admin User',
     };
 
     setStatusUpdates([update, ...statusUpdates]);
     setSelectedCaseNumber('');
-    setNewStatus('Pending');
+    setNotes('');
     setRemarks('');
-    setSuccessMessage('Status updated successfully!');
+    setAlsoUpdateCurrentStatus(false);
+    setSuccessMessage('Activity recorded successfully!');
     setTimeout(() => setSuccessMessage(''), 3000);
   };
 
-  const statuses: CaseStatus[] = ['Pending', 'Filed', 'Dismissed', 'Resolved', 'RFI'];
-
   return (
     <div className="p-8 space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">Status Update</h1>
-        <p className="text-muted-foreground mt-1">Update case status and add remarks</p>
-      </div>
-
-      {/* Success Message */}
       {successMessage && (
         <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded flex items-center gap-2">
           <CheckCircle className="w-5 h-5" />
@@ -245,31 +270,28 @@ export default function StatusUpdate() {
         </Alert>
       ) : null}
 
-      {/* Status Update Form */}
+      {activityTypeError ? (
+        <Alert variant="destructive">
+          <AlertTitle>Unable to load activity types</AlertTitle>
+          <AlertDescription>{activityTypeError}</AlertDescription>
+        </Alert>
+      ) : null}
+
       <Card>
         <CardHeader>
-          <CardTitle>Update Case Status</CardTitle>
-          <CardDescription>Change case status and add remarks</CardDescription>
+          <CardTitle>Select Case</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Case Selection */}
+        <CardContent className="space-y-4">
           <div className="relative">
-            <Label htmlFor="case-search">Select Case</Label>
-            <p className="text-sm text-muted-foreground">
-              Searches all cases loaded on the Cases page, then refreshes from live case data.
-            </p>
-            <div className="relative mt-1">
-              <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                id="case-search"
-                placeholder="Search loaded cases by docket, party, violation, prosecutor, or status..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
-            </div>
+            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              id="case-search"
+              placeholder="Search by docket number, party, violation, prosecutor, or status..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
 
-            {/* Search Results Dropdown */}
             {searchQuery.trim() && (
               <div className="absolute z-10 mt-1 max-h-72 w-full overflow-y-auto rounded-md border border-border bg-background shadow-lg">
                 {isLoadingCases ? (
@@ -307,82 +329,83 @@ export default function StatusUpdate() {
             )}
           </div>
 
-          {/* Selected Case Info */}
           {selectedCase && (
-            <div className="p-4 bg-muted rounded-lg">
+            <div className="rounded-lg bg-muted p-4">
               <h4 className="font-semibold mb-2">Selected Case</h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-muted-foreground">Case Number:</span>
-                  <p className="font-medium">{getDocketNumber(selectedCase)}</p>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Current Status:</span>
-                  <div className="mt-1">
-                    <StatusBadge status={getCurrentStatus(selectedCase)} size="sm" />
-                  </div>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Prosecutor:</span>
-                  <p className="font-medium">{getProsecutor(selectedCase)}</p>
-                </div>
-              </div>
+              <p className="font-medium">{getDocketNumber(selectedCase)}</p>
+              <p className="text-sm">Current Status: {getCurrentStatus(selectedCase)}</p>
+              <p className="text-sm">Assigned Prosecutor: {getProsecutor(selectedCase)}</p>
+              <Button asChild variant="secondary" size="sm" className="mt-3">
+                <Link href={`/cases/${selectedCase.id}`}>
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Open Full Case Details
+                </Link>
+              </Button>
             </div>
           )}
+        </CardContent>
+      </Card>
 
-          {/* Status and Remarks */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="new-status">New Status *</Label>
-              <Select value={newStatus} onValueChange={(value) => setNewStatus(value as CaseStatus)}>
-                <SelectTrigger id="new-status" className="mt-1">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {statuses.map((status) => (
-                    <SelectItem key={status} value={status}>
-                      {status}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Activity Type</CardTitle>
+          <CardDescription>Event-specific fields appear below.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Select value={activityTypeCode} onValueChange={setActivityTypeCode}>
+            <SelectTrigger className="w-full sm:w-[220px]">
+              <SelectValue placeholder="Select activity type" />
+            </SelectTrigger>
+            <SelectContent>
+              {activityTypes.map((type) => (
+                <SelectItem key={type.id} value={type.code}>
+                  {type.display_label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-            <div>
-              <Label htmlFor="updated-by">Updated By</Label>
-              <Input
-                id="updated-by"
-                value={updatedBy}
-                onChange={(e) => setUpdatedBy(e.target.value)}
-                className="mt-1"
-                placeholder="Your name or title"
+          <Textarea
+            id="activity-notes"
+            aria-label="Activity notes"
+            placeholder="Activity notes..."
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={3}
+          />
+
+          <Textarea
+            id="activity-remarks"
+            aria-label="Remarks"
+            placeholder="Remarks..."
+            value={remarks}
+            onChange={(e) => setRemarks(e.target.value)}
+            rows={4}
+          />
+
+          <div className="rounded-lg border border-border p-4">
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="also-update-current-status"
+                checked={alsoUpdateCurrentStatus}
+                onCheckedChange={(checked) => setAlsoUpdateCurrentStatus(checked === true)}
               />
+              <Label htmlFor="also-update-current-status" className="font-normal">
+                Also update the current status
+              </Label>
             </div>
-          </div>
-
-          <div>
-            <Label htmlFor="remarks">Remarks *</Label>
-            <Textarea
-              id="remarks"
-              placeholder="Add remarks or notes about this status change..."
-              value={remarks}
-              onChange={(e) => setRemarks(e.target.value)}
-              className="mt-1"
-              rows={4}
-            />
           </div>
 
           <Button
             onClick={handleStatusUpdate}
-            disabled={!selectedCaseNumber || !newStatus || !remarks.trim()}
+            disabled={!selectedCaseNumber || !activityTypeCode || !remarks.trim()}
             className="w-full"
           >
-            Update Status
+            Record Activity
           </Button>
         </CardContent>
       </Card>
 
-      {/* Status Update History */}
       <Card>
         <CardHeader>
           <CardTitle>Status Update History</CardTitle>
@@ -410,7 +433,7 @@ export default function StatusUpdate() {
                     </div>
                     <StatusBadge status={update.newStatus} size="sm" />
                   </div>
-                  <p className="text-sm mb-2">{update.remarks}</p>
+                  <p className="text-sm mb-2 whitespace-pre-line">{update.remarks}</p>
                   <p className="text-xs text-muted-foreground">By: {update.updatedBy}</p>
                 </div>
               ))}

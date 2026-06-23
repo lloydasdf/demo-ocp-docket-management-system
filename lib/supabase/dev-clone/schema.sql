@@ -13757,6 +13757,29 @@ COMMENT ON VIEW public.v_ref_case_statuses IS 'Frontend reference view; security
 
 
 --
+--
+-- Name: v_ref_case_event_types; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_ref_case_event_types AS
+ SELECT id,
+    code,
+    display_label,
+    category,
+    description,
+    sort_order,
+    is_active
+   FROM public.case_event_types
+  WHERE (is_active = true);
+
+
+--
+-- Name: VIEW v_ref_case_event_types; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_ref_case_event_types IS 'Frontend reference view for active case timeline/activity event types.';
+
+
 -- Name: v_ref_courts; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -23185,6 +23208,15 @@ GRANT ALL ON TABLE public.v_ref_case_statuses TO service_role;
 
 
 --
+--
+-- Name: TABLE v_ref_case_event_types; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_case_event_types TO anon;
+GRANT ALL ON TABLE public.v_ref_case_event_types TO authenticated;
+GRANT ALL ON TABLE public.v_ref_case_event_types TO service_role;
+
+
 -- Name: TABLE v_ref_courts; Type: ACL; Schema: public; Owner: -
 --
 

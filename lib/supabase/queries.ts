@@ -1630,6 +1630,28 @@ export async function getParticipantRoles(): Promise<SupabaseQueryResult<TableRo
   }, []);
 }
 
+
+export type CaseEventTypeReference = {
+  id: number;
+  code: string;
+  display_label: string;
+  category: string;
+  description: string | null;
+  sort_order: number;
+  is_active: boolean;
+};
+
+export async function getCaseEventTypes(): Promise<SupabaseQueryResult<CaseEventTypeReference[]>> {
+  return runSupabaseQuery("getCaseEventTypes", "v_ref_case_event_types" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase
+      .from("v_ref_case_event_types" as never)
+      .select("id,code,display_label,category,description,sort_order,is_active")
+      .order("sort_order" as never, { ascending: true })
+      .order("display_label" as never, { ascending: true })) as unknown as { data: CaseEventTypeReference[] | null; error: unknown };
+  }, []);
+}
+
 export async function getAddressTypes(): Promise<SupabaseQueryResult<TableRow<"address_types">[]>> {
   return runSupabaseQuery("getAddressTypes", "v_ref_address_types" as RelationName, async () => {
     const supabase = await getSupabaseBrowserClient();
