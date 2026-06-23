@@ -782,6 +782,7 @@ export type CaseDetailsPageViewRecord = Pick<
   case_classification_name: string | null;
   case_classification_label: string | null;
   case_classification_description: string | null;
+  case_addresses: Json | null;
   case_classifications:
     | { code?: string | null; display_label?: string | null; name?: string | null }
     | null;
@@ -1770,7 +1771,7 @@ export async function searchViolationSuggestions(query: string, limit?: number):
   }, []);
 }
 
-export interface NewDocketPersonInput {
+export interface NewDocketParticipantInput {
   existingPersonId?: number | null;
   newPerson?: {
     firstName?: string | null;
@@ -1861,7 +1862,8 @@ export interface NewDocketEntryInput {
   summaryText?: string | null;
   remarks?: string | null;
   isSummaryProcedure?: boolean | null;
-  persons: NewDocketPersonInput[];
+  assignedProsecutorId?: number | null;
+  participants: NewDocketParticipantInput[];
   addresses: NewDocketAddressInput[];
   violations: NewDocketViolationInput[];
 }
@@ -1898,7 +1900,7 @@ function getDocketMonthCode(dateReceived: string) {
   return date.toLocaleString("en-US", { month: "short" }).toUpperCase();
 }
 
-function buildFullName(person: NewDocketPersonInput) {
+function buildFullName(person: NewDocketParticipantInput) {
   return [
     cleanString(person.firstName),
     cleanString(person.middleName),

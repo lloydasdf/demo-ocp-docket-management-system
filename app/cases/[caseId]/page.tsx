@@ -36,6 +36,24 @@ import {
 } from "@/lib/supabase/queries";
 import type { TableRow as SupabaseTableRow } from "@/lib/supabase/types";
 
+
+type CaseAddressRecord = {
+  id?: number | null;
+  address_type_label?: string | null;
+  is_primary?: boolean | null;
+  remarks?: string | null;
+  addresses?: {
+    line1: string | null;
+    line2: string | null;
+    barangay: string | null;
+    city: string | null;
+    province: string | null;
+    region: string | null;
+    zip_code: string | null;
+    country: string | null;
+  } | null;
+};
+
 type CaseDetailsState = {
   compact: CaseDetailsPageViewRecord | null;
   details: CaseDetailsPageViewRecord | null;
@@ -150,6 +168,14 @@ function primaryAddress(participant: CaseParticipantRecord) {
   const preferredAddress =
     addresses.find((address) => address.is_primary) ?? addresses[0];
   return formatAddress(preferredAddress?.addresses ?? null);
+}
+
+function caseAddresses(details: CaseDetailsPageViewRecord | null): CaseAddressRecord[] {
+  return Array.isArray(details?.case_addresses) ? (details.case_addresses as CaseAddressRecord[]) : [];
+}
+
+function formatCaseAddress(address: CaseAddressRecord) {
+  return formatAddress(address.addresses ?? null);
 }
 
 
@@ -451,6 +477,25 @@ export default function CaseDetailsPage() {
                               </div>
                             ))}
                           </div>
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="p-4 sm:p-6">
+                    <CardTitle>Case Addresses</CardTitle>
+                    <CardDescription>Case-level addresses recorded for this docket.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3 p-4 pt-0 sm:p-6 sm:pt-0">
+                    {caseAddresses(data.details).length === 0 ? (
+                      <SectionEmpty>No case addresses recorded.</SectionEmpty>
+                    ) : (
+                      caseAddresses(data.details).map((address) => (
+                        <div key={address.id ?? formatCaseAddress(address) ?? 'case-address'} className="rounded-lg border p-4 text-sm">
+                          <p className="font-medium">{formatCaseAddress(address) ?? 'Unnamed address'}</p>
+                          <p className="text-muted-foreground">{[address.address_type_label, address.is_primary ? 'Primary' : null, address.remarks].filter(Boolean).join(' • ')}</p>
                         </div>
                       ))
                     )}

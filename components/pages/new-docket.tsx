@@ -21,6 +21,7 @@ import {
   getDocketTypes,
   getNextDocketNumber,
   getParticipantRoles,
+  getProsecutors,
   getViolations,
   searchAddressSuggestions,
   searchPersons,
@@ -28,7 +29,7 @@ import {
   type DatabaseUserSummary,
   type NewDocketAddressInput,
   type NewDocketEntryInput,
-  type NewDocketPersonInput,
+  type NewDocketParticipantInput,
   type NewDocketViolationInput,
 } from '@/lib/supabase/queries';
 import type { TableRow } from '@/lib/supabase/types';
@@ -39,6 +40,7 @@ type LookupState = {
   addressTypes: TableRow<'address_types'>[];
   violations: TableRow<'violations'>[];
   statuses: TableRow<'case_statuses'>[];
+  prosecutors: TableRow<'prosecutors'>[];
 };
 
 type MessageState =
@@ -46,7 +48,7 @@ type MessageState =
   | { type: 'error'; text: string }
   | null;
 
-type PersonEntry = NewDocketPersonInput & { id: string; selectedExistingName?: string | null };
+type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null };
 type AddressEntry = NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null };
 type ViolationEntry = NewDocketViolationInput & { id: string; searchText: string; selectedExistingTitle?: string | null; createNew?: boolean; newViolationTitle?: string | null; referenceCode?: string | null; shortLabel?: string | null; description?: string | null; lawReference?: string | null };
 
@@ -56,6 +58,7 @@ const emptyLookups: LookupState = {
   addressTypes: [],
   violations: [],
   statuses: [],
+  prosecutors: [],
 };
 
 const thisYear = new Date().getFullYear();
@@ -142,6 +145,7 @@ export default function NewDocket() {
   const [isLoadingNextDocket, setIsLoadingNextDocket] = useState(false);
   const [dateReceived, setDateReceived] = useState(new Date().toISOString().slice(0, 10));
   const [initialStatusId, setInitialStatusId] = useState('');
+  const [assignedProsecutorId, setAssignedProsecutorId] = useState('');
   const [regionCode, setRegionCode] = useState(defaultRegionCode);
   const [summaryText, setSummaryText] = useState('');
   const [remarks, setRemarks] = useState('');
@@ -159,12 +163,13 @@ export default function NewDocket() {
 
     async function loadLookups() {
       setIsLoadingLookups(true);
-      const [docketTypes, participantRoles, addressTypes, violationsResult, statuses, userResult] = await Promise.all([
+      const [docketTypes, participantRoles, addressTypes, violationsResult, statuses, prosecutors, userResult] = await Promise.all([
         getDocketTypes(),
         getParticipantRoles(),
         getAddressTypes(),
         getViolations(500),
         getCaseStatuses(),
+        getProsecutors(250),
         getCurrentDatabaseUser(),
       ]);
 
@@ -172,7 +177,7 @@ export default function NewDocket() {
         return;
       }
 
-      const firstError = [docketTypes, participantRoles, addressTypes, violationsResult, statuses, userResult].find(
+      const firstError = [docketTypes, participantRoles, addressTypes, violationsResult, statuses, prosecutors, userResult].find(
         (result) => result.error,
       )?.error;
 
@@ -186,6 +191,7 @@ export default function NewDocket() {
         addressTypes: addressTypes.data ?? [],
         violations: violationsResult.data ?? [],
         statuses: statuses.data ?? [],
+        prosecutors: prosecutors.data ?? [],
       };
 
       setLookups(nextLookups);
@@ -246,6 +252,10 @@ export default function NewDocket() {
   const selectedStatus = useMemo(
     () => lookups.statuses.find((status) => status.id.toString() === initialStatusId),
     [initialStatusId, lookups.statuses],
+  );
+  const selectedProsecutor = useMemo(
+    () => lookups.prosecutors.find((prosecutor) => prosecutor.id.toString() === assignedProsecutorId),
+    [assignedProsecutorId, lookups.prosecutors],
   );
   const docketMonthCode = getDocketMonthCode(dateReceived);
   const generatedDocketNumber = formatDocketNumber(selectedDocketType?.prefix, docketYear, nextDocketNumber, docketMonthCode === '—' ? null : docketMonthCode, regionCode);
@@ -309,6 +319,7 @@ export default function NewDocket() {
     setSummaryText('');
     setRemarks('');
     setIsSummaryProcedure(false);
+    setAssignedProsecutorId('');
     setPersons([]);
     setAddresses([]);
     setViolations([]);
@@ -472,7 +483,8 @@ export default function NewDocket() {
       summaryText: summaryText || null,
       remarks: remarks || null,
       isSummaryProcedure,
-      persons: persons.map(({ id: _id, selectedExistingName: _selectedExistingName, age, gender, ...person }, index) => ({
+      assignedProsecutorId: assignedProsecutorId ? toNumber(assignedProsecutorId) : null,
+      participants: persons.map(({ id: _id, selectedExistingName: _selectedExistingName, age, gender, ...person }, index) => ({
         ...person,
         participantOrder: person.participantOrder ?? index + 1,
         newPerson: person.existingPersonId ? undefined : {
@@ -601,6 +613,25 @@ export default function NewDocket() {
                 <div>
                   <Label htmlFor="region-code">Region</Label>
                   <Input id="region-code" value={regionCode} onChange={(event) => setRegionCode(event.target.value)} className="mt-1" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr]">
+                <div>
+                  <Label htmlFor="assigned-prosecutor">Assigned Prosecutor</Label>
+                  <Select value={assignedProsecutorId || 'none'} onValueChange={(value) => setAssignedProsecutorId(value === 'none' ? '' : value)} disabled={isLoadingLookups}>
+                    <SelectTrigger id="assigned-prosecutor" className="mt-1">
+                      <SelectValue placeholder="Select prosecutor" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No prosecutor selected</SelectItem>
+                      {lookups.prosecutors.map((prosecutor) => (
+                        <SelectItem key={prosecutor.id} value={prosecutor.id.toString()}>
+                          {prosecutor.short_name ?? prosecutor.full_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
@@ -844,7 +875,7 @@ export default function NewDocket() {
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
                   <p><strong>Preview docket:</strong> {generatedDocketNumber}</p>
-                  <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; initial status {selectedStatus?.display_label ?? '—'}</p>
+                  <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; initial status {selectedStatus?.display_label ?? '—'}; prosecutor {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? 'Not assigned'}</p>
                   <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.existingPersonId ? `Existing #${person.existingPersonId}: ${person.selectedExistingName}` : `New: ${buildPersonFullName(person)}`}</div>) : ' none'}</div>
                   <div><strong>Addresses:</strong>{addresses.length ? addresses.map((address) => <div key={address.id}>• {address.existingAddressId ? `Existing #${address.existingAddressId}: ${address.selectedExistingLabel}` : ['New', address.line1, address.barangay, address.city].filter(Boolean).join(' — ')}</div>) : ' none'}</div>
                   <div><strong>Violations:</strong>{violations.length ? violations.map((violation) => <div key={violation.id}>• {violation.existingViolationId ? `Existing #${violation.existingViolationId}: ${violation.selectedExistingTitle}` : `New: ${violation.newViolationTitle || violation.searchText || 'Untitled'}`}</div>) : ' none'}</div>
