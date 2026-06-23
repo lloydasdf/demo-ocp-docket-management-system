@@ -25,12 +25,15 @@ import {
   getViolations,
   searchAddressSuggestions,
   searchPersons,
+  searchOrganizations,
   searchViolationSuggestions,
   type DatabaseUserSummary,
   type NewDocketAddressInput,
   type NewDocketEntryInput,
   type NewDocketParticipantInput,
   type NewDocketViolationInput,
+  type OrganizationDetailsSearchRow,
+  type PersonDetailsSearchRow,
 } from '@/lib/supabase/queries';
 import type { TableRow } from '@/lib/supabase/types';
 
@@ -48,7 +51,8 @@ type MessageState =
   | { type: 'error'; text: string }
   | null;
 
-type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null };
+type AliasEntry = { id: string; aliasName: string; aliasType?: string | null };
+type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; aliases?: AliasEntry[]; addresses?: (NewDocketAddressInput & { id?: string; suggestionQuery?: string; selectedExistingLabel?: string | null })[] };
 type AddressEntry = NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null };
 type ViolationEntry = NewDocketViolationInput & { id: string; searchText: string; selectedExistingTitle?: string | null; createNew?: boolean; newViolationTitle?: string | null; referenceCode?: string | null; shortLabel?: string | null; description?: string | null; lawReference?: string | null };
 
@@ -145,7 +149,9 @@ export default function NewDocket() {
   const [isLoadingNextDocket, setIsLoadingNextDocket] = useState(false);
   const [dateReceived, setDateReceived] = useState(new Date().toISOString().slice(0, 10));
   const [initialStatusId, setInitialStatusId] = useState('');
+  const [caseAlsoRaffled, setCaseAlsoRaffled] = useState(false);
   const [assignedProsecutorId, setAssignedProsecutorId] = useState('');
+  const [assignmentDate, setAssignmentDate] = useState(new Date().toISOString().slice(0, 10));
   const [regionCode, setRegionCode] = useState(defaultRegionCode);
   const [summaryText, setSummaryText] = useState('');
   const [remarks, setRemarks] = useState('');
@@ -154,7 +160,8 @@ export default function NewDocket() {
   const [persons, setPersons] = useState<PersonEntry[]>([]);
   const [addresses, setAddresses] = useState<AddressEntry[]>([]);
   const [violations, setViolations] = useState<ViolationEntry[]>([]);
-  const [personSuggestions, setPersonSuggestions] = useState<Record<string, TableRow<'persons'>[]>>({});
+  const [personSuggestions, setPersonSuggestions] = useState<Record<string, PersonDetailsSearchRow[]>>({});
+  const [organizationSuggestions, setOrganizationSuggestions] = useState<Record<string, OrganizationDetailsSearchRow[]>>({});
   const [addressSuggestions, setAddressSuggestions] = useState<Record<string, TableRow<'addresses'>[]>>({});
   const [violationSuggestions, setViolationSuggestions] = useState<Record<string, TableRow<'violations'>[]>>({});
 
@@ -276,6 +283,9 @@ export default function NewDocket() {
         participantOrder: current.length + 1,
         remarks: '',
         sourceDetail: '',
+        participantKind: 'PERSON',
+        aliases: [],
+        addresses: [],
       },
     ]);
   };
@@ -319,11 +329,13 @@ export default function NewDocket() {
     setSummaryText('');
     setRemarks('');
     setIsSummaryProcedure(false);
+    setCaseAlsoRaffled(false);
     setAssignedProsecutorId('');
     setPersons([]);
     setAddresses([]);
     setViolations([]);
     setPersonSuggestions({});
+    setOrganizationSuggestions({});
     setAddressSuggestions({});
     setViolationSuggestions({});
     setActiveTab('case-info');
@@ -331,6 +343,10 @@ export default function NewDocket() {
 
   const updatePerson = (id: string, updates: Partial<PersonEntry>) => {
     setPersons((current) => current.map((person) => (person.id === id ? { ...person, ...updates } : person)));
+  };
+
+  const updateParticipantAddress = (personId: string, addressId: string, updates: Partial<AddressEntry>) => {
+    setPersons((current) => current.map((person) => person.id === personId ? { ...person, addresses: (person.addresses ?? []).map((address) => address.id === addressId ? { ...address, ...updates } : address) } : person));
   };
 
   const updateAddress = (id: string, updates: Partial<AddressEntry>) => {
@@ -358,6 +374,32 @@ export default function NewDocket() {
     }
   }, []);
 
+  const loadOrganizationSuggestions = useCallback(async (id: string, query: string) => {
+    const safeQuery = query.trim();
+    if (safeQuery.length < 2) {
+      setOrganizationSuggestions((current) => ({ ...current, [id]: [] }));
+      return;
+    }
+    const result = await searchOrganizations(safeQuery, 5);
+    if (!result.error) {
+      setOrganizationSuggestions((current) => ({ ...current, [id]: result.data }));
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      persons.forEach((person) => {
+        if (person.participantKind === 'ORGANIZATION') {
+          loadOrganizationSuggestions(person.id, person.organizationName ?? '');
+          return;
+        }
+        loadPersonSuggestions(person.id, [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' '));
+      });
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [persons, loadOrganizationSuggestions, loadPersonSuggestions]);
+
   const loadAddressSuggestions = useCallback(async (id: string, query: string) => {
     const safeQuery = query.trim();
 
@@ -381,10 +423,11 @@ export default function NewDocket() {
     }
   }, []);
 
-  const applyPersonSuggestion = (entryId: string, person: TableRow<'persons'>) => {
+  const applyPersonSuggestion = (entryId: string, person: PersonDetailsSearchRow) => {
     updatePerson(entryId, {
       existingPersonId: person.id,
       selectedExistingName: person.full_name,
+      fullNamePreview: person.full_name,
       age: person.age ?? '',
       birthDate: person.birth_date ?? '',
       firstName: person.first_name ?? '',
@@ -393,8 +436,25 @@ export default function NewDocket() {
       middleName: person.middle_name ?? '',
       suffix: person.suffix ?? '',
       noMiddleName: person.middle_name === 'NMN',
+      aliases: Array.isArray(person.person_aliases) ? person.person_aliases.map((alias: any) => ({ id: makeId('alias'), aliasName: alias.alias_name ?? '', aliasType: alias.alias_type ?? 'AKA' })) : [],
     });
     setPersonSuggestions((current) => ({ ...current, [entryId]: [] }));
+  };
+
+  const applyOrganizationSuggestion = (entryId: string, organization: OrganizationDetailsSearchRow) => {
+    updatePerson(entryId, {
+      existingOrganizationId: organization.id,
+      selectedExistingOrganizationName: organization.organization_name,
+      organizationName: organization.organization_name,
+      organizationType: organization.organization_type,
+      registrationNumber: organization.registration_number,
+      taxIdentificationNumber: organization.tax_identification_number,
+      contactPerson: organization.contact_person,
+      contactNumber: organization.contact_number,
+      email: organization.email,
+      aliases: Array.isArray(organization.organization_aliases) ? organization.organization_aliases.map((alias: any) => ({ id: makeId('alias'), aliasName: alias.alias_name ?? '' })) : [],
+    });
+    setOrganizationSuggestions((current) => ({ ...current, [entryId]: [] }));
   };
 
   const applyAddressSuggestion = (entryId: string, address: TableRow<'addresses'>) => {
@@ -438,8 +498,12 @@ export default function NewDocket() {
       return 'Add at least one complainant, respondent, or other participant.';
     }
 
-    if (persons.some((person) => !person.roleId || (!person.existingPersonId && !buildPersonFullName(person)))) {
-      return 'Each participant needs a role and either a selected existing person or at least one name component.';
+    if (caseAlsoRaffled && !assignedProsecutorId) {
+      return 'Select a prosecutor when Case also raffled is checked.';
+    }
+
+    if (persons.some((person) => !person.roleId || (person.participantKind === 'ORGANIZATION' ? (!person.existingOrganizationId && !cleanString(person.organizationName)) : (!person.existingPersonId && !buildPersonFullName(person))))) {
+      return 'Each participant needs a role and either a selected existing record or enough new participant details.';
     }
 
     if (violations.length === 0) {
@@ -483,11 +547,17 @@ export default function NewDocket() {
       summaryText: summaryText || null,
       remarks: remarks || null,
       isSummaryProcedure,
-      assignedProsecutorId: assignedProsecutorId ? toNumber(assignedProsecutorId) : null,
-      participants: persons.map(({ id: _id, selectedExistingName: _selectedExistingName, age, gender, ...person }, index) => ({
+      caseAlsoRaffled,
+      assignmentDate,
+      assignedProsecutorId: caseAlsoRaffled && assignedProsecutorId ? toNumber(assignedProsecutorId) : null,
+      placeOfCommission: addresses[0] ? { ...addresses[0], newAddress: addresses[0].existingAddressId ? undefined : { line1: addresses[0].line1, line2: addresses[0].line2, barangay: addresses[0].barangay, city: addresses[0].city, province: addresses[0].province, region: addresses[0].region, zipCode: addresses[0].zipCode, country: addresses[0].country } } : null,
+      participants: persons.map(({ id: _id, selectedExistingName: _selectedExistingName, selectedExistingOrganizationName: _selectedExistingOrganizationName, fullNamePreview: _fullNamePreview, age, gender, aliases, addresses: participantAddresses, ...person }, index) => ({
         ...person,
         participantOrder: person.participantOrder ?? index + 1,
-        newPerson: person.existingPersonId ? undefined : {
+        aliases: aliases?.map(({ id: _aliasId, ...alias }) => alias),
+        addresses: participantAddresses?.map(({ id: _addressId, suggestionQuery: _sq, selectedExistingLabel: _sel, ...address }) => ({ ...address, newAddress: address.existingAddressId ? undefined : { line1: address.line1, line2: address.line2, barangay: address.barangay, city: address.city, province: address.province, region: address.region, zipCode: address.zipCode, country: address.country } })),
+        newOrganization: person.participantKind === 'ORGANIZATION' && !person.existingOrganizationId ? { organizationName: person.organizationName, organizationType: person.organizationType, registrationNumber: person.registrationNumber, taxIdentificationNumber: person.taxIdentificationNumber, contactPerson: person.contactPerson, contactNumber: person.contactNumber, email: person.email } : undefined,
+        newPerson: person.participantKind === 'PERSON' && !person.existingPersonId ? {
           firstName: person.firstName,
           middleName: person.noMiddleName ? 'NMN' : person.middleName,
           lastName: person.lastName,
@@ -497,7 +567,7 @@ export default function NewDocket() {
           birthDate: person.birthDate,
           notes: person.notes,
           personDescriptor: person.personDescriptor,
-        },
+        } : undefined,
         attributes: person.attributes ?? {
           ageText: age ?? null,
           ageYears: age ? Number.parseInt(age, 10) || null : null,
@@ -618,8 +688,8 @@ export default function NewDocket() {
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr]">
                 <div>
-                  <Label htmlFor="assigned-prosecutor">Assigned Prosecutor</Label>
-                  <Select value={assignedProsecutorId || 'none'} onValueChange={(value) => setAssignedProsecutorId(value === 'none' ? '' : value)} disabled={isLoadingLookups}>
+                  <div className="flex items-center gap-2"><Checkbox id="case-also-raffled" checked={caseAlsoRaffled} onCheckedChange={(checked) => setCaseAlsoRaffled(checked === true)} /><Label htmlFor="case-also-raffled">Case also raffled</Label></div><Label htmlFor="assigned-prosecutor" className="mt-3 block">Prosecutor</Label>
+                  <Select value={assignedProsecutorId || 'none'} onValueChange={(value) => setAssignedProsecutorId(value === 'none' ? '' : value)} disabled={isLoadingLookups || !caseAlsoRaffled}>
                     <SelectTrigger id="assigned-prosecutor" className="mt-1">
                       <SelectValue placeholder="Select prosecutor" />
                     </SelectTrigger>
@@ -633,6 +703,7 @@ export default function NewDocket() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div><Label htmlFor="assignment-date">Date of Assignment</Label><Input id="assignment-date" type="date" value={assignmentDate} onChange={(event) => setAssignmentDate(event.target.value)} disabled={!caseAlsoRaffled} className="mt-1" /></div>
               </div>
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-[10rem_1fr]">
@@ -682,7 +753,9 @@ export default function NewDocket() {
                     <div key={person.id} className="space-y-3 rounded-lg border p-4">
                       <div className="flex items-start justify-between gap-4">
                         <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-4">
-                          <div><Label className="text-xs">First Name *</Label><Input value={person.firstName ?? ''} onChange={(event) => { updatePerson(person.id, { firstName: event.target.value }); loadPersonSuggestions(person.id, `${event.target.value} ${person.lastName}`); }} className="mt-1" /></div>
+                          <div><Label className="text-xs">Type</Label><Select value={person.participantKind ?? 'PERSON'} onValueChange={(value) => updatePerson(person.id, { participantKind: value as 'PERSON' | 'ORGANIZATION', existingPersonId: null, existingOrganizationId: null })}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PERSON">Person</SelectItem><SelectItem value="ORGANIZATION">Organization</SelectItem></SelectContent></Select></div>
+                          {person.participantKind !== 'ORGANIZATION' ? <>
+                          <div><Label className="text-xs">First Name *</Label><Input value={person.firstName ?? ''} onChange={(event) => { updatePerson(person.id, { firstName: event.target.value, existingPersonId: null }); }} className="mt-1" /></div>
                           <div>
                             <div className="flex items-center justify-between gap-2">
                               <Label className="text-xs">Middle Name</Label>
@@ -691,10 +764,19 @@ export default function NewDocket() {
                                 No Middle Name
                               </label>
                             </div>
-                            <Input value={person.noMiddleName ? 'NMN' : (person.middleName ?? '')} disabled={person.noMiddleName === true} onChange={(event) => updatePerson(person.id, { middleName: event.target.value, noMiddleName: false })} className="mt-1" />
+                            <Input value={person.noMiddleName ? 'NMN' : (person.middleName ?? '')} disabled={person.noMiddleName === true} onChange={(event) => updatePerson(person.id, { middleName: event.target.value, noMiddleName: false, existingPersonId: null })} className="mt-1" />
                           </div>
-                          <div><Label className="text-xs">Last Name *</Label><Input value={person.lastName ?? ''} onChange={(event) => { updatePerson(person.id, { lastName: event.target.value }); loadPersonSuggestions(person.id, `${person.firstName} ${event.target.value}`); }} className="mt-1" /></div>
-                          <div><Label className="text-xs">Suffix</Label><Input value={person.suffix ?? ''} onChange={(event) => updatePerson(person.id, { suffix: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Last Name *</Label><Input value={person.lastName ?? ''} onChange={(event) => { updatePerson(person.id, { lastName: event.target.value, existingPersonId: null }); }} className="mt-1" /></div>
+                          <div><Label className="text-xs">Suffix</Label><Input value={person.suffix ?? ''} onChange={(event) => updatePerson(person.id, { suffix: event.target.value, existingPersonId: null })} className="mt-1" /></div>
+                          </> : <>
+                          <div className="md:col-span-3"><Label className="text-xs">Organization Name *</Label><Input value={person.organizationName ?? ''} onChange={(event) => { updatePerson(person.id, { organizationName: event.target.value, existingOrganizationId: null }); }} className="mt-1" /></div>
+                          <div><Label className="text-xs">Organization Type</Label><Input value={person.organizationType ?? ''} onChange={(event) => updatePerson(person.id, { organizationType: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Registration Number</Label><Input value={person.registrationNumber ?? ''} onChange={(event) => updatePerson(person.id, { registrationNumber: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">TIN</Label><Input value={person.taxIdentificationNumber ?? ''} onChange={(event) => updatePerson(person.id, { taxIdentificationNumber: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Contact Person</Label><Input value={person.contactPerson ?? ''} onChange={(event) => updatePerson(person.id, { contactPerson: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Contact Number</Label><Input value={person.contactNumber ?? ''} onChange={(event) => updatePerson(person.id, { contactNumber: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Email</Label><Input value={person.email ?? ''} onChange={(event) => updatePerson(person.id, { email: event.target.value })} className="mt-1" /></div>
+                          </>}
                         </div>
                         <Button onClick={() => setPersons((current) => current.filter((item) => item.id !== person.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
                       </div>
@@ -702,6 +784,19 @@ export default function NewDocket() {
                       <p className="text-xs text-muted-foreground">
                         {person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person preview: ${buildPersonFullName(person) || 'Enter at least one name component'}`}
                       </p>
+
+                      {organizationSuggestions[person.id]?.length ? (
+                        <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
+                          <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing organization suggestions</p>
+                          <div className="flex flex-wrap gap-2">
+                            {organizationSuggestions[person.id].map((suggestion) => (
+                              <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyOrganizationSuggestion(person.id, suggestion)}>
+                                {suggestion.organization_name}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
 
                       {personSuggestions[person.id]?.length ? (
                         <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
@@ -715,6 +810,8 @@ export default function NewDocket() {
                           </div>
                         </div>
                       ) : null}
+
+                      <div className="space-y-2 rounded-md bg-muted/40 p-3"><div className="flex items-center justify-between"><Label className="text-xs">Aliases</Label><Button type="button" variant="outline" size="sm" onClick={() => updatePerson(person.id, { aliases: [...(person.aliases ?? []), { id: makeId('alias'), aliasName: '', aliasType: person.participantKind === 'ORGANIZATION' ? null : 'AKA' }] })}>+ Add Alias</Button></div>{(person.aliases ?? []).map((alias) => <div key={alias.id} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_10rem]"><Input placeholder="Alias name" value={alias.aliasName ?? ''} onChange={(event) => updatePerson(person.id, { aliases: (person.aliases ?? []).map((item) => item.id === alias.id ? { ...item, id: item.id ?? makeId('alias'), aliasName: event.target.value } : { ...item, id: item.id ?? makeId('alias') }) as AliasEntry[] })} /><Input placeholder="Alias type" value={alias.aliasType ?? ''} onChange={(event) => updatePerson(person.id, { aliases: (person.aliases ?? []).map((item) => item.id === alias.id ? { ...item, id: item.id ?? makeId('alias'), aliasType: event.target.value } : { ...item, id: item.id ?? makeId('alias') }) as AliasEntry[] })} /></div>)}</div>
 
                       <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
                         <div>

@@ -919,7 +919,8 @@ export type CaseParticipantRecord = TableRow<"case_participants"> & {
     TableRow<"participant_roles">,
     "code" | "display_label"
   > | null;
-  persons: CaseParticipantPersonRecord | null;
+  persons: (CaseParticipantPersonRecord & { person_aliases?: Json | null }) | null;
+  organizations?: { id: number; organization_name: string; organization_type?: string | null; registration_number?: string | null; tax_identification_number?: string | null; contact_person?: string | null; contact_number?: string | null; email?: string | null; organization_aliases?: Json | null } | null;
 };
 
 export type CaseAssignmentRecord = TableRow<"case_assignments"> & {
@@ -1093,13 +1094,32 @@ export async function getPersons(limit?: number): Promise<SupabaseQueryResult<Ta
   }, []);
 }
 
-export async function searchPersons(query: string, limit?: number): Promise<SupabaseQueryResult<TableRow<"persons">[]>> {
+export type PersonDetailsSearchRow = TableRow<"persons"> & { person_aliases?: Json | null; person_addresses?: Json | null };
+
+export async function searchPersons(query: string, limit?: number): Promise<SupabaseQueryResult<PersonDetailsSearchRow[]>> {
   const safeLimit = normalizeLimit(limit, 25, 100);
   const safeQuery = escapeIlikeTerm(query);
   if (!safeQuery) return getPersons(safeLimit);
   return runSupabaseQuery("searchPersons", "v_person_details" as RelationName, async () => {
     const supabase = await getSupabaseBrowserClient();
-    return (await supabase.from("v_person_details" as never).select("*").or(`full_name.ilike.%${safeQuery}%,first_name.ilike.%${safeQuery}%,last_name.ilike.%${safeQuery}%`).order("full_name" as never, { ascending: true }).limit(safeLimit)) as unknown as { data: TableRow<"persons">[] | null; error: unknown };
+    return (await supabase.from("v_person_details" as never).select("*").or(`full_name.ilike.%${safeQuery}%,first_name.ilike.%${safeQuery}%,middle_name.ilike.%${safeQuery}%,last_name.ilike.%${safeQuery}%`).order("full_name" as never, { ascending: true }).limit(safeLimit)) as unknown as { data: PersonDetailsSearchRow[] | null; error: unknown };
+  }, []);
+}
+
+export type OrganizationDetailsSearchRow = TableRow<"organizations"> & { organization_aliases?: Json | null };
+
+export async function searchOrganizations(query: string, limit?: number): Promise<SupabaseQueryResult<OrganizationDetailsSearchRow[]>> {
+  const safeLimit = normalizeLimit(limit, 8, 25);
+  const safeQuery = escapeIlikeTerm(query);
+  if (!safeQuery) return ok([]);
+  return runSupabaseQuery("searchOrganizations", "v_organization_details" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase
+      .from("v_organization_details" as never)
+      .select("*")
+      .or(`organization_name.ilike.%${safeQuery}%,organization_type.ilike.%${safeQuery}%,registration_number.ilike.%${safeQuery}%,tax_identification_number.ilike.%${safeQuery}%`)
+      .order("organization_name" as never, { ascending: true })
+      .limit(safeLimit)) as unknown as { data: OrganizationDetailsSearchRow[] | null; error: unknown };
   }, []);
 }
 
@@ -1772,7 +1792,9 @@ export async function searchViolationSuggestions(query: string, limit?: number):
 }
 
 export interface NewDocketParticipantInput {
+  participantKind?: "PERSON" | "ORGANIZATION";
   existingPersonId?: number | null;
+  existingOrganizationId?: number | null;
   newPerson?: {
     firstName?: string | null;
     middleName?: string | null;
@@ -1784,6 +1806,24 @@ export interface NewDocketParticipantInput {
     notes?: string | null;
     personDescriptor?: string | null;
   } | null;
+  newOrganization?: {
+    organizationName?: string | null;
+    organizationType?: string | null;
+    registrationNumber?: string | null;
+    taxIdentificationNumber?: string | null;
+    contactPerson?: string | null;
+    contactNumber?: string | null;
+    email?: string | null;
+  } | null;
+  aliases?: { id?: string; aliasName?: string | null; aliasType?: string | null }[];
+  addresses?: (NewDocketAddressInput & { id?: string; suggestionQuery?: string; selectedExistingLabel?: string | null })[];
+  organizationName?: string | null;
+  organizationType?: string | null;
+  registrationNumber?: string | null;
+  taxIdentificationNumber?: string | null;
+  contactPerson?: string | null;
+  contactNumber?: string | null;
+  email?: string | null;
   firstName?: string | null;
   middleName?: string | null;
   lastName?: string | null;
@@ -1862,8 +1902,11 @@ export interface NewDocketEntryInput {
   summaryText?: string | null;
   remarks?: string | null;
   isSummaryProcedure?: boolean | null;
+  caseAlsoRaffled?: boolean | null;
+  assignmentDate?: string | null;
   assignedProsecutorId?: number | null;
   participants: NewDocketParticipantInput[];
+  placeOfCommission?: NewDocketAddressInput | null;
   addresses: NewDocketAddressInput[];
   violations: NewDocketViolationInput[];
 }

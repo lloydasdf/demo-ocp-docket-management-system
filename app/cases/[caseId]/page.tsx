@@ -105,8 +105,15 @@ function displayValue(value: string | number | null | undefined) {
     : String(value);
 }
 
-function personName(participant: CaseParticipantRecord) {
-  return participant.persons?.full_name ?? "Unnamed participant";
+function participantName(participant: CaseParticipantRecord) {
+  return participant.persons?.full_name ?? participant.organizations?.organization_name ?? participant.display_name_snapshot ?? "Unnamed participant";
+}
+
+function participantAliases(participant: CaseParticipantRecord) {
+  const aliases = participant.participant_kind === "ORGANIZATION" ? participant.organizations?.organization_aliases : participant.persons?.person_aliases;
+  if (!Array.isArray(aliases)) return null;
+  const names = aliases.map((alias) => typeof alias === "object" && alias && "alias_name" in alias ? String(alias.alias_name) : null).filter(Boolean);
+  return names.length ? names.join(", ") : null;
 }
 
 function roleLabel(participant: CaseParticipantRecord) {
@@ -436,11 +443,11 @@ export default function CaseDetailsPage() {
                                         href={`/persons/${participant.persons.id}`}
                                         className="font-medium text-primary hover:underline"
                                       >
-                                        {personName(participant)}
+                                        {participantName(participant)}
                                       </Link>
                                     ) : (
                                       <p className="font-medium">
-                                        {personName(participant)}
+                                        {participantName(participant)}
                                       </p>
                                     )}
                                     {formatPersonDemographics(participant) ? (
@@ -454,12 +461,20 @@ export default function CaseDetailsPage() {
                                 <div className="grid gap-2 text-sm sm:grid-cols-2">
                                   <DetailItem label="Role" value={role} />
                                   <OptionalDetailItem
+                                    label="Organization contact"
+                                    value={participant.organizations?.contact_person ?? participant.organizations?.contact_number ?? participant.organizations?.email}
+                                  />
+                                  <OptionalDetailItem
                                     label="Birthdate"
                                     value={
                                       participant.persons?.birth_date
                                         ? formatDate(participant.persons.birth_date)
                                         : null
                                     }
+                                  />
+                                  <OptionalDetailItem
+                                    label="Aliases"
+                                    value={participantAliases(participant)}
                                   />
                                   <OptionalDetailItem
                                     label="Address"
