@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict JTUsdinP6ECcQ1WdbcxtRJUnEQiWjAFfb7l9ZFENQiQkaSXHeBtAJBin0FrmYY2
+\restrict 03w7KXN4YUJy2104dptO20ih5cYQyH6ULLvxPjZBAZVNkJ07BcEJw04gvOWYE9J
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 18.3
@@ -13733,6 +13733,29 @@ COMMENT ON VIEW public.v_ref_case_classifications IS 'Frontend reference view; s
 
 
 --
+-- Name: v_ref_case_event_types; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_ref_case_event_types AS
+ SELECT id,
+    code,
+    display_label,
+    category,
+    description,
+    sort_order,
+    is_active
+   FROM public.case_event_types
+  WHERE (is_active = true);
+
+
+--
+-- Name: VIEW v_ref_case_event_types; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_ref_case_event_types IS 'Frontend reference view for active case timeline/activity event types.';
+
+
+--
 -- Name: v_ref_case_statuses; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -13757,29 +13780,6 @@ COMMENT ON VIEW public.v_ref_case_statuses IS 'Frontend reference view; security
 
 
 --
---
--- Name: v_ref_case_event_types; Type: VIEW; Schema: public; Owner: -
---
-
-CREATE VIEW public.v_ref_case_event_types AS
- SELECT id,
-    code,
-    display_label,
-    category,
-    description,
-    sort_order,
-    is_active
-   FROM public.case_event_types
-  WHERE (is_active = true);
-
-
---
--- Name: VIEW v_ref_case_event_types; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON VIEW public.v_ref_case_event_types IS 'Frontend reference view for active case timeline/activity event types.';
-
-
 -- Name: v_ref_courts; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -18159,6 +18159,21 @@ GRANT USAGE ON SCHEMA storage TO authenticated;
 GRANT USAGE ON SCHEMA storage TO service_role;
 GRANT ALL ON SCHEMA storage TO supabase_storage_admin WITH GRANT OPTION;
 GRANT ALL ON SCHEMA storage TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA storage TO anon;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA storage TO authenticated;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA storage TO service_role;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA storage TO supabase_storage_admin WITH GRANT OPTION;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA storage TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -18167,6 +18182,9 @@ GRANT ALL ON SCHEMA storage TO dashboard_user;
 
 GRANT USAGE ON SCHEMA vault TO postgres WITH GRANT OPTION;
 GRANT USAGE ON SCHEMA vault TO service_role;
+SET SESSION AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA vault TO service_role;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -21863,6 +21881,9 @@ GRANT ALL ON FUNCTION realtime.wal2json_escape_identifier(name text) TO dashboar
 
 GRANT ALL ON FUNCTION vault._crypto_aead_det_decrypt(message bytea, additional bytea, key_id bigint, context bytea, nonce bytea) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION vault._crypto_aead_det_decrypt(message bytea, additional bytea, key_id bigint, context bytea, nonce bytea) TO service_role;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON FUNCTION vault._crypto_aead_det_decrypt(message bytea, additional bytea, key_id bigint, context bytea, nonce bytea) TO service_role;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -21871,6 +21892,9 @@ GRANT ALL ON FUNCTION vault._crypto_aead_det_decrypt(message bytea, additional b
 
 GRANT ALL ON FUNCTION vault.create_secret(new_secret text, new_name text, new_description text, new_key_id uuid) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION vault.create_secret(new_secret text, new_name text, new_description text, new_key_id uuid) TO service_role;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON FUNCTION vault.create_secret(new_secret text, new_name text, new_description text, new_key_id uuid) TO service_role;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -21879,6 +21903,9 @@ GRANT ALL ON FUNCTION vault.create_secret(new_secret text, new_name text, new_de
 
 GRANT ALL ON FUNCTION vault.update_secret(secret_id uuid, new_secret text, new_name text, new_description text, new_key_id uuid) TO postgres WITH GRANT OPTION;
 GRANT ALL ON FUNCTION vault.update_secret(secret_id uuid, new_secret text, new_name text, new_description text, new_key_id uuid) TO service_role;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON FUNCTION vault.update_secret(secret_id uuid, new_secret text, new_name text, new_description text, new_key_id uuid) TO service_role;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -21888,6 +21915,9 @@ GRANT ALL ON FUNCTION vault.update_secret(secret_id uuid, new_secret text, new_n
 GRANT ALL ON TABLE auth.audit_log_entries TO dashboard_user;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.audit_log_entries TO postgres;
 GRANT SELECT ON TABLE auth.audit_log_entries TO postgres WITH GRANT OPTION;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.audit_log_entries TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -21905,6 +21935,9 @@ GRANT ALL ON TABLE auth.custom_oauth_providers TO dashboard_user;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.flow_state TO postgres;
 GRANT SELECT ON TABLE auth.flow_state TO postgres WITH GRANT OPTION;
 GRANT ALL ON TABLE auth.flow_state TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.flow_state TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -21914,6 +21947,9 @@ GRANT ALL ON TABLE auth.flow_state TO dashboard_user;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.identities TO postgres;
 GRANT SELECT ON TABLE auth.identities TO postgres WITH GRANT OPTION;
 GRANT ALL ON TABLE auth.identities TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.identities TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -21923,6 +21959,9 @@ GRANT ALL ON TABLE auth.identities TO dashboard_user;
 GRANT ALL ON TABLE auth.instances TO dashboard_user;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.instances TO postgres;
 GRANT SELECT ON TABLE auth.instances TO postgres WITH GRANT OPTION;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.instances TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -21932,6 +21971,9 @@ GRANT SELECT ON TABLE auth.instances TO postgres WITH GRANT OPTION;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.mfa_amr_claims TO postgres;
 GRANT SELECT ON TABLE auth.mfa_amr_claims TO postgres WITH GRANT OPTION;
 GRANT ALL ON TABLE auth.mfa_amr_claims TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.mfa_amr_claims TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -21941,6 +21983,9 @@ GRANT ALL ON TABLE auth.mfa_amr_claims TO dashboard_user;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.mfa_challenges TO postgres;
 GRANT SELECT ON TABLE auth.mfa_challenges TO postgres WITH GRANT OPTION;
 GRANT ALL ON TABLE auth.mfa_challenges TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.mfa_challenges TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -21950,6 +21995,9 @@ GRANT ALL ON TABLE auth.mfa_challenges TO dashboard_user;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.mfa_factors TO postgres;
 GRANT SELECT ON TABLE auth.mfa_factors TO postgres WITH GRANT OPTION;
 GRANT ALL ON TABLE auth.mfa_factors TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.mfa_factors TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -21991,6 +22039,9 @@ GRANT ALL ON TABLE auth.oauth_consents TO dashboard_user;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.one_time_tokens TO postgres;
 GRANT SELECT ON TABLE auth.one_time_tokens TO postgres WITH GRANT OPTION;
 GRANT ALL ON TABLE auth.one_time_tokens TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.one_time_tokens TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -22000,6 +22051,9 @@ GRANT ALL ON TABLE auth.one_time_tokens TO dashboard_user;
 GRANT ALL ON TABLE auth.refresh_tokens TO dashboard_user;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.refresh_tokens TO postgres;
 GRANT SELECT ON TABLE auth.refresh_tokens TO postgres WITH GRANT OPTION;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.refresh_tokens TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -22017,6 +22071,9 @@ GRANT ALL ON SEQUENCE auth.refresh_tokens_id_seq TO postgres;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.saml_providers TO postgres;
 GRANT SELECT ON TABLE auth.saml_providers TO postgres WITH GRANT OPTION;
 GRANT ALL ON TABLE auth.saml_providers TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.saml_providers TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -22026,6 +22083,9 @@ GRANT ALL ON TABLE auth.saml_providers TO dashboard_user;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.saml_relay_states TO postgres;
 GRANT SELECT ON TABLE auth.saml_relay_states TO postgres WITH GRANT OPTION;
 GRANT ALL ON TABLE auth.saml_relay_states TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.saml_relay_states TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -22042,6 +22102,9 @@ GRANT SELECT ON TABLE auth.schema_migrations TO postgres WITH GRANT OPTION;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.sessions TO postgres;
 GRANT SELECT ON TABLE auth.sessions TO postgres WITH GRANT OPTION;
 GRANT ALL ON TABLE auth.sessions TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.sessions TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -22051,6 +22114,9 @@ GRANT ALL ON TABLE auth.sessions TO dashboard_user;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.sso_domains TO postgres;
 GRANT SELECT ON TABLE auth.sso_domains TO postgres WITH GRANT OPTION;
 GRANT ALL ON TABLE auth.sso_domains TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.sso_domains TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -22060,6 +22126,9 @@ GRANT ALL ON TABLE auth.sso_domains TO dashboard_user;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.sso_providers TO postgres;
 GRANT SELECT ON TABLE auth.sso_providers TO postgres WITH GRANT OPTION;
 GRANT ALL ON TABLE auth.sso_providers TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.sso_providers TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -22069,6 +22138,9 @@ GRANT ALL ON TABLE auth.sso_providers TO dashboard_user;
 GRANT ALL ON TABLE auth.users TO dashboard_user;
 GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.users TO postgres;
 GRANT SELECT ON TABLE auth.users TO postgres WITH GRANT OPTION;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.users TO dashboard_user;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -22110,6 +22182,7 @@ GRANT ALL ON TABLE extensions.pg_stat_statements_info TO dashboard_user;
 --
 
 GRANT ALL ON TABLE public._rls_policy_backup TO anon;
+GRANT ALL ON TABLE public._rls_policy_backup TO authenticated;
 GRANT ALL ON TABLE public._rls_policy_backup TO service_role;
 
 
@@ -22127,6 +22200,7 @@ GRANT ALL ON SEQUENCE public._rls_policy_backup_id_seq TO service_role;
 --
 
 GRANT ALL ON TABLE public._rls_table_state_backup TO anon;
+GRANT ALL ON TABLE public._rls_table_state_backup TO authenticated;
 GRANT ALL ON TABLE public._rls_table_state_backup TO service_role;
 
 
@@ -22143,6 +22217,7 @@ GRANT ALL ON SEQUENCE public._rls_table_state_backup_id_seq TO service_role;
 -- Name: TABLE address_types; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.address_types TO anon;
 GRANT ALL ON TABLE public.address_types TO authenticated;
 GRANT ALL ON TABLE public.address_types TO service_role;
 
@@ -22151,6 +22226,7 @@ GRANT ALL ON TABLE public.address_types TO service_role;
 -- Name: SEQUENCE address_types_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.address_types_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.address_types_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.address_types_id_seq TO service_role;
 
@@ -22159,6 +22235,7 @@ GRANT ALL ON SEQUENCE public.address_types_id_seq TO service_role;
 -- Name: TABLE addresses; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.addresses TO anon;
 GRANT ALL ON TABLE public.addresses TO authenticated;
 GRANT ALL ON TABLE public.addresses TO service_role;
 
@@ -22167,6 +22244,7 @@ GRANT ALL ON TABLE public.addresses TO service_role;
 -- Name: SEQUENCE addresses_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.addresses_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.addresses_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.addresses_id_seq TO service_role;
 
@@ -22175,6 +22253,7 @@ GRANT ALL ON SEQUENCE public.addresses_id_seq TO service_role;
 -- Name: TABLE audit_logs; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.audit_logs TO anon;
 GRANT ALL ON TABLE public.audit_logs TO authenticated;
 GRANT ALL ON TABLE public.audit_logs TO service_role;
 
@@ -22183,6 +22262,7 @@ GRANT ALL ON TABLE public.audit_logs TO service_role;
 -- Name: SEQUENCE audit_logs_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.audit_logs_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.audit_logs_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.audit_logs_id_seq TO service_role;
 
@@ -22191,6 +22271,7 @@ GRANT ALL ON SEQUENCE public.audit_logs_id_seq TO service_role;
 -- Name: TABLE case_addresses; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_addresses TO anon;
 GRANT ALL ON TABLE public.case_addresses TO authenticated;
 GRANT ALL ON TABLE public.case_addresses TO service_role;
 
@@ -22199,6 +22280,7 @@ GRANT ALL ON TABLE public.case_addresses TO service_role;
 -- Name: SEQUENCE case_addresses_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_addresses_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_addresses_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_addresses_id_seq TO service_role;
 
@@ -22207,6 +22289,7 @@ GRANT ALL ON SEQUENCE public.case_addresses_id_seq TO service_role;
 -- Name: TABLE case_assignments; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_assignments TO anon;
 GRANT ALL ON TABLE public.case_assignments TO authenticated;
 GRANT ALL ON TABLE public.case_assignments TO service_role;
 
@@ -22215,6 +22298,7 @@ GRANT ALL ON TABLE public.case_assignments TO service_role;
 -- Name: SEQUENCE case_assignments_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_assignments_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_assignments_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_assignments_id_seq TO service_role;
 
@@ -22223,6 +22307,7 @@ GRANT ALL ON SEQUENCE public.case_assignments_id_seq TO service_role;
 -- Name: TABLE case_attachment_index; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_attachment_index TO anon;
 GRANT ALL ON TABLE public.case_attachment_index TO authenticated;
 GRANT ALL ON TABLE public.case_attachment_index TO service_role;
 
@@ -22231,6 +22316,7 @@ GRANT ALL ON TABLE public.case_attachment_index TO service_role;
 -- Name: SEQUENCE case_attachment_index_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_attachment_index_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_attachment_index_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_attachment_index_id_seq TO service_role;
 
@@ -22239,6 +22325,7 @@ GRANT ALL ON SEQUENCE public.case_attachment_index_id_seq TO service_role;
 -- Name: TABLE case_classifications; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_classifications TO anon;
 GRANT ALL ON TABLE public.case_classifications TO authenticated;
 GRANT ALL ON TABLE public.case_classifications TO service_role;
 
@@ -22247,6 +22334,7 @@ GRANT ALL ON TABLE public.case_classifications TO service_role;
 -- Name: SEQUENCE case_classifications_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_classifications_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_classifications_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_classifications_id_seq TO service_role;
 
@@ -22255,6 +22343,7 @@ GRANT ALL ON SEQUENCE public.case_classifications_id_seq TO service_role;
 -- Name: TABLE case_courts; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_courts TO anon;
 GRANT ALL ON TABLE public.case_courts TO authenticated;
 GRANT ALL ON TABLE public.case_courts TO service_role;
 
@@ -22263,6 +22352,7 @@ GRANT ALL ON TABLE public.case_courts TO service_role;
 -- Name: SEQUENCE case_courts_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_courts_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_courts_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_courts_id_seq TO service_role;
 
@@ -22271,6 +22361,7 @@ GRANT ALL ON SEQUENCE public.case_courts_id_seq TO service_role;
 -- Name: TABLE case_event_types; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_event_types TO anon;
 GRANT ALL ON TABLE public.case_event_types TO authenticated;
 GRANT ALL ON TABLE public.case_event_types TO service_role;
 
@@ -22279,6 +22370,7 @@ GRANT ALL ON TABLE public.case_event_types TO service_role;
 -- Name: SEQUENCE case_event_types_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_event_types_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_event_types_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_event_types_id_seq TO service_role;
 
@@ -22287,6 +22379,7 @@ GRANT ALL ON SEQUENCE public.case_event_types_id_seq TO service_role;
 -- Name: TABLE case_events; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_events TO anon;
 GRANT ALL ON TABLE public.case_events TO authenticated;
 GRANT ALL ON TABLE public.case_events TO service_role;
 
@@ -22295,6 +22388,7 @@ GRANT ALL ON TABLE public.case_events TO service_role;
 -- Name: SEQUENCE case_events_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_events_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_events_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_events_id_seq TO service_role;
 
@@ -22303,6 +22397,7 @@ GRANT ALL ON SEQUENCE public.case_events_id_seq TO service_role;
 -- Name: TABLE case_legacy_attributes; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_legacy_attributes TO anon;
 GRANT ALL ON TABLE public.case_legacy_attributes TO authenticated;
 GRANT ALL ON TABLE public.case_legacy_attributes TO service_role;
 
@@ -22311,6 +22406,7 @@ GRANT ALL ON TABLE public.case_legacy_attributes TO service_role;
 -- Name: SEQUENCE case_legacy_attributes_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_legacy_attributes_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_legacy_attributes_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_legacy_attributes_id_seq TO service_role;
 
@@ -22319,6 +22415,7 @@ GRANT ALL ON SEQUENCE public.case_legacy_attributes_id_seq TO service_role;
 -- Name: TABLE case_motions; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_motions TO anon;
 GRANT ALL ON TABLE public.case_motions TO authenticated;
 GRANT ALL ON TABLE public.case_motions TO service_role;
 
@@ -22327,6 +22424,7 @@ GRANT ALL ON TABLE public.case_motions TO service_role;
 -- Name: SEQUENCE case_motions_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_motions_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_motions_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_motions_id_seq TO service_role;
 
@@ -22335,6 +22433,7 @@ GRANT ALL ON SEQUENCE public.case_motions_id_seq TO service_role;
 -- Name: TABLE case_participant_attributes; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_participant_attributes TO anon;
 GRANT ALL ON TABLE public.case_participant_attributes TO authenticated;
 GRANT ALL ON TABLE public.case_participant_attributes TO service_role;
 
@@ -22343,6 +22442,7 @@ GRANT ALL ON TABLE public.case_participant_attributes TO service_role;
 -- Name: SEQUENCE case_participant_attributes_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_participant_attributes_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_participant_attributes_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_participant_attributes_id_seq TO service_role;
 
@@ -22360,6 +22460,7 @@ GRANT ALL ON TABLE public.case_participant_private_details TO service_role;
 -- Name: TABLE case_participant_relationships; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_participant_relationships TO anon;
 GRANT ALL ON TABLE public.case_participant_relationships TO authenticated;
 GRANT ALL ON TABLE public.case_participant_relationships TO service_role;
 
@@ -22368,6 +22469,7 @@ GRANT ALL ON TABLE public.case_participant_relationships TO service_role;
 -- Name: SEQUENCE case_participant_relationships_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_participant_relationships_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_participant_relationships_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_participant_relationships_id_seq TO service_role;
 
@@ -22376,14 +22478,16 @@ GRANT ALL ON SEQUENCE public.case_participant_relationships_id_seq TO service_ro
 -- Name: TABLE case_participants; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_participants TO anon;
+GRANT ALL ON TABLE public.case_participants TO authenticated;
 GRANT ALL ON TABLE public.case_participants TO service_role;
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.case_participants TO authenticated;
 
 
 --
 -- Name: SEQUENCE case_participants_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_participants_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_participants_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_participants_id_seq TO service_role;
 
@@ -22392,6 +22496,7 @@ GRANT ALL ON SEQUENCE public.case_participants_id_seq TO service_role;
 -- Name: TABLE case_petitions_for_review; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_petitions_for_review TO anon;
 GRANT ALL ON TABLE public.case_petitions_for_review TO authenticated;
 GRANT ALL ON TABLE public.case_petitions_for_review TO service_role;
 
@@ -22400,6 +22505,7 @@ GRANT ALL ON TABLE public.case_petitions_for_review TO service_role;
 -- Name: SEQUENCE case_petitions_for_review_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_petitions_for_review_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_petitions_for_review_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_petitions_for_review_id_seq TO service_role;
 
@@ -22417,6 +22523,7 @@ GRANT ALL ON TABLE public.case_private_details TO service_role;
 -- Name: TABLE case_status_colors; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_status_colors TO anon;
 GRANT ALL ON TABLE public.case_status_colors TO authenticated;
 GRANT ALL ON TABLE public.case_status_colors TO service_role;
 
@@ -22425,6 +22532,7 @@ GRANT ALL ON TABLE public.case_status_colors TO service_role;
 -- Name: SEQUENCE case_status_colors_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_status_colors_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_status_colors_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_status_colors_id_seq TO service_role;
 
@@ -22433,6 +22541,7 @@ GRANT ALL ON SEQUENCE public.case_status_colors_id_seq TO service_role;
 -- Name: TABLE case_status_history; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_status_history TO anon;
 GRANT ALL ON TABLE public.case_status_history TO authenticated;
 GRANT ALL ON TABLE public.case_status_history TO service_role;
 
@@ -22441,6 +22550,7 @@ GRANT ALL ON TABLE public.case_status_history TO service_role;
 -- Name: SEQUENCE case_status_history_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_status_history_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_status_history_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_status_history_id_seq TO service_role;
 
@@ -22449,6 +22559,7 @@ GRANT ALL ON SEQUENCE public.case_status_history_id_seq TO service_role;
 -- Name: TABLE case_statuses; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_statuses TO anon;
 GRANT ALL ON TABLE public.case_statuses TO authenticated;
 GRANT ALL ON TABLE public.case_statuses TO service_role;
 
@@ -22457,6 +22568,7 @@ GRANT ALL ON TABLE public.case_statuses TO service_role;
 -- Name: SEQUENCE case_statuses_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_statuses_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_statuses_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_statuses_id_seq TO service_role;
 
@@ -22465,6 +22577,7 @@ GRANT ALL ON SEQUENCE public.case_statuses_id_seq TO service_role;
 -- Name: TABLE case_violations; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_violations TO anon;
 GRANT ALL ON TABLE public.case_violations TO authenticated;
 GRANT ALL ON TABLE public.case_violations TO service_role;
 
@@ -22473,6 +22586,7 @@ GRANT ALL ON TABLE public.case_violations TO service_role;
 -- Name: SEQUENCE case_violations_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_violations_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_violations_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_violations_id_seq TO service_role;
 
@@ -22481,6 +22595,7 @@ GRANT ALL ON SEQUENCE public.case_violations_id_seq TO service_role;
 -- Name: TABLE case_witness_details; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.case_witness_details TO anon;
 GRANT ALL ON TABLE public.case_witness_details TO authenticated;
 GRANT ALL ON TABLE public.case_witness_details TO service_role;
 
@@ -22489,6 +22604,7 @@ GRANT ALL ON TABLE public.case_witness_details TO service_role;
 -- Name: SEQUENCE case_witness_details_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.case_witness_details_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_witness_details_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_witness_details_id_seq TO service_role;
 
@@ -22497,14 +22613,16 @@ GRANT ALL ON SEQUENCE public.case_witness_details_id_seq TO service_role;
 -- Name: TABLE cases; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.cases TO anon;
+GRANT ALL ON TABLE public.cases TO authenticated;
 GRANT ALL ON TABLE public.cases TO service_role;
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.cases TO authenticated;
 
 
 --
 -- Name: SEQUENCE cases_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.cases_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.cases_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.cases_id_seq TO service_role;
 
@@ -22549,6 +22667,7 @@ GRANT ALL ON SEQUENCE public.clearance_possible_name_tokens_id_seq TO service_ro
 -- Name: TABLE courts; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.courts TO anon;
 GRANT ALL ON TABLE public.courts TO authenticated;
 GRANT ALL ON TABLE public.courts TO service_role;
 
@@ -22557,6 +22676,7 @@ GRANT ALL ON TABLE public.courts TO service_role;
 -- Name: SEQUENCE courts_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.courts_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.courts_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.courts_id_seq TO service_role;
 
@@ -22565,6 +22685,7 @@ GRANT ALL ON SEQUENCE public.courts_id_seq TO service_role;
 -- Name: TABLE docket_number_history; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.docket_number_history TO anon;
 GRANT ALL ON TABLE public.docket_number_history TO authenticated;
 GRANT ALL ON TABLE public.docket_number_history TO service_role;
 
@@ -22573,6 +22694,7 @@ GRANT ALL ON TABLE public.docket_number_history TO service_role;
 -- Name: SEQUENCE docket_number_history_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.docket_number_history_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.docket_number_history_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.docket_number_history_id_seq TO service_role;
 
@@ -22581,6 +22703,7 @@ GRANT ALL ON SEQUENCE public.docket_number_history_id_seq TO service_role;
 -- Name: TABLE docket_sequence_counters; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.docket_sequence_counters TO anon;
 GRANT ALL ON TABLE public.docket_sequence_counters TO authenticated;
 GRANT ALL ON TABLE public.docket_sequence_counters TO service_role;
 
@@ -22589,6 +22712,7 @@ GRANT ALL ON TABLE public.docket_sequence_counters TO service_role;
 -- Name: SEQUENCE docket_sequence_counters_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.docket_sequence_counters_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.docket_sequence_counters_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.docket_sequence_counters_id_seq TO service_role;
 
@@ -22597,6 +22721,7 @@ GRANT ALL ON SEQUENCE public.docket_sequence_counters_id_seq TO service_role;
 -- Name: TABLE docket_types; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.docket_types TO anon;
 GRANT ALL ON TABLE public.docket_types TO authenticated;
 GRANT ALL ON TABLE public.docket_types TO service_role;
 
@@ -22605,6 +22730,7 @@ GRANT ALL ON TABLE public.docket_types TO service_role;
 -- Name: SEQUENCE docket_types_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.docket_types_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.docket_types_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.docket_types_id_seq TO service_role;
 
@@ -22613,6 +22739,7 @@ GRANT ALL ON SEQUENCE public.docket_types_id_seq TO service_role;
 -- Name: TABLE migration_review_items; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.migration_review_items TO anon;
 GRANT ALL ON TABLE public.migration_review_items TO authenticated;
 GRANT ALL ON TABLE public.migration_review_items TO service_role;
 
@@ -22621,6 +22748,7 @@ GRANT ALL ON TABLE public.migration_review_items TO service_role;
 -- Name: SEQUENCE migration_review_items_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.migration_review_items_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.migration_review_items_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.migration_review_items_id_seq TO service_role;
 
@@ -22629,6 +22757,7 @@ GRANT ALL ON SEQUENCE public.migration_review_items_id_seq TO service_role;
 -- Name: TABLE notes; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.notes TO anon;
 GRANT ALL ON TABLE public.notes TO authenticated;
 GRANT ALL ON TABLE public.notes TO service_role;
 
@@ -22637,6 +22766,7 @@ GRANT ALL ON TABLE public.notes TO service_role;
 -- Name: SEQUENCE notes_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.notes_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.notes_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.notes_id_seq TO service_role;
 
@@ -22645,6 +22775,7 @@ GRANT ALL ON SEQUENCE public.notes_id_seq TO service_role;
 -- Name: TABLE organization_aliases; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.organization_aliases TO anon;
 GRANT ALL ON TABLE public.organization_aliases TO authenticated;
 GRANT ALL ON TABLE public.organization_aliases TO service_role;
 
@@ -22653,6 +22784,7 @@ GRANT ALL ON TABLE public.organization_aliases TO service_role;
 -- Name: SEQUENCE organization_aliases_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.organization_aliases_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.organization_aliases_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.organization_aliases_id_seq TO service_role;
 
@@ -22661,6 +22793,7 @@ GRANT ALL ON SEQUENCE public.organization_aliases_id_seq TO service_role;
 -- Name: TABLE organizations; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.organizations TO anon;
 GRANT ALL ON TABLE public.organizations TO authenticated;
 GRANT ALL ON TABLE public.organizations TO service_role;
 
@@ -22669,6 +22802,7 @@ GRANT ALL ON TABLE public.organizations TO service_role;
 -- Name: SEQUENCE organizations_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.organizations_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.organizations_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.organizations_id_seq TO service_role;
 
@@ -22677,6 +22811,7 @@ GRANT ALL ON SEQUENCE public.organizations_id_seq TO service_role;
 -- Name: TABLE participant_roles; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.participant_roles TO anon;
 GRANT ALL ON TABLE public.participant_roles TO authenticated;
 GRANT ALL ON TABLE public.participant_roles TO service_role;
 
@@ -22685,6 +22820,7 @@ GRANT ALL ON TABLE public.participant_roles TO service_role;
 -- Name: SEQUENCE participant_roles_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.participant_roles_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.participant_roles_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.participant_roles_id_seq TO service_role;
 
@@ -22693,6 +22829,7 @@ GRANT ALL ON SEQUENCE public.participant_roles_id_seq TO service_role;
 -- Name: TABLE person_addresses; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.person_addresses TO anon;
 GRANT ALL ON TABLE public.person_addresses TO authenticated;
 GRANT ALL ON TABLE public.person_addresses TO service_role;
 
@@ -22701,6 +22838,7 @@ GRANT ALL ON TABLE public.person_addresses TO service_role;
 -- Name: SEQUENCE person_addresses_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.person_addresses_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.person_addresses_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.person_addresses_id_seq TO service_role;
 
@@ -22709,6 +22847,7 @@ GRANT ALL ON SEQUENCE public.person_addresses_id_seq TO service_role;
 -- Name: TABLE person_aliases; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.person_aliases TO anon;
 GRANT ALL ON TABLE public.person_aliases TO authenticated;
 GRANT ALL ON TABLE public.person_aliases TO service_role;
 
@@ -22717,6 +22856,7 @@ GRANT ALL ON TABLE public.person_aliases TO service_role;
 -- Name: SEQUENCE person_aliases_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.person_aliases_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.person_aliases_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.person_aliases_id_seq TO service_role;
 
@@ -22725,6 +22865,7 @@ GRANT ALL ON SEQUENCE public.person_aliases_id_seq TO service_role;
 -- Name: TABLE persons; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.persons TO anon;
 GRANT ALL ON TABLE public.persons TO authenticated;
 GRANT ALL ON TABLE public.persons TO service_role;
 
@@ -22733,6 +22874,7 @@ GRANT ALL ON TABLE public.persons TO service_role;
 -- Name: SEQUENCE persons_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.persons_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.persons_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.persons_id_seq TO service_role;
 
@@ -22741,6 +22883,7 @@ GRANT ALL ON SEQUENCE public.persons_id_seq TO service_role;
 -- Name: TABLE positions; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.positions TO anon;
 GRANT ALL ON TABLE public.positions TO authenticated;
 GRANT ALL ON TABLE public.positions TO service_role;
 
@@ -22749,6 +22892,7 @@ GRANT ALL ON TABLE public.positions TO service_role;
 -- Name: SEQUENCE positions_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.positions_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.positions_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.positions_id_seq TO service_role;
 
@@ -22757,6 +22901,7 @@ GRANT ALL ON SEQUENCE public.positions_id_seq TO service_role;
 -- Name: TABLE prosecutor_staff_assignments; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.prosecutor_staff_assignments TO anon;
 GRANT ALL ON TABLE public.prosecutor_staff_assignments TO authenticated;
 GRANT ALL ON TABLE public.prosecutor_staff_assignments TO service_role;
 
@@ -22765,6 +22910,7 @@ GRANT ALL ON TABLE public.prosecutor_staff_assignments TO service_role;
 -- Name: SEQUENCE prosecutor_staff_assignments_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.prosecutor_staff_assignments_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.prosecutor_staff_assignments_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.prosecutor_staff_assignments_id_seq TO service_role;
 
@@ -22773,6 +22919,7 @@ GRANT ALL ON SEQUENCE public.prosecutor_staff_assignments_id_seq TO service_role
 -- Name: TABLE prosecutors; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.prosecutors TO anon;
 GRANT ALL ON TABLE public.prosecutors TO authenticated;
 GRANT ALL ON TABLE public.prosecutors TO service_role;
 
@@ -22781,6 +22928,7 @@ GRANT ALL ON TABLE public.prosecutors TO service_role;
 -- Name: SEQUENCE prosecutors_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.prosecutors_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.prosecutors_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.prosecutors_id_seq TO service_role;
 
@@ -22789,6 +22937,7 @@ GRANT ALL ON SEQUENCE public.prosecutors_id_seq TO service_role;
 -- Name: TABLE roles; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.roles TO anon;
 GRANT ALL ON TABLE public.roles TO authenticated;
 GRANT ALL ON TABLE public.roles TO service_role;
 
@@ -22797,6 +22946,7 @@ GRANT ALL ON TABLE public.roles TO service_role;
 -- Name: SEQUENCE roles_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.roles_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.roles_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.roles_id_seq TO service_role;
 
@@ -22805,6 +22955,7 @@ GRANT ALL ON SEQUENCE public.roles_id_seq TO service_role;
 -- Name: TABLE staff; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.staff TO anon;
 GRANT ALL ON TABLE public.staff TO authenticated;
 GRANT ALL ON TABLE public.staff TO service_role;
 
@@ -22813,6 +22964,7 @@ GRANT ALL ON TABLE public.staff TO service_role;
 -- Name: SEQUENCE staff_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.staff_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.staff_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.staff_id_seq TO service_role;
 
@@ -22821,6 +22973,7 @@ GRANT ALL ON SEQUENCE public.staff_id_seq TO service_role;
 -- Name: TABLE staging_dc2025_normalized_rows; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.staging_dc2025_normalized_rows TO anon;
 GRANT ALL ON TABLE public.staging_dc2025_normalized_rows TO authenticated;
 GRANT ALL ON TABLE public.staging_dc2025_normalized_rows TO service_role;
 
@@ -22829,6 +22982,7 @@ GRANT ALL ON TABLE public.staging_dc2025_normalized_rows TO service_role;
 -- Name: SEQUENCE staging_dc2025_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.staging_dc2025_normalized_rows_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.staging_dc2025_normalized_rows_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.staging_dc2025_normalized_rows_id_seq TO service_role;
 
@@ -22837,6 +22991,7 @@ GRANT ALL ON SEQUENCE public.staging_dc2025_normalized_rows_id_seq TO service_ro
 -- Name: TABLE staging_inq2022_normalized_rows; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.staging_inq2022_normalized_rows TO anon;
 GRANT ALL ON TABLE public.staging_inq2022_normalized_rows TO authenticated;
 GRANT ALL ON TABLE public.staging_inq2022_normalized_rows TO service_role;
 
@@ -22845,6 +23000,7 @@ GRANT ALL ON TABLE public.staging_inq2022_normalized_rows TO service_role;
 -- Name: SEQUENCE staging_inq2022_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.staging_inq2022_normalized_rows_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.staging_inq2022_normalized_rows_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.staging_inq2022_normalized_rows_id_seq TO service_role;
 
@@ -22853,6 +23009,7 @@ GRANT ALL ON SEQUENCE public.staging_inq2022_normalized_rows_id_seq TO service_r
 -- Name: TABLE staging_inq2023_normalized_rows; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.staging_inq2023_normalized_rows TO anon;
 GRANT ALL ON TABLE public.staging_inq2023_normalized_rows TO authenticated;
 GRANT ALL ON TABLE public.staging_inq2023_normalized_rows TO service_role;
 
@@ -22861,6 +23018,7 @@ GRANT ALL ON TABLE public.staging_inq2023_normalized_rows TO service_role;
 -- Name: SEQUENCE staging_inq2023_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.staging_inq2023_normalized_rows_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.staging_inq2023_normalized_rows_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.staging_inq2023_normalized_rows_id_seq TO service_role;
 
@@ -22869,6 +23027,7 @@ GRANT ALL ON SEQUENCE public.staging_inq2023_normalized_rows_id_seq TO service_r
 -- Name: TABLE staging_inq2024_normalized_rows; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.staging_inq2024_normalized_rows TO anon;
 GRANT ALL ON TABLE public.staging_inq2024_normalized_rows TO authenticated;
 GRANT ALL ON TABLE public.staging_inq2024_normalized_rows TO service_role;
 
@@ -22877,6 +23036,7 @@ GRANT ALL ON TABLE public.staging_inq2024_normalized_rows TO service_role;
 -- Name: SEQUENCE staging_inq2024_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.staging_inq2024_normalized_rows_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.staging_inq2024_normalized_rows_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.staging_inq2024_normalized_rows_id_seq TO service_role;
 
@@ -22885,6 +23045,7 @@ GRANT ALL ON SEQUENCE public.staging_inq2024_normalized_rows_id_seq TO service_r
 -- Name: TABLE staging_inq2025_normalized_rows; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.staging_inq2025_normalized_rows TO anon;
 GRANT ALL ON TABLE public.staging_inq2025_normalized_rows TO authenticated;
 GRANT ALL ON TABLE public.staging_inq2025_normalized_rows TO service_role;
 
@@ -22893,6 +23054,7 @@ GRANT ALL ON TABLE public.staging_inq2025_normalized_rows TO service_role;
 -- Name: SEQUENCE staging_inq2025_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.staging_inq2025_normalized_rows_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.staging_inq2025_normalized_rows_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.staging_inq2025_normalized_rows_id_seq TO service_role;
 
@@ -22901,6 +23063,7 @@ GRANT ALL ON SEQUENCE public.staging_inq2025_normalized_rows_id_seq TO service_r
 -- Name: TABLE staging_inv2022b_normalized_rows; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.staging_inv2022b_normalized_rows TO anon;
 GRANT ALL ON TABLE public.staging_inv2022b_normalized_rows TO authenticated;
 GRANT ALL ON TABLE public.staging_inv2022b_normalized_rows TO service_role;
 
@@ -22909,6 +23072,7 @@ GRANT ALL ON TABLE public.staging_inv2022b_normalized_rows TO service_role;
 -- Name: SEQUENCE staging_inv2022b_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.staging_inv2022b_normalized_rows_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.staging_inv2022b_normalized_rows_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.staging_inv2022b_normalized_rows_id_seq TO service_role;
 
@@ -22917,6 +23081,7 @@ GRANT ALL ON SEQUENCE public.staging_inv2022b_normalized_rows_id_seq TO service_
 -- Name: TABLE staging_inv2023_normalized_rows; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.staging_inv2023_normalized_rows TO anon;
 GRANT ALL ON TABLE public.staging_inv2023_normalized_rows TO authenticated;
 GRANT ALL ON TABLE public.staging_inv2023_normalized_rows TO service_role;
 
@@ -22925,6 +23090,7 @@ GRANT ALL ON TABLE public.staging_inv2023_normalized_rows TO service_role;
 -- Name: SEQUENCE staging_inv2023_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.staging_inv2023_normalized_rows_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.staging_inv2023_normalized_rows_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.staging_inv2023_normalized_rows_id_seq TO service_role;
 
@@ -22933,6 +23099,7 @@ GRANT ALL ON SEQUENCE public.staging_inv2023_normalized_rows_id_seq TO service_r
 -- Name: TABLE staging_inv2024_normalized_rows; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.staging_inv2024_normalized_rows TO anon;
 GRANT ALL ON TABLE public.staging_inv2024_normalized_rows TO authenticated;
 GRANT ALL ON TABLE public.staging_inv2024_normalized_rows TO service_role;
 
@@ -22941,6 +23108,7 @@ GRANT ALL ON TABLE public.staging_inv2024_normalized_rows TO service_role;
 -- Name: SEQUENCE staging_inv2024_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.staging_inv2024_normalized_rows_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.staging_inv2024_normalized_rows_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.staging_inv2024_normalized_rows_id_seq TO service_role;
 
@@ -22949,6 +23117,7 @@ GRANT ALL ON SEQUENCE public.staging_inv2024_normalized_rows_id_seq TO service_r
 -- Name: TABLE staging_inv2025_normalized_rows; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.staging_inv2025_normalized_rows TO anon;
 GRANT ALL ON TABLE public.staging_inv2025_normalized_rows TO authenticated;
 GRANT ALL ON TABLE public.staging_inv2025_normalized_rows TO service_role;
 
@@ -22957,6 +23126,7 @@ GRANT ALL ON TABLE public.staging_inv2025_normalized_rows TO service_role;
 -- Name: SEQUENCE staging_inv2025_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.staging_inv2025_normalized_rows_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.staging_inv2025_normalized_rows_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.staging_inv2025_normalized_rows_id_seq TO service_role;
 
@@ -22965,6 +23135,7 @@ GRANT ALL ON SEQUENCE public.staging_inv2025_normalized_rows_id_seq TO service_r
 -- Name: TABLE staging_pe2024_normalized_rows; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.staging_pe2024_normalized_rows TO anon;
 GRANT ALL ON TABLE public.staging_pe2024_normalized_rows TO authenticated;
 GRANT ALL ON TABLE public.staging_pe2024_normalized_rows TO service_role;
 
@@ -22973,6 +23144,7 @@ GRANT ALL ON TABLE public.staging_pe2024_normalized_rows TO service_role;
 -- Name: SEQUENCE staging_pe2024_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.staging_pe2024_normalized_rows_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.staging_pe2024_normalized_rows_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.staging_pe2024_normalized_rows_id_seq TO service_role;
 
@@ -22981,6 +23153,7 @@ GRANT ALL ON SEQUENCE public.staging_pe2024_normalized_rows_id_seq TO service_ro
 -- Name: TABLE user_roles; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.user_roles TO anon;
 GRANT ALL ON TABLE public.user_roles TO authenticated;
 GRANT ALL ON TABLE public.user_roles TO service_role;
 
@@ -22989,6 +23162,7 @@ GRANT ALL ON TABLE public.user_roles TO service_role;
 -- Name: TABLE users; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.users TO anon;
 GRANT ALL ON TABLE public.users TO authenticated;
 GRANT ALL ON TABLE public.users TO service_role;
 
@@ -22997,6 +23171,7 @@ GRANT ALL ON TABLE public.users TO service_role;
 -- Name: SEQUENCE users_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.users_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.users_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.users_id_seq TO service_role;
 
@@ -23041,6 +23216,7 @@ GRANT ALL ON TABLE public.v_case_courts_detail TO service_role;
 -- Name: TABLE violations; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON TABLE public.violations TO anon;
 GRANT ALL ON TABLE public.violations TO authenticated;
 GRANT ALL ON TABLE public.violations TO service_role;
 
@@ -23199,6 +23375,15 @@ GRANT ALL ON TABLE public.v_ref_case_classifications TO service_role;
 
 
 --
+-- Name: TABLE v_ref_case_event_types; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_case_event_types TO anon;
+GRANT ALL ON TABLE public.v_ref_case_event_types TO authenticated;
+GRANT ALL ON TABLE public.v_ref_case_event_types TO service_role;
+
+
+--
 -- Name: TABLE v_ref_case_statuses; Type: ACL; Schema: public; Owner: -
 --
 
@@ -23208,15 +23393,6 @@ GRANT ALL ON TABLE public.v_ref_case_statuses TO service_role;
 
 
 --
---
--- Name: TABLE v_ref_case_event_types; Type: ACL; Schema: public; Owner: -
---
-
-GRANT ALL ON TABLE public.v_ref_case_event_types TO anon;
-GRANT ALL ON TABLE public.v_ref_case_event_types TO authenticated;
-GRANT ALL ON TABLE public.v_ref_case_event_types TO service_role;
-
-
 -- Name: TABLE v_ref_courts; Type: ACL; Schema: public; Owner: -
 --
 
@@ -23274,6 +23450,7 @@ GRANT ALL ON TABLE public.v_ref_violations TO service_role;
 -- Name: SEQUENCE violations_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
+GRANT ALL ON SEQUENCE public.violations_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.violations_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.violations_id_seq TO service_role;
 
@@ -23335,6 +23512,18 @@ GRANT ALL ON TABLE storage.buckets TO service_role;
 GRANT ALL ON TABLE storage.buckets TO authenticated;
 GRANT ALL ON TABLE storage.buckets TO anon;
 GRANT ALL ON TABLE storage.buckets TO postgres WITH GRANT OPTION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.buckets TO supabase_storage_admin WITH GRANT OPTION;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.buckets TO service_role;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.buckets TO authenticated;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.buckets TO anon;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -23365,6 +23554,18 @@ GRANT ALL ON TABLE storage.objects TO service_role;
 GRANT ALL ON TABLE storage.objects TO authenticated;
 GRANT ALL ON TABLE storage.objects TO anon;
 GRANT ALL ON TABLE storage.objects TO postgres WITH GRANT OPTION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.objects TO supabase_storage_admin WITH GRANT OPTION;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.objects TO service_role;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.objects TO authenticated;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.objects TO anon;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -23400,6 +23601,9 @@ GRANT SELECT ON TABLE storage.vector_indexes TO anon;
 
 GRANT SELECT,REFERENCES,DELETE,TRUNCATE ON TABLE vault.secrets TO postgres WITH GRANT OPTION;
 GRANT SELECT,DELETE ON TABLE vault.secrets TO service_role;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT,DELETE ON TABLE vault.secrets TO service_role;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -23408,6 +23612,9 @@ GRANT SELECT,DELETE ON TABLE vault.secrets TO service_role;
 
 GRANT SELECT,REFERENCES,DELETE,TRUNCATE ON TABLE vault.decrypted_secrets TO postgres WITH GRANT OPTION;
 GRANT SELECT,DELETE ON TABLE vault.decrypted_secrets TO service_role;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT,DELETE ON TABLE vault.decrypted_secrets TO service_role;
+RESET SESSION AUTHORIZATION;
 
 
 --
@@ -23685,5 +23892,5 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 -- PostgreSQL database dump complete
 --
 
-\unrestrict JTUsdinP6ECcQ1WdbcxtRJUnEQiWjAFfb7l9ZFENQiQkaSXHeBtAJBin0FrmYY2
+\unrestrict 03w7KXN4YUJy2104dptO20ih5cYQyH6ULLvxPjZBAZVNkJ07BcEJw04gvOWYE9J
 
