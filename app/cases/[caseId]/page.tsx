@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ExternalLink } from "lucide-react";
 
-import { CaseTimeline } from "@/components/cases/case-timeline";
+import { CaseTimeline } from "@/components/case-timeline";
 import { Sidebar } from "@/components/sidebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
