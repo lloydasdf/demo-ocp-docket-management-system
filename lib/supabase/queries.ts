@@ -1771,19 +1771,60 @@ export async function searchViolationSuggestions(query: string, limit?: number):
 }
 
 export interface NewDocketPersonInput {
-  firstName: string;
+  existingPersonId?: number | null;
+  newPerson?: {
+    firstName?: string | null;
+    middleName?: string | null;
+    lastName?: string | null;
+    suffix?: string | null;
+    noMiddleName?: boolean;
+    gender?: string | null;
+    birthDate?: string | null;
+    notes?: string | null;
+    personDescriptor?: string | null;
+  } | null;
+  firstName?: string | null;
   middleName?: string | null;
-  lastName: string;
+  lastName?: string | null;
   suffix?: string | null;
+  noMiddleName?: boolean;
   gender?: string | null;
   age?: string | null;
   birthDate?: string | null;
   roleId: number;
+  participantOrder?: number | null;
   remarks?: string | null;
+  sourceDetail?: string | null;
+  notes?: string | null;
+  personDescriptor?: string | null;
+  attributes?: {
+    ageText?: string | null;
+    ageYears?: number | null;
+    genderText?: string | null;
+    genderNormalized?: string | null;
+    isMinorAtCase?: boolean | null;
+    isSeniorAtCase?: boolean | null;
+    isPwdAtCase?: boolean | null;
+    residentOfGentriText?: string | null;
+    isResidentOfGentri?: boolean | null;
+    notes?: string | null;
+  };
 }
 
 export interface NewDocketAddressInput {
+  existingAddressId?: number | null;
+  newAddress?: {
+    line1?: string | null;
+    line2?: string | null;
+    barangay?: string | null;
+    city?: string | null;
+    province?: string | null;
+    region?: string | null;
+    zipCode?: string | null;
+    country?: string | null;
+  } | null;
   addressTypeId: number;
+  isPrimary?: boolean | null;
   line1?: string | null;
   line2?: string | null;
   barangay?: string | null;
@@ -1796,17 +1837,27 @@ export interface NewDocketAddressInput {
 }
 
 export interface NewDocketViolationInput {
-  violationId: number;
+  existingViolationId?: number | null;
+  violationId?: number | null;
+  violationOrder?: number | null;
   rawViolationText?: string | null;
+  newViolation?: {
+    title: string;
+    referenceCode?: string | null;
+    shortLabel?: string | null;
+    description?: string | null;
+    lawReference?: string | null;
+  } | null;
 }
 
 export interface NewDocketEntryInput {
   docketTypeId: number;
   docketYear: number;
   dateReceived: string;
-  initialStatusId?: number | null;
+  initialStatusId: number;
+  caseClassificationId?: number | null;
+  docketMonthCode?: string | null;
   regionCode?: string | null;
-  source?: string | null;
   summaryText?: string | null;
   remarks?: string | null;
   isSummaryProcedure?: boolean | null;
@@ -1817,9 +1868,19 @@ export interface NewDocketEntryInput {
 
 export interface NewDocketEntryResult {
   caseId: number;
-  docketNumber: number;
-  docketYear: number;
   docketTypeId: number;
+  docketYear: number;
+  docketNumber: number;
+  docketMonthCode: string | null;
+  docketDisplayNumber: string;
+  createdPersonCount: number;
+  reusedPersonCount: number;
+  createdAddressCount: number;
+  reusedAddressCount: number;
+  createdViolationCount: number;
+  reusedViolationCount: number;
+  participantCount: number;
+  violationCount: number;
 }
 
 function cleanString(value: string | null | undefined) {
@@ -1898,7 +1959,28 @@ async function advanceDocketCounter(
   );
 }
 export async function createNewDocketEntry(input: NewDocketEntryInput): Promise<SupabaseQueryResult<NewDocketEntryResult>> {
-  void input;
-  return fail({ message: "Direct browser mutations are disabled during the frontend read-view refactor. Re-enable docket creation through a server-only action or existing RPC.", table: "cases", operation: "createNewDocketEntry" });
-}
+  const environment = getSupabaseEnvironmentStatus();
 
+  if (!environment.isConfigured) {
+    return fail({
+      message: "Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable live docket creation.",
+      table: "cases",
+      operation: "createNewDocketEntry",
+    });
+  }
+
+  try {
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("create_new_docket_entry" as never, {
+      p_payload: input as unknown as Json,
+    } as never);
+
+    if (error) {
+      return fail(toQueryError(error, "createNewDocketEntry", "cases"));
+    }
+
+    return ok(data as unknown as NewDocketEntryResult);
+  } catch (error) {
+    return fail(toQueryError(error, "createNewDocketEntry", "cases"));
+  }
+}

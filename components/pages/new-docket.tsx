@@ -46,9 +46,9 @@ type MessageState =
   | { type: 'error'; text: string }
   | null;
 
-type PersonEntry = NewDocketPersonInput & { id: string };
-type AddressEntry = NewDocketAddressInput & { id: string; suggestionQuery: string };
-type ViolationEntry = NewDocketViolationInput & { id: string; searchText: string };
+type PersonEntry = NewDocketPersonInput & { id: string; selectedExistingName?: string | null };
+type AddressEntry = NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null };
+type ViolationEntry = NewDocketViolationInput & { id: string; searchText: string; selectedExistingTitle?: string | null; createNew?: boolean; newViolationTitle?: string | null; referenceCode?: string | null; shortLabel?: string | null; description?: string | null; lawReference?: string | null };
 
 const emptyLookups: LookupState = {
   docketTypes: [],
@@ -95,12 +95,30 @@ function getDocketMonthCode(dateReceived: string) {
   return date.toLocaleString('en-US', { month: 'short' }).toUpperCase();
 }
 
-function formatDocketNumber(prefix: string | undefined, year: string, number: number | null) {
+function formatDocketNumber(prefix: string | undefined, year: string, number: number | null, monthCode?: string | null, regionCode?: string | null) {
   if (!prefix || !year || !number) {
     return 'Select docket type and date to preview';
   }
 
-  return `${prefix}-${year}-${String(number).padStart(4, '0')}`;
+  return [regionCode || null, prefix, `${year.slice(-2)}${monthCode ?? ''}`, String(number).padStart(6, '0')].filter(Boolean).join('-');
+}
+
+function cleanString(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function buildPersonFullName(person: Pick<PersonEntry, 'firstName' | 'middleName' | 'lastName' | 'suffix' | 'noMiddleName'>) {
+  return [
+    cleanString(person.firstName),
+    person.noMiddleName ? 'NMN' : cleanString(person.middleName),
+    cleanString(person.lastName),
+    cleanString(person.suffix),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function formatAddress(address: TableRow<'addresses'>) {
@@ -229,8 +247,8 @@ export default function NewDocket() {
     () => lookups.statuses.find((status) => status.id.toString() === initialStatusId),
     [initialStatusId, lookups.statuses],
   );
-  const generatedDocketNumber = formatDocketNumber(selectedDocketType?.prefix, docketYear, nextDocketNumber);
   const docketMonthCode = getDocketMonthCode(dateReceived);
+  const generatedDocketNumber = formatDocketNumber(selectedDocketType?.prefix, docketYear, nextDocketNumber, docketMonthCode === '—' ? null : docketMonthCode, regionCode);
 
   const addPerson = () => {
     setPersons((current) => [
@@ -245,7 +263,9 @@ export default function NewDocket() {
         age: '',
         birthDate: '',
         roleId: toNumber(defaultRoleId),
+        participantOrder: current.length + 1,
         remarks: '',
+        sourceDetail: '',
       },
     ]);
   };
@@ -275,9 +295,11 @@ export default function NewDocket() {
       ...current,
       {
         id: makeId('violation'),
-        violationId: 0,
+        existingViolationId: null,
+        violationOrder: current.length + 1,
         rawViolationText: '',
         searchText: '',
+        createNew: false,
       },
     ]);
   };
@@ -350,6 +372,8 @@ export default function NewDocket() {
 
   const applyPersonSuggestion = (entryId: string, person: TableRow<'persons'>) => {
     updatePerson(entryId, {
+      existingPersonId: person.id,
+      selectedExistingName: person.full_name,
       age: person.age ?? '',
       birthDate: person.birth_date ?? '',
       firstName: person.first_name ?? '',
@@ -357,6 +381,7 @@ export default function NewDocket() {
       lastName: person.last_name ?? '',
       middleName: person.middle_name ?? '',
       suffix: person.suffix ?? '',
+      noMiddleName: person.middle_name === 'NMN',
     });
     setPersonSuggestions((current) => ({ ...current, [entryId]: [] }));
   };
@@ -372,6 +397,8 @@ export default function NewDocket() {
       region: address.region ?? defaultRegionCode,
       suggestionQuery: formatAddress(address),
       zipCode: address.zip_code ?? '',
+      existingAddressId: address.id,
+      selectedExistingLabel: formatAddress(address),
     });
     setAddressSuggestions((current) => ({ ...current, [entryId]: [] }));
   };
@@ -380,18 +407,16 @@ export default function NewDocket() {
     updateViolation(entryId, {
       rawViolationText: violation.law_reference ?? violation.short_label ?? violation.title,
       searchText: violation.title,
-      violationId: violation.id,
+      existingViolationId: violation.id,
+      selectedExistingTitle: violation.title,
+      createNew: false,
     });
     setViolationSuggestions((current) => ({ ...current, [entryId]: [] }));
   };
 
   const validateForm = () => {
-    if (!docketTypeId || !docketYear || !dateReceived || !nextDocketNumber) {
-      return 'Docket type, year, date received, and generated docket number are required.';
-    }
-
-    if (!currentUser) {
-      return 'No current database user was found for the created_by_user_id column.';
+    if (!docketTypeId || !docketYear || !dateReceived) {
+      return 'Docket type, year, and date received are required.';
     }
 
     if (!initialStatusId) {
@@ -402,16 +427,21 @@ export default function NewDocket() {
       return 'Add at least one complainant, respondent, or other participant.';
     }
 
-    if (persons.some((person) => !person.firstName.trim() || !person.lastName.trim() || !person.roleId)) {
-      return 'Each participant needs a first name, last name, and database role.';
+    if (persons.some((person) => !person.roleId || (!person.existingPersonId && !buildPersonFullName(person)))) {
+      return 'Each participant needs a role and either a selected existing person or at least one name component.';
     }
 
     if (violations.length === 0) {
       return 'Add at least one violation from the database violations table.';
     }
 
-    if (violations.some((violation) => !violation.violationId)) {
-      return 'Each violation entry must select a database violation suggestion.';
+    const selectedIds = violations.map((violation) => violation.existingViolationId).filter(Boolean);
+    if (new Set(selectedIds).size !== selectedIds.length) {
+      return 'The same existing violation cannot be attached more than once.';
+    }
+
+    if (violations.some((violation) => !violation.existingViolationId && !(violation.createNew && cleanString(violation.newViolationTitle)))) {
+      return 'Each violation must use a selected suggestion or an explicit Create new violation action with a title.';
     }
 
     if (addresses.some((address) => !address.addressTypeId)) {
@@ -438,13 +468,42 @@ export default function NewDocket() {
       dateReceived,
       initialStatusId: toNumber(initialStatusId),
       regionCode: regionCode || defaultRegionCode,
-      source: 'manual',
+      docketMonthCode: docketMonthCode === '—' ? null : docketMonthCode,
       summaryText: summaryText || null,
       remarks: remarks || null,
       isSummaryProcedure,
-      persons: persons.map(({ id: _id, ...person }) => person),
-      addresses: addresses.map(({ id: _id, suggestionQuery: _suggestionQuery, ...address }) => address),
-      violations: violations.map(({ id: _id, searchText: _searchText, ...violation }) => violation),
+      persons: persons.map(({ id: _id, selectedExistingName: _selectedExistingName, age, gender, ...person }, index) => ({
+        ...person,
+        participantOrder: person.participantOrder ?? index + 1,
+        newPerson: person.existingPersonId ? undefined : {
+          firstName: person.firstName,
+          middleName: person.noMiddleName ? 'NMN' : person.middleName,
+          lastName: person.lastName,
+          suffix: person.suffix,
+          noMiddleName: person.noMiddleName,
+          gender,
+          birthDate: person.birthDate,
+          notes: person.notes,
+          personDescriptor: person.personDescriptor,
+        },
+        attributes: person.attributes ?? {
+          ageText: age ?? null,
+          ageYears: age ? Number.parseInt(age, 10) || null : null,
+          genderText: gender ?? null,
+          genderNormalized: gender && gender !== 'Unspecified' ? gender.toUpperCase() : 'UNKNOWN',
+        },
+      })),
+      addresses: addresses.map(({ id: _id, suggestionQuery: _suggestionQuery, selectedExistingLabel: _label, ...address }) => ({
+        ...address,
+        newAddress: address.existingAddressId ? undefined : {
+          line1: address.line1, line2: address.line2, barangay: address.barangay, city: address.city, province: address.province, region: address.region, zipCode: address.zipCode, country: address.country,
+        },
+      })),
+      violations: violations.map(({ id: _id, searchText: _searchText, selectedExistingTitle: _title, createNew, newViolationTitle, referenceCode, shortLabel, description, lawReference, ...violation }, index) => ({
+        ...violation,
+        violationOrder: violation.violationOrder ?? index + 1,
+        newViolation: createNew ? { title: newViolationTitle ?? '', referenceCode, shortLabel, description, lawReference } : undefined,
+      })),
     };
 
     const result = await createNewDocketEntry(payload);
@@ -455,15 +514,8 @@ export default function NewDocket() {
       return;
     }
 
-    const createdDisplayNumber = formatDocketNumber(
-      selectedDocketType?.prefix,
-      String(result.data.docketYear),
-      result.data.docketNumber,
-    );
-
-    setMessage({ type: 'success', text: `Docket ${createdDisplayNumber} created as case #${result.data.caseId}.`, caseId: result.data.caseId });
-    setNextDocketNumber((current) => (current ? current + 1 : current));
-    resetForm();
+    setMessage({ type: 'success', text: `Docket ${result.data.docketDisplayNumber} created as case #${result.data.caseId}.`, caseId: result.data.caseId });
+    router.push(`/cases/${result.data.caseId}`);
   };
 
   return (
@@ -508,7 +560,7 @@ export default function NewDocket() {
 
             <TabsContent value="case-info" className="space-y-4">
               <div className="rounded-lg border bg-muted/30 p-4">
-                <p className="text-sm font-medium text-muted-foreground">Generated Docket No.</p>
+                <p className="text-sm font-medium text-muted-foreground">Preview Docket No.</p>
                 <div className="mt-1 flex flex-wrap items-center gap-3">
                   <p className="text-2xl font-bold tracking-tight text-primary">
                     {isLoadingNextDocket ? 'Detecting next number…' : generatedDocketNumber}
@@ -558,7 +610,7 @@ export default function NewDocket() {
                   <Input id="next-docket-number" value={nextDocketNumber ?? ''} readOnly disabled className="mt-1" />
                 </div>
                 <p className="self-end text-xs text-muted-foreground">
-                  The numeric docket sequence is automatically detected from docket_sequence_counters or the latest matching case and is saved with the current database user.
+                  This is only a preview. The database RPC takes an advisory lock and assigns the official number when saved, so the final number may change.
                 </p>
               </div>
 
@@ -599,13 +651,26 @@ export default function NewDocket() {
                     <div key={person.id} className="space-y-3 rounded-lg border p-4">
                       <div className="flex items-start justify-between gap-4">
                         <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-4">
-                          <div><Label className="text-xs">First Name *</Label><Input value={person.firstName} onChange={(event) => { updatePerson(person.id, { firstName: event.target.value }); loadPersonSuggestions(person.id, `${event.target.value} ${person.lastName}`); }} className="mt-1" /></div>
-                          <div><Label className="text-xs">Middle Name</Label><Input value={person.middleName ?? ''} onChange={(event) => updatePerson(person.id, { middleName: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Last Name *</Label><Input value={person.lastName} onChange={(event) => { updatePerson(person.id, { lastName: event.target.value }); loadPersonSuggestions(person.id, `${person.firstName} ${event.target.value}`); }} className="mt-1" /></div>
+                          <div><Label className="text-xs">First Name *</Label><Input value={person.firstName ?? ''} onChange={(event) => { updatePerson(person.id, { firstName: event.target.value }); loadPersonSuggestions(person.id, `${event.target.value} ${person.lastName}`); }} className="mt-1" /></div>
+                          <div>
+                            <div className="flex items-center justify-between gap-2">
+                              <Label className="text-xs">Middle Name</Label>
+                              <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                                <Checkbox checked={person.noMiddleName === true} onCheckedChange={(checked) => updatePerson(person.id, { noMiddleName: checked === true, middleName: checked === true ? 'NMN' : '' })} />
+                                No Middle Name
+                              </label>
+                            </div>
+                            <Input value={person.noMiddleName ? 'NMN' : (person.middleName ?? '')} disabled={person.noMiddleName === true} onChange={(event) => updatePerson(person.id, { middleName: event.target.value, noMiddleName: false })} className="mt-1" />
+                          </div>
+                          <div><Label className="text-xs">Last Name *</Label><Input value={person.lastName ?? ''} onChange={(event) => { updatePerson(person.id, { lastName: event.target.value }); loadPersonSuggestions(person.id, `${person.firstName} ${event.target.value}`); }} className="mt-1" /></div>
                           <div><Label className="text-xs">Suffix</Label><Input value={person.suffix ?? ''} onChange={(event) => updatePerson(person.id, { suffix: event.target.value })} className="mt-1" /></div>
                         </div>
                         <Button onClick={() => setPersons((current) => current.filter((item) => item.id !== person.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
                       </div>
+
+                      <p className="text-xs text-muted-foreground">
+                        {person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person preview: ${buildPersonFullName(person) || 'Enter at least one name component'}`}
+                      </p>
 
                       {personSuggestions[person.id]?.length ? (
                         <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
@@ -730,7 +795,7 @@ export default function NewDocket() {
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1">
                           <Label className="text-xs">Search Violation *</Label>
-                          <Input value={violation.searchText} placeholder="Type a violation, law reference, or code" onChange={(event) => { updateViolation(violation.id, { searchText: event.target.value, violationId: 0 }); loadViolationSuggestions(violation.id, event.target.value); }} className="mt-1" />
+                          <Input value={violation.searchText} placeholder="Type a violation, law reference, or code" onChange={(event) => { updateViolation(violation.id, { searchText: event.target.value, existingViolationId: null, selectedExistingTitle: null, createNew: false }); loadViolationSuggestions(violation.id, event.target.value); }} className="mt-1" />
                         </div>
                         <Button onClick={() => setViolations((current) => current.filter((item) => item.id !== violation.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
                       </div>
@@ -748,6 +813,21 @@ export default function NewDocket() {
                         </div>
                       ) : null}
 
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        {violation.existingViolationId ? <span className="rounded-full bg-muted px-2 py-1">Existing violation #{violation.existingViolationId}: {violation.selectedExistingTitle}</span> : null}
+                        {!violation.existingViolationId ? <Button type="button" variant={violation.createNew ? 'default' : 'outline'} size="sm" onClick={() => updateViolation(violation.id, { createNew: true, newViolationTitle: violation.newViolationTitle || violation.searchText })}>Create new violation</Button> : null}
+                      </div>
+
+                      {violation.createNew && !violation.existingViolationId ? (
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                          <div><Label className="text-xs">New Violation Title *</Label><Input value={violation.newViolationTitle ?? ''} onChange={(event) => updateViolation(violation.id, { newViolationTitle: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Reference Code</Label><Input value={violation.referenceCode ?? ''} onChange={(event) => updateViolation(violation.id, { referenceCode: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Short Label</Label><Input value={violation.shortLabel ?? ''} onChange={(event) => updateViolation(violation.id, { shortLabel: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Law Reference</Label><Input value={violation.lawReference ?? ''} onChange={(event) => updateViolation(violation.id, { lawReference: event.target.value })} className="mt-1" /></div>
+                          <div className="md:col-span-2"><Label className="text-xs">Description</Label><Textarea value={violation.description ?? ''} onChange={(event) => updateViolation(violation.id, { description: event.target.value })} className="mt-1" /></div>
+                        </div>
+                      ) : null}
+
                       <div>
                         <Label className="text-xs">Raw Violation Text</Label>
                         <Textarea value={violation.rawViolationText ?? ''} onChange={(event) => updateViolation(violation.id, { rawViolationText: event.target.value })} className="mt-1" placeholder="Optional original text from complaint or intake document" />
@@ -756,6 +836,20 @@ export default function NewDocket() {
                   ))}
                 </div>
               )}
+
+              <Card className="mt-6 bg-muted/20">
+                <CardHeader>
+                  <CardTitle className="text-base">Review before submission</CardTitle>
+                  <CardDescription>Preview only: the official docket number is returned by the database after save.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <p><strong>Preview docket:</strong> {generatedDocketNumber}</p>
+                  <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; initial status {selectedStatus?.display_label ?? '—'}</p>
+                  <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.existingPersonId ? `Existing #${person.existingPersonId}: ${person.selectedExistingName}` : `New: ${buildPersonFullName(person)}`}</div>) : ' none'}</div>
+                  <div><strong>Addresses:</strong>{addresses.length ? addresses.map((address) => <div key={address.id}>• {address.existingAddressId ? `Existing #${address.existingAddressId}: ${address.selectedExistingLabel}` : ['New', address.line1, address.barangay, address.city].filter(Boolean).join(' — ')}</div>) : ' none'}</div>
+                  <div><strong>Violations:</strong>{violations.length ? violations.map((violation) => <div key={violation.id}>• {violation.existingViolationId ? `Existing #${violation.existingViolationId}: ${violation.selectedExistingTitle}` : `New: ${violation.newViolationTitle || violation.searchText || 'Untitled'}`}</div>) : ' none'}</div>
+                </CardContent>
+              </Card>
 
               <div className="mt-6 flex gap-4">
                 <Button onClick={handleSubmit} className="flex-1" disabled={isSubmitting || isLoadingLookups || isLoadingNextDocket}>
