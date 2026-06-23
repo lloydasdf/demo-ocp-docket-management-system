@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import {
   FileText,
+  FilePlus,
   Search,
   RefreshCw,
   PanelLeftClose,
@@ -19,6 +20,12 @@ const SIDEBAR_AUTO_COLLAPSE_QUERY = '(max-width: 1024px)';
 const SIDEBAR_HIDE_QUERY = '(max-width: 768px)';
 
 const navigation = [
+  {
+    name: 'New Docket Entry',
+    href: '/new-docket',
+    icon: FilePlus,
+    description: 'Create a new docket record',
+  },
   {
     name: 'Cases',
     href: '/cases',
