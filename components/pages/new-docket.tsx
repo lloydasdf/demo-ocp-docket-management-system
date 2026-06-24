@@ -819,19 +819,23 @@ export default function NewDocket() {
       <Card>
         <CardContent className="p-4 sm:p-6">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="case-info">Case</TabsTrigger>
               <TabsTrigger value="persons">Participants</TabsTrigger>
               <TabsTrigger value="addresses">Addresses</TabsTrigger>
+              <TabsTrigger value="review">Review</TabsTrigger>
             </TabsList>
 
             <TabsContent value="case-info" className="space-y-4">
-              <div className="rounded-lg border bg-muted/30 p-4">
-                <p className="text-2xl font-bold tracking-tight text-primary">
-                  {isLoadingNextDocket ? 'Detecting next number…' : generatedDocketNumber}
-                </p>
+              <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
+                <div>
+                  <h3 className="font-semibold">Docket information</h3>
+                  <p className="mt-2 text-2xl font-bold tracking-tight text-primary">
+                    {isLoadingNextDocket ? 'Detecting next number…' : generatedDocketNumber}
+                  </p>
+                </div>
 
-                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 md:grid-cols-2">
                   <div>
                     <Label htmlFor="docket-type">Docket Type *</Label>
                     <Select value={docketTypeId} onValueChange={setDocketTypeId} disabled={isLoadingLookups}>
@@ -859,6 +863,16 @@ export default function NewDocket() {
                     <Label htmlFor="region-code">Region</Label>
                     <Input id="region-code" value={regionCode} onChange={(event) => setRegionCode(event.target.value)} className="mt-1" />
                   </div>
+                </div>
+              </div>
+
+              <div className="space-y-4 rounded-lg border p-4">
+                <div>
+                  <h3 className="font-semibold">Violation information</h3>
+                  <p className="text-sm text-muted-foreground">Classify the case and add the applicable violations.</p>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
                   <div>
                     <Label htmlFor="case-classification">Case Classification</Label>
                     <Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}>
@@ -869,45 +883,23 @@ export default function NewDocket() {
                       </SelectContent>
                     </Select>
                   </div>
-                </div>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <div className="flex items-center gap-2"><Checkbox id="case-also-raffled" checked={caseAlsoRaffled} onCheckedChange={(checked) => setCaseAlsoRaffled(checked === true)} /><Label htmlFor="case-also-raffled">Case also raffled</Label></div><Label htmlFor="assigned-prosecutor" className="mt-3 block">Prosecutor</Label>
-                  <Select value={assignedProsecutorId || 'none'} onValueChange={(value) => setAssignedProsecutorId(value === 'none' ? '' : value)} disabled={isLoadingLookups || !caseAlsoRaffled}>
-                    <SelectTrigger id="assigned-prosecutor" className="mt-1">
-                      <SelectValue placeholder="Select prosecutor" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No prosecutor selected</SelectItem>
-                      {lookups.prosecutors.map((prosecutor) => (
-                        <SelectItem key={prosecutor.id} value={prosecutor.id.toString()}>
-                          {prosecutor.short_name ?? prosecutor.full_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div><Label htmlFor="assignment-date">Date of Assignment</Label><Input id="assignment-date" type="date" value={dateReceived} readOnly disabled className="mt-1" /></div>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <Checkbox id="summary-procedure" checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} />
-                <Label htmlFor="summary-procedure">Summary procedure case</Label>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <Label htmlFor="summary-text">Summary</Label>
-                  <Textarea id="summary-text" placeholder="Case summary stored in summary_text" value={summaryText} onChange={(event) => setSummaryText(event.target.value)} className="mt-1" />
+                  <label className="flex items-center gap-2 self-end text-sm font-medium">
+                    <Checkbox id="summary-procedure" checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} />
+                    Summary procedure case
+                  </label>
                 </div>
 
-                <div>
-                  <Label htmlFor="remarks">Remarks</Label>
-                  <Textarea id="remarks" placeholder="Optional remarks" value={remarks} onChange={(event) => setRemarks(event.target.value)} className="mt-1" />
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <Label htmlFor="summary-text">Summary</Label>
+                    <Textarea id="summary-text" placeholder="Case summary stored in summary_text" value={summaryText} onChange={(event) => setSummaryText(event.target.value)} className="mt-1" />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="remarks">Remarks</Label>
+                    <Textarea id="remarks" placeholder="Optional remarks" value={remarks} onChange={(event) => setRemarks(event.target.value)} className="mt-1" />
+                  </div>
                 </div>
-              </div>
 
               <div className="flex items-center justify-between">
                 <div>
@@ -969,26 +961,29 @@ export default function NewDocket() {
                   ))}
                 </div>
               )}
+              </div>
 
-              <Card className="mt-6 bg-muted/20">
-                <CardHeader>
-                  <CardTitle className="text-base">Review before submission</CardTitle>
-                  <CardDescription>Preview only: the official docket number is returned by the database after save.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  <p><strong>Preview docket:</strong> {generatedDocketNumber}</p>
-                  <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; prosecutor {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? 'Not assigned'}</p>
-                  <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization: ${person.organizationName || 'Unnamed'}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person: ${buildPersonFullName(person)}`)}</div>) : ' none'}</div>
-                  <div><strong>Place of commission:</strong>{placeOfCommission ? <div>• {placeOfCommission.existingAddressId ? `Existing #${placeOfCommission.existingAddressId}: ${placeOfCommission.selectedExistingLabel}` : ['New', placeOfCommission.line1, placeOfCommission.barangay, placeOfCommission.city].filter(Boolean).join(' — ')}</div> : ' none'}</div>
-                  <div><strong>Violations:</strong>{violations.length ? violations.map((violation) => <div key={violation.id}>• {violation.existingViolationId ? `Existing #${violation.existingViolationId}: ${violation.selectedExistingTitle}` : `New: ${violation.newViolationTitle || violation.searchText || 'Untitled'}`}</div>) : ' none'}</div>
-                </CardContent>
-              </Card>
-
-              <div className="mt-6 flex gap-4">
-                <Button onClick={handleSubmit} className="flex-1" disabled={isSubmitting || isLoadingLookups || isLoadingNextDocket}>
-                  {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Submit Docket Entry
-                </Button>
+              <div className="space-y-4 rounded-lg border p-4">
+                <h3 className="font-semibold">Assignment</h3>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <div className="flex items-center gap-2"><Checkbox id="case-also-raffled" checked={caseAlsoRaffled} onCheckedChange={(checked) => setCaseAlsoRaffled(checked === true)} /><Label htmlFor="case-also-raffled">Case also raffled</Label></div><Label htmlFor="assigned-prosecutor" className="mt-3 block">Prosecutor</Label>
+                    <Select value={assignedProsecutorId || 'none'} onValueChange={(value) => setAssignedProsecutorId(value === 'none' ? '' : value)} disabled={isLoadingLookups || !caseAlsoRaffled}>
+                      <SelectTrigger id="assigned-prosecutor" className="mt-1">
+                        <SelectValue placeholder="Select prosecutor" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No prosecutor selected</SelectItem>
+                        {lookups.prosecutors.map((prosecutor) => (
+                          <SelectItem key={prosecutor.id} value={prosecutor.id.toString()}>
+                            {prosecutor.short_name ?? prosecutor.full_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div><Label htmlFor="assignment-date">Date of Assignment</Label><Input id="assignment-date" type="date" value={dateReceived} readOnly disabled className="mt-1" /></div>
+                </div>
               </div>
 
               <Button onClick={() => setActiveTab('persons')} className="mt-2">Continue to Participants</Button>
@@ -1166,7 +1161,34 @@ export default function NewDocket() {
                 </div>
               )}
 
-              <Button onClick={() => setActiveTab('case-info')} className="mt-2" variant="outline">Back to Case</Button>
+              <Button onClick={() => setActiveTab('review')} className="mt-2">Continue to Review</Button>
+            </TabsContent>
+
+
+            <TabsContent value="review" className="space-y-4">
+              <Card className="mt-6 bg-muted/20">
+                <CardHeader>
+                  <CardTitle className="text-base">Review before submission</CardTitle>
+                  <CardDescription>Preview only: the official docket number is returned by the database after save.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <p><strong>Preview docket:</strong> {generatedDocketNumber}</p>
+                  <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; prosecutor {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? 'Not assigned'}</p>
+                  <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization: ${person.organizationName || 'Unnamed'}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person: ${buildPersonFullName(person)}`)}</div>) : ' none'}</div>
+                  <div><strong>Place of commission:</strong>{placeOfCommission ? <div>• {placeOfCommission.existingAddressId ? `Existing #${placeOfCommission.existingAddressId}: ${placeOfCommission.selectedExistingLabel}` : ['New', placeOfCommission.line1, placeOfCommission.barangay, placeOfCommission.city].filter(Boolean).join(' — ')}</div> : ' none'}</div>
+                  <div><strong>Violations:</strong>{violations.length ? violations.map((violation) => <div key={violation.id}>• {violation.existingViolationId ? `Existing #${violation.existingViolationId}: ${violation.selectedExistingTitle}` : `New: ${violation.newViolationTitle || violation.searchText || 'Untitled'}`}</div>) : ' none'}</div>
+                </CardContent>
+              </Card>
+
+              <div className="mt-6 flex gap-4">
+                <Button onClick={handleSubmit} className="flex-1" disabled={isSubmitting || isLoadingLookups || isLoadingNextDocket}>
+                  {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Submit Docket Entry
+                </Button>
+              </div>
+              <div className="flex gap-4">
+                <Button onClick={() => setActiveTab('addresses')} variant="outline">Back to Addresses</Button>
+              </div>
             </TabsContent>
 
           </Tabs>
