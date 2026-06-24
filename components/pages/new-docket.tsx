@@ -795,7 +795,7 @@ export default function NewDocket() {
   };
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="mx-auto flex w-full max-w-[824px] flex-col gap-4 p-3 pt-16 md:gap-6 md:p-8">
       <div>
         <h1 className="text-3xl font-bold text-foreground">New Docket Entry</h1>
         <p className="text-muted-foreground mt-1">
@@ -825,13 +825,13 @@ export default function NewDocket() {
       )}
 
       <Card>
-        <CardHeader>
+        <CardHeader className="p-4 sm:p-6">
           <CardTitle>Case Information</CardTitle>
           <CardDescription>
             Fields match the cases, participants, addresses, status history, and violations tables.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
             <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="case-info">Case</TabsTrigger>
@@ -856,7 +856,7 @@ export default function NewDocket() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_10rem_10rem_7rem]">
+              <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <Label htmlFor="docket-type">Docket Type *</Label>
                   <Select value={docketTypeId} onValueChange={setDocketTypeId} disabled={isLoadingLookups}>
@@ -896,7 +896,7 @@ export default function NewDocket() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr]">
+              <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <div className="flex items-center gap-2"><Checkbox id="case-also-raffled" checked={caseAlsoRaffled} onCheckedChange={(checked) => setCaseAlsoRaffled(checked === true)} /><Label htmlFor="case-also-raffled">Case also raffled</Label></div><Label htmlFor="assigned-prosecutor" className="mt-3 block">Prosecutor</Label>
                   <Select value={assignedProsecutorId || 'none'} onValueChange={(value) => setAssignedProsecutorId(value === 'none' ? '' : value)} disabled={isLoadingLookups || !caseAlsoRaffled}>
@@ -916,7 +916,7 @@ export default function NewDocket() {
                 <div><Label htmlFor="assignment-date">Date of Assignment</Label><Input id="assignment-date" type="date" value={dateReceived} readOnly disabled className="mt-1" /></div>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-[10rem_1fr]">
+              <div className="grid gap-4 md:grid-cols-[10rem_minmax(0,1fr)]">
                 <div>
                   <Label htmlFor="next-docket-number">Next No.</Label>
                   <Input id="next-docket-number" value={nextDocketNumber ?? ''} readOnly disabled className="mt-1" />
@@ -931,14 +931,16 @@ export default function NewDocket() {
                 <Label htmlFor="summary-procedure">Summary procedure case</Label>
               </div>
 
-              <div>
-                <Label htmlFor="summary-text">Summary</Label>
-                <Textarea id="summary-text" placeholder="Case summary stored in summary_text" value={summaryText} onChange={(event) => setSummaryText(event.target.value)} className="mt-1" />
-              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <Label htmlFor="summary-text">Summary</Label>
+                  <Textarea id="summary-text" placeholder="Case summary stored in summary_text" value={summaryText} onChange={(event) => setSummaryText(event.target.value)} className="mt-1" />
+                </div>
 
-              <div>
-                <Label htmlFor="remarks">Remarks</Label>
-                <Textarea id="remarks" placeholder="Optional remarks" value={remarks} onChange={(event) => setRemarks(event.target.value)} className="mt-1" />
+                <div>
+                  <Label htmlFor="remarks">Remarks</Label>
+                  <Textarea id="remarks" placeholder="Optional remarks" value={remarks} onChange={(event) => setRemarks(event.target.value)} className="mt-1" />
+                </div>
               </div>
 
               <Button onClick={() => setActiveTab('persons')} className="mt-2">Continue to Participants</Button>
