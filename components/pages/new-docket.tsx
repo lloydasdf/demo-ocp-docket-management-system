@@ -104,7 +104,7 @@ function getDocketMonthCode(dateReceived: string) {
     return '—';
   }
 
-  return date.toLocaleString('en-US', { month: 'short' }).toUpperCase();
+  return String.fromCharCode(65 + date.getMonth());
 }
 
 function formatDocketNumber(prefix: string | undefined, year: string, number: number | null, monthCode?: string | null, regionCode?: string | null) {
@@ -287,10 +287,6 @@ export default function NewDocket() {
   const selectedDocketType = useMemo(
     () => lookups.docketTypes.find((type) => type.id.toString() === docketTypeId),
     [docketTypeId, lookups.docketTypes],
-  );
-  const selectedStatus = useMemo(
-    () => lookups.statuses.find((status) => status.id.toString() === initialStatusId),
-    [initialStatusId, lookups.statuses],
   );
   const selectedProsecutor = useMemo(
     () => lookups.prosecutors.find((prosecutor) => prosecutor.id.toString() === assignedProsecutorId),
@@ -796,18 +792,14 @@ export default function NewDocket() {
 
   return (
     <div className="mx-auto flex w-full max-w-[824px] flex-col gap-4 p-3 pt-16 md:gap-6 md:p-8">
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">New Docket Entry</h1>
-        <p className="text-muted-foreground mt-1">
-          Create a live case record using the current PostgreSQL docket schema.
-        </p>
-        {isDevelopment ? (
-          <Button type="button" variant="outline" size="sm" onClick={fillTestData} className="mt-3" disabled={isLoadingLookups || !defaultRoleId || !defaultAddressTypeId}>
+      {isDevelopment ? (
+        <div>
+          <Button type="button" variant="outline" size="sm" onClick={fillTestData} disabled={isLoadingLookups || !defaultRoleId || !defaultAddressTypeId}>
             Fill Test Data
           </Button>
-        ) : null}
-        {/* TODO: Remove debug Fill Test Data button before production hardening. */}
-      </div>
+          {/* TODO: Remove debug Fill Test Data button before production hardening. */}
+        </div>
+      ) : null}
 
       {message && (
         <Alert variant={message.type === 'error' ? 'destructive' : 'default'}>
@@ -825,74 +817,58 @@ export default function NewDocket() {
       )}
 
       <Card>
-        <CardHeader className="p-4 sm:p-6">
-          <CardTitle>Case Information</CardTitle>
-          <CardDescription>
-            Fields match the cases, participants, addresses, status history, and violations tables.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
+        <CardContent className="p-4 sm:p-6">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="case-info">Case</TabsTrigger>
               <TabsTrigger value="persons">Participants</TabsTrigger>
               <TabsTrigger value="addresses">Addresses</TabsTrigger>
-              <TabsTrigger value="violations">Violations</TabsTrigger>
             </TabsList>
 
             <TabsContent value="case-info" className="space-y-4">
               <div className="rounded-lg border bg-muted/30 p-4">
-                <p className="text-sm font-medium text-muted-foreground">Preview Docket No.</p>
-                <div className="mt-1 flex flex-wrap items-center gap-3">
-                  <p className="text-2xl font-bold tracking-tight text-primary">
-                    {isLoadingNextDocket ? 'Detecting next number…' : generatedDocketNumber}
-                  </p>
-                  <span className="rounded-full bg-background px-3 py-1 text-xs text-muted-foreground">
-                    Month code: {docketMonthCode}
-                  </span>
-                  <span className="rounded-full bg-background px-3 py-1 text-xs text-muted-foreground">
-                    Initial status: {selectedStatus?.display_label ?? 'Received'}
-                  </span>
-                </div>
-              </div>
+                <p className="text-2xl font-bold tracking-tight text-primary">
+                  {isLoadingNextDocket ? 'Detecting next number…' : generatedDocketNumber}
+                </p>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <Label htmlFor="docket-type">Docket Type *</Label>
-                  <Select value={docketTypeId} onValueChange={setDocketTypeId} disabled={isLoadingLookups}>
-                    <SelectTrigger id="docket-type" className="mt-1">
-                      <SelectValue placeholder="Select docket type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {lookups.docketTypes.map((type) => (
-                        <SelectItem key={type.id} value={type.id.toString()}>
-                          {type.prefix} — {type.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="docket-year">Docket Year *</Label>
-                  <Input id="docket-year" type="number" value={docketYear} onChange={(event) => setDocketYear(event.target.value)} className="mt-1" />
-                </div>
-                <div>
-                  <Label htmlFor="date-received">Date Received *</Label>
-                  <Input id="date-received" type="date" value={dateReceived} onChange={(event) => setDateReceived(event.target.value)} className="mt-1" />
-                </div>
-                <div>
-                  <Label htmlFor="region-code">Region</Label>
-                  <Input id="region-code" value={regionCode} onChange={(event) => setRegionCode(event.target.value)} className="mt-1" />
-                </div>
-                <div>
-                  <Label htmlFor="case-classification">Case Classification</Label>
-                  <Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}>
-                    <SelectTrigger id="case-classification" className="mt-1"><SelectValue placeholder="Select classification" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No classification</SelectItem>
-                      {lookups.caseClassifications.map((classification) => <SelectItem key={classification.id} value={classification.id.toString()}>{classification.display_label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <div>
+                    <Label htmlFor="docket-type">Docket Type *</Label>
+                    <Select value={docketTypeId} onValueChange={setDocketTypeId} disabled={isLoadingLookups}>
+                      <SelectTrigger id="docket-type" className="mt-1">
+                        <SelectValue placeholder="Select docket type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {lookups.docketTypes.map((type) => (
+                          <SelectItem key={type.id} value={type.id.toString()}>
+                            {type.prefix} — {type.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="docket-year">Docket Year *</Label>
+                    <Input id="docket-year" type="number" value={docketYear} onChange={(event) => setDocketYear(event.target.value)} className="mt-1" />
+                  </div>
+                  <div>
+                    <Label htmlFor="date-received">Date Received *</Label>
+                    <Input id="date-received" type="date" value={dateReceived} onChange={(event) => setDateReceived(event.target.value)} className="mt-1" />
+                  </div>
+                  <div>
+                    <Label htmlFor="region-code">Region</Label>
+                    <Input id="region-code" value={regionCode} onChange={(event) => setRegionCode(event.target.value)} className="mt-1" />
+                  </div>
+                  <div>
+                    <Label htmlFor="case-classification">Case Classification</Label>
+                    <Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}>
+                      <SelectTrigger id="case-classification" className="mt-1"><SelectValue placeholder="Select classification" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No classification</SelectItem>
+                        {lookups.caseClassifications.map((classification) => <SelectItem key={classification.id} value={classification.id.toString()}>{classification.display_label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </div>
 
@@ -916,16 +892,6 @@ export default function NewDocket() {
                 <div><Label htmlFor="assignment-date">Date of Assignment</Label><Input id="assignment-date" type="date" value={dateReceived} readOnly disabled className="mt-1" /></div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-[10rem_minmax(0,1fr)]">
-                <div>
-                  <Label htmlFor="next-docket-number">Next No.</Label>
-                  <Input id="next-docket-number" value={nextDocketNumber ?? ''} readOnly disabled className="mt-1" />
-                </div>
-                <p className="self-end text-xs text-muted-foreground">
-                  This is only a preview. The database RPC takes an advisory lock and assigns the official number when saved, so the final number may change.
-                </p>
-              </div>
-
               <div className="flex items-center space-x-2">
                 <Checkbox id="summary-procedure" checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} />
                 <Label htmlFor="summary-procedure">Summary procedure case</Label>
@@ -941,6 +907,88 @@ export default function NewDocket() {
                   <Label htmlFor="remarks">Remarks</Label>
                   <Textarea id="remarks" placeholder="Optional remarks" value={remarks} onChange={(event) => setRemarks(event.target.value)} className="mt-1" />
                 </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold">Case Violations</h3>
+                  <p className="text-sm text-muted-foreground">Search the violations table by title, short label, reference code, law reference, or description.</p>
+                </div>
+                <Button onClick={addViolation} variant="outline" size="sm">
+                  <Plus className="mr-2 h-4 w-4" /> Add Violation
+                </Button>
+              </div>
+
+              {violations.length === 0 ? (
+                <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No violations added yet</div>
+              ) : (
+                <div className="space-y-4">
+                  {violations.map((violation) => (
+                    <div key={violation.id} className="space-y-3 rounded-lg border p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <Label className="text-xs">Search Violation *</Label>
+                          <Input value={violation.searchText} placeholder="Type a violation, law reference, or code" onChange={(event) => { updateViolation(violation.id, { searchText: event.target.value, existingViolationId: null, selectedExistingTitle: null, createNew: false }); loadViolationSuggestions(violation.id, event.target.value); }} className="mt-1" />
+                        </div>
+                        <Button onClick={() => setViolations((current) => current.filter((item) => item.id !== violation.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
+                      </div>
+
+                      {violationSuggestions[violation.id]?.length ? (
+                        <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
+                          <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Violation suggestions</p>
+                          <div className="flex flex-wrap gap-2">
+                            {violationSuggestions[violation.id].map((suggestion) => (
+                              <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyViolationSuggestion(violation.id, suggestion)}>
+                                {suggestion.title}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        {violation.existingViolationId ? <span className="rounded-full bg-muted px-2 py-1">Existing violation #{violation.existingViolationId}: {violation.selectedExistingTitle}</span> : null}
+                        {!violation.existingViolationId ? <Button type="button" variant={violation.createNew ? 'default' : 'outline'} size="sm" onClick={() => updateViolation(violation.id, { createNew: true, newViolationTitle: violation.newViolationTitle || violation.searchText })}>Create new violation</Button> : null}
+                      </div>
+
+                      {violation.createNew && !violation.existingViolationId ? (
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                          <div><Label className="text-xs">New Violation Title *</Label><Input value={violation.newViolationTitle ?? ''} onChange={(event) => updateViolation(violation.id, { newViolationTitle: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Reference Code</Label><Input value={violation.referenceCode ?? ''} onChange={(event) => updateViolation(violation.id, { referenceCode: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Short Label</Label><Input value={violation.shortLabel ?? ''} onChange={(event) => updateViolation(violation.id, { shortLabel: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Law Reference</Label><Input value={violation.lawReference ?? ''} onChange={(event) => updateViolation(violation.id, { lawReference: event.target.value })} className="mt-1" /></div>
+                          <div className="md:col-span-2"><Label className="text-xs">Description</Label><Textarea value={violation.description ?? ''} onChange={(event) => updateViolation(violation.id, { description: event.target.value })} className="mt-1" /></div>
+                        </div>
+                      ) : null}
+
+                      <div>
+                        <Label className="text-xs">Raw Violation Text</Label>
+                        <Textarea value={violation.rawViolationText ?? ''} onChange={(event) => updateViolation(violation.id, { rawViolationText: event.target.value })} className="mt-1" placeholder="Optional original text from complaint or intake document" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <Card className="mt-6 bg-muted/20">
+                <CardHeader>
+                  <CardTitle className="text-base">Review before submission</CardTitle>
+                  <CardDescription>Preview only: the official docket number is returned by the database after save.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <p><strong>Preview docket:</strong> {generatedDocketNumber}</p>
+                  <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; prosecutor {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? 'Not assigned'}</p>
+                  <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization: ${person.organizationName || 'Unnamed'}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person: ${buildPersonFullName(person)}`)}</div>) : ' none'}</div>
+                  <div><strong>Place of commission:</strong>{placeOfCommission ? <div>• {placeOfCommission.existingAddressId ? `Existing #${placeOfCommission.existingAddressId}: ${placeOfCommission.selectedExistingLabel}` : ['New', placeOfCommission.line1, placeOfCommission.barangay, placeOfCommission.city].filter(Boolean).join(' — ')}</div> : ' none'}</div>
+                  <div><strong>Violations:</strong>{violations.length ? violations.map((violation) => <div key={violation.id}>• {violation.existingViolationId ? `Existing #${violation.existingViolationId}: ${violation.selectedExistingTitle}` : `New: ${violation.newViolationTitle || violation.searchText || 'Untitled'}`}</div>) : ' none'}</div>
+                </CardContent>
+              </Card>
+
+              <div className="mt-6 flex gap-4">
+                <Button onClick={handleSubmit} className="flex-1" disabled={isSubmitting || isLoadingLookups || isLoadingNextDocket}>
+                  {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Submit Docket Entry
+                </Button>
               </div>
 
               <Button onClick={() => setActiveTab('persons')} className="mt-2">Continue to Participants</Button>
@@ -1118,93 +1166,9 @@ export default function NewDocket() {
                 </div>
               )}
 
-              <Button onClick={() => setActiveTab('violations')} className="mt-2">Continue to Violations</Button>
+              <Button onClick={() => setActiveTab('case-info')} className="mt-2" variant="outline">Back to Case</Button>
             </TabsContent>
 
-            <TabsContent value="violations" className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold">Case Violations</h3>
-                  <p className="text-sm text-muted-foreground">Search the violations table by title, short label, reference code, law reference, or description.</p>
-                </div>
-                <Button onClick={addViolation} variant="outline" size="sm">
-                  <Plus className="mr-2 h-4 w-4" /> Add Violation
-                </Button>
-              </div>
-
-              {violations.length === 0 ? (
-                <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No violations added yet</div>
-              ) : (
-                <div className="space-y-4">
-                  {violations.map((violation) => (
-                    <div key={violation.id} className="space-y-3 rounded-lg border p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1">
-                          <Label className="text-xs">Search Violation *</Label>
-                          <Input value={violation.searchText} placeholder="Type a violation, law reference, or code" onChange={(event) => { updateViolation(violation.id, { searchText: event.target.value, existingViolationId: null, selectedExistingTitle: null, createNew: false }); loadViolationSuggestions(violation.id, event.target.value); }} className="mt-1" />
-                        </div>
-                        <Button onClick={() => setViolations((current) => current.filter((item) => item.id !== violation.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
-                      </div>
-
-                      {violationSuggestions[violation.id]?.length ? (
-                        <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
-                          <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Violation suggestions</p>
-                          <div className="flex flex-wrap gap-2">
-                            {violationSuggestions[violation.id].map((suggestion) => (
-                              <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyViolationSuggestion(violation.id, suggestion)}>
-                                {suggestion.title}
-                              </Button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        {violation.existingViolationId ? <span className="rounded-full bg-muted px-2 py-1">Existing violation #{violation.existingViolationId}: {violation.selectedExistingTitle}</span> : null}
-                        {!violation.existingViolationId ? <Button type="button" variant={violation.createNew ? 'default' : 'outline'} size="sm" onClick={() => updateViolation(violation.id, { createNew: true, newViolationTitle: violation.newViolationTitle || violation.searchText })}>Create new violation</Button> : null}
-                      </div>
-
-                      {violation.createNew && !violation.existingViolationId ? (
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                          <div><Label className="text-xs">New Violation Title *</Label><Input value={violation.newViolationTitle ?? ''} onChange={(event) => updateViolation(violation.id, { newViolationTitle: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Reference Code</Label><Input value={violation.referenceCode ?? ''} onChange={(event) => updateViolation(violation.id, { referenceCode: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Short Label</Label><Input value={violation.shortLabel ?? ''} onChange={(event) => updateViolation(violation.id, { shortLabel: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Law Reference</Label><Input value={violation.lawReference ?? ''} onChange={(event) => updateViolation(violation.id, { lawReference: event.target.value })} className="mt-1" /></div>
-                          <div className="md:col-span-2"><Label className="text-xs">Description</Label><Textarea value={violation.description ?? ''} onChange={(event) => updateViolation(violation.id, { description: event.target.value })} className="mt-1" /></div>
-                        </div>
-                      ) : null}
-
-                      <div>
-                        <Label className="text-xs">Raw Violation Text</Label>
-                        <Textarea value={violation.rawViolationText ?? ''} onChange={(event) => updateViolation(violation.id, { rawViolationText: event.target.value })} className="mt-1" placeholder="Optional original text from complaint or intake document" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <Card className="mt-6 bg-muted/20">
-                <CardHeader>
-                  <CardTitle className="text-base">Review before submission</CardTitle>
-                  <CardDescription>Preview only: the official docket number is returned by the database after save.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  <p><strong>Preview docket:</strong> {generatedDocketNumber}</p>
-                  <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; initial status {selectedStatus?.display_label ?? '—'}; prosecutor {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? 'Not assigned'}</p>
-                  <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization: ${person.organizationName || 'Unnamed'}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person: ${buildPersonFullName(person)}`)}</div>) : ' none'}</div>
-                  <div><strong>Place of commission:</strong>{placeOfCommission ? <div>• {placeOfCommission.existingAddressId ? `Existing #${placeOfCommission.existingAddressId}: ${placeOfCommission.selectedExistingLabel}` : ['New', placeOfCommission.line1, placeOfCommission.barangay, placeOfCommission.city].filter(Boolean).join(' — ')}</div> : ' none'}</div>
-                  <div><strong>Violations:</strong>{violations.length ? violations.map((violation) => <div key={violation.id}>• {violation.existingViolationId ? `Existing #${violation.existingViolationId}: ${violation.selectedExistingTitle}` : `New: ${violation.newViolationTitle || violation.searchText || 'Untitled'}`}</div>) : ' none'}</div>
-                </CardContent>
-              </Card>
-
-              <div className="mt-6 flex gap-4">
-                <Button onClick={handleSubmit} className="flex-1" disabled={isSubmitting || isLoadingLookups || isLoadingNextDocket}>
-                  {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  Submit Docket Entry
-                </Button>
-                <Button onClick={() => setActiveTab('case-info')} variant="outline">Back to Case</Button>
-              </div>
-            </TabsContent>
           </Tabs>
         </CardContent>
       </Card>
