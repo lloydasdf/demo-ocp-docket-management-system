@@ -1136,18 +1136,18 @@ export async function searchPersons(query: string, limit?: number): Promise<Supa
   }, []);
 }
 
-export type OrganizationDetailsSearchRow = TableRow<"organizations"> & { organization_aliases?: Json | null };
+export type OrganizationDetailsSearchRow = { id: number; organization_name: string; organization_type: string | null; aliases?: Json | null };
 
 export async function searchOrganizations(query: string, limit?: number): Promise<SupabaseQueryResult<OrganizationDetailsSearchRow[]>> {
   const safeLimit = normalizeLimit(limit, 8, 25);
   const safeQuery = escapeIlikeTerm(query);
   if (!safeQuery) return ok([]);
-  return runSupabaseQuery("searchOrganizations", "v_organization_details" as RelationName, async () => {
+  return runSupabaseQuery("searchOrganizations", "v_organization_search" as RelationName, async () => {
     const supabase = await getSupabaseBrowserClient();
     return (await supabase
-      .from("v_organization_details" as never)
+      .from("v_organization_search" as never)
       .select("*")
-      .or(`organization_name.ilike.%${safeQuery}%,organization_type.ilike.%${safeQuery}%,registration_number.ilike.%${safeQuery}%,tax_identification_number.ilike.%${safeQuery}%`)
+      .or(`organization_name.ilike.%${safeQuery}%,organization_type.ilike.%${safeQuery}%`)
       .order("organization_name" as never, { ascending: true })
       .limit(safeLimit)) as unknown as { data: OrganizationDetailsSearchRow[] | null; error: unknown };
   }, []);

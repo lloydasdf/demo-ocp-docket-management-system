@@ -72,6 +72,7 @@ const emptyLookups: LookupState = {
 const thisYear = new Date().getFullYear();
 const genderOptions = ['Female', 'Male', 'Other', 'Unspecified'];
 const defaultRegionCode = 'IV-A';
+const isDevelopment = process.env.NODE_ENV !== 'production';
 
 function makeId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -366,9 +367,138 @@ export default function NewDocket() {
     setActiveTab('case-info');
   };
 
+  const fillTestData = () => {
+    const unique = crypto.randomUUID().slice(0, 8);
+    const roleId = toNumber(defaultRoleId);
+    const addressTypeId = toNumber(defaultAddressTypeId);
+    const prosecutor = lookups.prosecutors[0];
+
+    setCaseClassificationId(lookups.caseClassifications[0]?.id?.toString() ?? '');
+    setSummaryText(`Test summary ${unique}`);
+    setRemarks(`Test remarks ${unique}`);
+    setCaseAlsoRaffled(Boolean(prosecutor));
+    setAssignedProsecutorId(prosecutor?.id?.toString() ?? '');
+
+    setPersons([
+      {
+        id: makeId('person'),
+        participantKind: 'PERSON',
+        roleId,
+        participantOrder: 1,
+        firstName: `Juan${unique}`,
+        middleName: 'Dela',
+        lastName: `Cruz${unique}`,
+        suffix: '',
+        gender: 'Male',
+        age: '17',
+        birthDate: '',
+        remarks: `Person remarks ${unique}`,
+        aliases: [{ id: makeId('alias'), aliasName: `Person Alias ${unique}`, aliasType: 'AKA' }],
+        existingAliases: [],
+        addresses: [{
+          ...makeEmptyAddress(defaultAddressTypeId, 'participant-address'),
+          addressTypeId,
+          line1: `Person Address ${unique}`,
+          barangay: 'Sample Barangay',
+          city: 'General Trias',
+          province: 'Cavite',
+          region: defaultRegionCode,
+          country: 'Philippines',
+          isPrimary: true,
+        }],
+        attributes: {
+          ageText: '17',
+          ageYears: 17,
+          genderText: 'Male',
+          genderNormalized: 'MALE',
+          minorText: 'YES',
+          isMinorAtCase: true,
+          seniorText: 'NO',
+          isSeniorAtCase: false,
+          pwdText: 'YES',
+          isPwdAtCase: true,
+          residentOfGentriText: 'YES',
+          isResidentOfGentri: true,
+        },
+      },
+      {
+        id: makeId('organization'),
+        participantKind: 'ORGANIZATION',
+        roleId,
+        participantOrder: 2,
+        organizationName: `Test Organization ${unique}`,
+        organizationType: 'ORGANIZATION',
+        registrationNumber: `REG-${unique}`,
+        taxIdentificationNumber: `TIN-${unique}`,
+        contactPerson: `Contact ${unique}`,
+        contactNumber: '09170000000',
+        email: `org-${unique}@example.test`,
+        remarks: `Organization remarks ${unique}`,
+        aliases: [{ id: makeId('alias'), aliasName: `Org Alias ${unique}` }],
+        existingAliases: [],
+        addresses: [],
+      },
+    ]);
+
+    setPlaceOfCommission({
+      ...makeEmptyAddress(defaultAddressTypeId, 'place'),
+      addressTypeId,
+      line1: `Place of Commission ${unique}`,
+      barangay: 'Sample Barangay',
+      city: 'General Trias',
+      province: 'Cavite',
+      region: defaultRegionCode,
+      country: 'Philippines',
+      isPrimary: true,
+      remarks: `Place remarks ${unique}`,
+    });
+
+    setViolations([{ id: makeId('violation'), existingViolationId: null, violationOrder: 1, rawViolationText: `Raw violation ${unique}`, searchText: `Test Violation ${unique}`, createNew: true, newViolationTitle: `Test Violation ${unique}` }]);
+    setActiveTab('case-info');
+  };
+
   const updatePerson = (id: string, updates: Partial<PersonEntry>) => {
     setPersons((current) => current.map((person) => (person.id === id ? { ...person, ...updates } : person)));
   };
+
+  const switchParticipantKind = (id: string, participantKind: 'PERSON' | 'ORGANIZATION') => {
+    setPersons((current) => current.map((person) => (person.id === id ? {
+      id: person.id,
+      roleId: person.roleId,
+      participantOrder: person.participantOrder,
+      remarks: person.remarks,
+      sourceDetail: person.sourceDetail,
+      participantKind,
+      gender: participantKind === 'PERSON' ? 'Unspecified' : undefined,
+      firstName: '',
+      middleName: '',
+      lastName: '',
+      suffix: '',
+      organizationName: '',
+      organizationType: participantKind === 'ORGANIZATION' ? 'ORGANIZATION' : undefined,
+      aliases: [],
+      existingAliases: [],
+      addresses: [],
+    } : person)));
+  };
+
+  const clearSelectedPersonData = (person: PersonEntry, updates: Partial<PersonEntry>) => ({
+    ...updates,
+    existingPersonId: null,
+    selectedExistingName: null,
+    fullNamePreview: null,
+    existingAliases: [],
+    aliases: [],
+    addresses: [],
+  });
+
+  const clearSelectedOrganizationData = (updates: Partial<PersonEntry>) => ({
+    ...updates,
+    existingOrganizationId: null,
+    selectedExistingOrganizationName: null,
+    existingAliases: [],
+    aliases: [],
+  });
 
   const updateParticipantAddress = (personId: string, addressId: string, updates: Partial<AddressEntry>) => {
     setPersons((current) => current.map((person) => person.id === personId ? { ...person, addresses: (person.addresses ?? []).map((address) => address.id === addressId ? { ...address, ...updates } : address) as AddressEntry[] } : person));
@@ -465,7 +595,7 @@ export default function NewDocket() {
       aliases: [],
       addresses: Array.isArray(person.person_addresses) ? person.person_addresses.map((entry: any) => ({
         id: makeId('participant-address'),
-        existingAddressId: entry.addresses?.id ?? null,
+        existingAddressId: entry.address_id ?? entry.addresses?.address_id ?? entry.addresses?.id ?? null,
         addressTypeId: entry.address_type_id ?? toNumber(defaultAddressTypeId),
         isPrimary: entry.is_primary === true,
         remarks: entry.remarks ?? '',
@@ -491,12 +621,12 @@ export default function NewDocket() {
       selectedExistingOrganizationName: organization.organization_name,
       organizationName: organization.organization_name,
       organizationType: organization.organization_type,
-      registrationNumber: organization.registration_number,
-      taxIdentificationNumber: organization.tax_identification_number,
-      contactPerson: organization.contact_person,
-      contactNumber: organization.contact_number,
-      email: organization.email,
-      existingAliases: Array.isArray(organization.organization_aliases) ? organization.organization_aliases.map((alias: any) => ({ aliasName: alias.alias_name ?? '' })) : [],
+      registrationNumber: '',
+      taxIdentificationNumber: '',
+      contactPerson: '',
+      contactNumber: '',
+      email: '',
+      existingAliases: Array.isArray(organization.aliases) ? organization.aliases.map((alias: any) => ({ aliasName: String(alias) })) : [],
       aliases: [],
     });
     setOrganizationSuggestions((current) => ({ ...current, [entryId]: [] }));
@@ -636,13 +766,13 @@ export default function NewDocket() {
           notes: person.notes,
           personDescriptor: person.personDescriptor,
         } : undefined,
-        attributes: {
+        attributes: person.participantKind === 'PERSON' ? {
           ...(person.attributes ?? {}),
           ageText: age ?? person.attributes?.ageText ?? null,
           ageYears: age ? Number.parseInt(age, 10) || null : person.attributes?.ageYears ?? null,
           genderText: gender ?? person.attributes?.genderText ?? null,
           genderNormalized: gender && gender !== 'Unspecified' ? gender.toUpperCase() : person.attributes?.genderNormalized ?? 'UNKNOWN',
-        },
+        } : undefined,
       })) as NewDocketParticipantInput[],
       addresses: [],
       violations: violations.map(({ id: _id, searchText: _searchText, selectedExistingTitle: _title, createNew, newViolationTitle, referenceCode, shortLabel, description, lawReference, ...violation }, index) => ({
@@ -671,6 +801,12 @@ export default function NewDocket() {
         <p className="text-muted-foreground mt-1">
           Create a live case record using the current PostgreSQL docket schema.
         </p>
+        {isDevelopment ? (
+          <Button type="button" variant="outline" size="sm" onClick={fillTestData} className="mt-3" disabled={isLoadingLookups || !defaultRoleId || !defaultAddressTypeId}>
+            Fill Test Data
+          </Button>
+        ) : null}
+        {/* TODO: Remove debug Fill Test Data button before production hardening. */}
       </div>
 
       {message && (
@@ -827,36 +963,36 @@ export default function NewDocket() {
                     <div key={person.id} className="space-y-3 rounded-lg border p-4">
                       <div className="flex items-start justify-between gap-4">
                         <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-4">
-                          <div><Label className="text-xs">Type</Label><Select value={person.participantKind ?? 'PERSON'} onValueChange={(value) => updatePerson(person.id, { participantKind: value as 'PERSON' | 'ORGANIZATION', existingPersonId: null, existingOrganizationId: null })}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PERSON">Person</SelectItem><SelectItem value="ORGANIZATION">Organization</SelectItem></SelectContent></Select></div>
+                          <div><Label className="text-xs">Type</Label><Select value={person.participantKind ?? 'PERSON'} onValueChange={(value) => switchParticipantKind(person.id, value as 'PERSON' | 'ORGANIZATION')}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PERSON">Person</SelectItem><SelectItem value="ORGANIZATION">Organization</SelectItem></SelectContent></Select></div>
                           {person.participantKind !== 'ORGANIZATION' ? <>
-                          <div><Label className="text-xs">First Name *</Label><Input value={person.firstName ?? ''} onChange={(event) => { updatePerson(person.id, { firstName: event.target.value, existingPersonId: null }); }} className="mt-1" /></div>
+                          <div><Label className="text-xs">First Name *</Label><Input value={person.firstName ?? ''} onChange={(event) => { updatePerson(person.id, clearSelectedPersonData(person, { firstName: event.target.value })); }} className="mt-1" /></div>
                           <div>
                             <div className="flex items-center justify-between gap-2">
                               <Label className="text-xs">Middle Name</Label>
                               <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                                <Checkbox checked={person.noMiddleName === true} onCheckedChange={(checked) => updatePerson(person.id, { noMiddleName: checked === true, middleName: checked === true ? 'NMN' : '' })} />
+                                <Checkbox checked={person.noMiddleName === true} onCheckedChange={(checked) => updatePerson(person.id, clearSelectedPersonData(person, { noMiddleName: checked === true, middleName: checked === true ? 'NMN' : '' }))} />
                                 No Middle Name
                               </label>
                             </div>
-                            <Input value={person.noMiddleName ? 'NMN' : (person.middleName ?? '')} disabled={person.noMiddleName === true} onChange={(event) => updatePerson(person.id, { middleName: event.target.value, noMiddleName: false, existingPersonId: null })} className="mt-1" />
+                            <Input value={person.noMiddleName ? 'NMN' : (person.middleName ?? '')} disabled={person.noMiddleName === true} onChange={(event) => updatePerson(person.id, clearSelectedPersonData(person, { middleName: event.target.value, noMiddleName: false }))} className="mt-1" />
                           </div>
-                          <div><Label className="text-xs">Last Name *</Label><Input value={person.lastName ?? ''} onChange={(event) => { updatePerson(person.id, { lastName: event.target.value, existingPersonId: null }); }} className="mt-1" /></div>
-                          <div><Label className="text-xs">Suffix</Label><Input value={person.suffix ?? ''} onChange={(event) => updatePerson(person.id, { suffix: event.target.value, existingPersonId: null })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Last Name *</Label><Input value={person.lastName ?? ''} onChange={(event) => { updatePerson(person.id, clearSelectedPersonData(person, { lastName: event.target.value })); }} className="mt-1" /></div>
+                          <div><Label className="text-xs">Suffix</Label><Input value={person.suffix ?? ''} onChange={(event) => updatePerson(person.id, clearSelectedPersonData(person, { suffix: event.target.value }))} className="mt-1" /></div>
                           </> : <>
-                          <div className="md:col-span-3"><Label className="text-xs">Organization Name *</Label><Input value={person.organizationName ?? ''} onChange={(event) => { updatePerson(person.id, { organizationName: event.target.value, existingOrganizationId: null }); }} className="mt-1" /></div>
-                          <div><Label className="text-xs">Organization Type</Label><Input value={person.organizationType ?? ''} onChange={(event) => updatePerson(person.id, { organizationType: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Registration Number</Label><Input value={person.registrationNumber ?? ''} onChange={(event) => updatePerson(person.id, { registrationNumber: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">TIN</Label><Input value={person.taxIdentificationNumber ?? ''} onChange={(event) => updatePerson(person.id, { taxIdentificationNumber: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Contact Person</Label><Input value={person.contactPerson ?? ''} onChange={(event) => updatePerson(person.id, { contactPerson: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Contact Number</Label><Input value={person.contactNumber ?? ''} onChange={(event) => updatePerson(person.id, { contactNumber: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Email</Label><Input value={person.email ?? ''} onChange={(event) => updatePerson(person.id, { email: event.target.value })} className="mt-1" /></div>
+                          <div className="md:col-span-3"><Label className="text-xs">Organization Name *</Label><Input value={person.organizationName ?? ''} onChange={(event) => { updatePerson(person.id, clearSelectedOrganizationData({ organizationName: event.target.value })); }} className="mt-1" /></div>
+                          <div><Label className="text-xs">Organization Type</Label><Input value={person.organizationType ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ organizationType: event.target.value }) : { organizationType: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Registration Number</Label><Input value={person.registrationNumber ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ registrationNumber: event.target.value }) : { registrationNumber: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">TIN</Label><Input value={person.taxIdentificationNumber ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ taxIdentificationNumber: event.target.value }) : { taxIdentificationNumber: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Contact Person</Label><Input value={person.contactPerson ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ contactPerson: event.target.value }) : { contactPerson: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Contact Number</Label><Input value={person.contactNumber ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ contactNumber: event.target.value }) : { contactNumber: event.target.value })} className="mt-1" /></div>
+                          <div><Label className="text-xs">Email</Label><Input value={person.email ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ email: event.target.value }) : { email: event.target.value })} className="mt-1" /></div>
                           </>}
                         </div>
                         <Button onClick={() => setPersons((current) => current.filter((item) => item.id !== person.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
                       </div>
 
                       <p className="text-xs text-muted-foreground">
-                        {person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person preview: ${buildPersonFullName(person) || 'Enter at least one name component'}`}
+                        {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization preview: ${cleanString(person.organizationName) || 'Enter organization name'}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person preview: ${buildPersonFullName(person) || 'Enter at least one name component'}`)}
                       </p>
 
                       {organizationSuggestions[person.id]?.length ? (
@@ -897,6 +1033,7 @@ export default function NewDocket() {
                             <SelectContent>{lookups.participantRoles.map((role) => <SelectItem key={role.id} value={role.id.toString()}>{role.display_label}</SelectItem>)}</SelectContent>
                           </Select>
                         </div>
+                        {person.participantKind !== 'ORGANIZATION' ? <>
                         <div>
                           <Label className="text-xs">Gender</Label>
                           <Select value={person.gender ?? 'Unspecified'} onValueChange={(value) => updatePerson(person.id, { gender: value })}>
@@ -910,6 +1047,7 @@ export default function NewDocket() {
                         <label className="flex items-center gap-2 self-end text-xs"><Checkbox checked={person.attributes?.isSeniorAtCase === true} onCheckedChange={(checked) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), isSeniorAtCase: checked === true, seniorText: checked === true ? 'YES' : null } })} /> Senior</label>
                         <label className="flex items-center gap-2 self-end text-xs"><Checkbox checked={person.attributes?.isPwdAtCase === true} onCheckedChange={(checked) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), isPwdAtCase: checked === true, pwdText: checked === true ? 'YES' : null } })} /> PWD</label>
                         <div><Label className="text-xs">Resident of GenTri</Label><Input value={person.attributes?.residentOfGentriText ?? ''} onChange={(event) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), residentOfGentriText: event.target.value, isResidentOfGentri: event.target.value ? event.target.value.toLowerCase().startsWith('y') : null } })} className="mt-1" /></div>
+                        </> : null}
                         <div><Label className="text-xs">Remarks</Label><Input value={person.remarks ?? ''} onChange={(event) => updatePerson(person.id, { remarks: event.target.value })} className="mt-1" /></div>
                       </div>
                     </div>
@@ -1051,7 +1189,7 @@ export default function NewDocket() {
                 <CardContent className="space-y-3 text-sm">
                   <p><strong>Preview docket:</strong> {generatedDocketNumber}</p>
                   <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; initial status {selectedStatus?.display_label ?? '—'}; prosecutor {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? 'Not assigned'}</p>
-                  <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.existingPersonId ? `Existing #${person.existingPersonId}: ${person.selectedExistingName}` : `New: ${buildPersonFullName(person)}`}</div>) : ' none'}</div>
+                  <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization: ${person.organizationName || 'Unnamed'}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person: ${buildPersonFullName(person)}`)}</div>) : ' none'}</div>
                   <div><strong>Place of commission:</strong>{placeOfCommission ? <div>• {placeOfCommission.existingAddressId ? `Existing #${placeOfCommission.existingAddressId}: ${placeOfCommission.selectedExistingLabel}` : ['New', placeOfCommission.line1, placeOfCommission.barangay, placeOfCommission.city].filter(Boolean).join(' — ')}</div> : ' none'}</div>
                   <div><strong>Violations:</strong>{violations.length ? violations.map((violation) => <div key={violation.id}>• {violation.existingViolationId ? `Existing #${violation.existingViolationId}: ${violation.selectedExistingTitle}` : `New: ${violation.newViolationTitle || violation.searchText || 'Untitled'}`}</div>) : ' none'}</div>
                 </CardContent>

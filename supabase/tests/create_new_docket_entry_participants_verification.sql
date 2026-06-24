@@ -15,6 +15,8 @@ DECLARE
   v_existing_person_id bigint;
   v_existing_address_id bigint;
   v_existing_org_id bigint;
+  v_no_raffle_result jsonb;
+  v_no_raffle_case_id bigint;
   v_result jsonb;
   v_case_id bigint;
   v_received_event_id bigint;
@@ -58,8 +60,8 @@ BEGIN
   VALUES ('Existing','Middle','Person','Existing Middle Person','Female')
   RETURNING id INTO v_existing_person_id;
 
-  INSERT INTO public.person_aliases(person_id,alias_name,alias_type,source)
-  VALUES (v_existing_person_id,'Existing Alias','AKA','MANUAL_ENTRY');
+  INSERT INTO public.person_aliases(person_id,alias_name,alias_type,source,is_active)
+  VALUES (v_existing_person_id,'Existing Alias','AKA','MANUAL_ENTRY',false);
 
   INSERT INTO public.addresses(line1,city,province,country)
   VALUES ('Existing Person Address','General Trias','Cavite','Philippines')
@@ -68,12 +70,23 @@ BEGIN
   INSERT INTO public.person_addresses(person_id,address_id,address_type_id,is_primary,remarks)
   VALUES (v_existing_person_id,v_existing_address_id,v_address_type_id,true,'pre-existing relation');
 
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.v_person_details pd
+    CROSS JOIN LATERAL jsonb_array_elements(pd.person_addresses) AS addr
+    WHERE pd.id = v_existing_person_id
+      AND (addr->>'address_id')::bigint = v_existing_address_id
+  ) THEN RAISE EXCEPTION 'v_person_details did not expose address_id for existing person address'; END IF;
+
+  IF has_table_privilege('anon', 'public.v_organization_search', 'SELECT') THEN RAISE EXCEPTION 'anon must not have SELECT on v_organization_search'; END IF;
+  IF NOT has_table_privilege('authenticated', 'public.v_organization_search', 'SELECT') THEN RAISE EXCEPTION 'authenticated must have SELECT on v_organization_search'; END IF;
+
   INSERT INTO public.organizations(organization_name,organization_type,created_by_user_id,updated_by_user_id)
   VALUES ('Existing Organization','ORGANIZATION',v_user_id,v_user_id)
   RETURNING id INTO v_existing_org_id;
 
-  INSERT INTO public.organization_aliases(organization_id,alias_name,source)
-  VALUES (v_existing_org_id,'Existing Org Alias','MANUAL_ENTRY');
+  INSERT INTO public.organization_aliases(organization_id,alias_name,source,is_active)
+  VALUES (v_existing_org_id,'Existing Org Alias','MANUAL_ENTRY',false);
 
   v_result := public.create_new_docket_entry(jsonb_build_object(
     'docketTypeId', v_docket_type_id,
@@ -112,6 +125,12 @@ BEGIN
       jsonb_build_object(
         'roleId', v_role_id,
         'participantOrder', 3,
+        'newOrganization', jsonb_build_object('organizationName','New Verification Organization','organizationType','ORGANIZATION','registrationNumber','REG-NEW','taxIdentificationNumber','TIN-NEW','contactPerson','Org Contact','contactNumber','09170000001','email','new-org@example.test'),
+        'aliases', jsonb_build_array(jsonb_build_object('aliasName','New Org Alias'))
+      ),
+      jsonb_build_object(
+        'roleId', v_role_id,
+        'participantOrder', 4,
         'existingOrganizationId', v_existing_org_id,
         'aliases', jsonb_build_array(jsonb_build_object('aliasName','Existing Org Alias'), jsonb_build_object('aliasName','Only New Org Alias'))
       )
@@ -132,10 +151,13 @@ BEGIN
 
   IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = v_case_id AND case_classification_id = v_case_classification_id) THEN RAISE EXCEPTION 'case classification was not saved'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.case_participants WHERE case_id = v_case_id AND person_id IS NOT NULL AND participant_kind = 'PERSON') THEN RAISE EXCEPTION 'person participant missing'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.case_participants WHERE case_id = v_case_id AND organization_id = v_existing_org_id AND person_id IS NULL AND participant_kind = 'ORGANIZATION') THEN RAISE EXCEPTION 'organization participant missing'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.case_participants WHERE case_id = v_case_id AND organization_id = v_existing_org_id AND person_id IS NULL AND participant_kind = 'ORGANIZATION') THEN RAISE EXCEPTION 'existing organization participant missing'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.case_participants cp JOIN public.organizations o ON o.id = cp.organization_id WHERE cp.case_id = v_case_id AND o.organization_name = 'New Verification Organization' AND cp.participant_kind = 'ORGANIZATION') THEN RAISE EXCEPTION 'new organization participant missing'; END IF;
   IF (SELECT count(*) FROM public.person_aliases WHERE person_id = v_existing_person_id AND alias_name = 'Existing Alias') <> 1 THEN RAISE EXCEPTION 'existing person alias duplicated'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.person_aliases WHERE person_id = v_existing_person_id AND alias_name = 'Existing Alias' AND is_active IS TRUE) THEN RAISE EXCEPTION 'inactive existing person alias was not reactivated'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.person_aliases WHERE person_id = v_existing_person_id AND alias_name = 'Only New Alias') THEN RAISE EXCEPTION 'new person alias missing'; END IF;
   IF (SELECT count(*) FROM public.organization_aliases WHERE organization_id = v_existing_org_id AND alias_name = 'Existing Org Alias') <> 1 THEN RAISE EXCEPTION 'existing organization alias duplicated'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.organization_aliases WHERE organization_id = v_existing_org_id AND alias_name = 'Existing Org Alias' AND is_active IS TRUE) THEN RAISE EXCEPTION 'inactive existing organization alias was not reactivated'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.organization_aliases WHERE organization_id = v_existing_org_id AND alias_name = 'Only New Org Alias') THEN RAISE EXCEPTION 'new organization alias missing'; END IF;
   IF (SELECT count(*) FROM public.person_addresses WHERE person_id = v_existing_person_id AND address_id = v_existing_address_id AND address_type_id = v_address_type_id) <> 1 THEN RAISE EXCEPTION 'duplicate person address relation not skipped'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.person_addresses pa JOIN public.case_participants cp ON cp.person_id = pa.person_id WHERE cp.case_id = v_case_id AND cp.participant_order = 1) THEN RAISE EXCEPTION 'new participant address missing'; END IF;
@@ -154,6 +176,18 @@ BEGIN
   JOIN public.case_events ce ON ce.id = ca.case_event_id AND ce.source_id = ca.id
   WHERE ca.case_id = v_case_id AND ce.source_table = 'case_assignments';
   IF v_assignment_id IS NULL OR v_raffle_event_id IS NULL THEN RAISE EXCEPTION 'raffle event links missing'; END IF;
+
+  v_no_raffle_result := public.create_new_docket_entry(jsonb_build_object(
+    'docketTypeId', v_docket_type_id,
+    'docketYear', 2099,
+    'dateReceived', '2099-03-01',
+    'initialStatusId', v_status_id,
+    'caseAlsoRaffled', false,
+    'participants', jsonb_build_array(jsonb_build_object('roleId', v_role_id, 'participantOrder', 1, 'existingPersonId', v_existing_person_id)),
+    'violations', jsonb_build_array(jsonb_build_object('violationOrder', 1, 'newViolation', jsonb_build_object('title','No Raffle Verification Violation')))
+  ));
+  v_no_raffle_case_id := (v_no_raffle_result->>'caseId')::bigint;
+  IF EXISTS (SELECT 1 FROM public.case_assignments WHERE case_id = v_no_raffle_case_id) THEN RAISE EXCEPTION 'case without raffle created assignment'; END IF;
 
   SELECT count(*) INTO v_before_cases FROM public.cases;
   BEGIN
