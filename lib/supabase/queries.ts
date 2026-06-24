@@ -1098,11 +1098,41 @@ export type PersonDetailsSearchRow = TableRow<"persons"> & { person_aliases?: Js
 
 export async function searchPersons(query: string, limit?: number): Promise<SupabaseQueryResult<PersonDetailsSearchRow[]>> {
   const safeLimit = normalizeLimit(limit, 25, 100);
-  const safeQuery = escapeIlikeTerm(query);
-  if (!safeQuery) return getPersons(safeLimit);
+  const tokens = query
+    .split(/\s+/)
+    .map((token) => escapeIlikeTerm(token))
+    .filter(Boolean);
+
+  if (tokens.length === 0) return getPersons(safeLimit);
+
   return runSupabaseQuery("searchPersons", "v_person_details" as RelationName, async () => {
     const supabase = await getSupabaseBrowserClient();
-    return (await supabase.from("v_person_details" as never).select("*").or(`full_name.ilike.%${safeQuery}%,first_name.ilike.%${safeQuery}%,middle_name.ilike.%${safeQuery}%,last_name.ilike.%${safeQuery}%`).order("full_name" as never, { ascending: true }).limit(safeLimit)) as unknown as { data: PersonDetailsSearchRow[] | null; error: unknown };
+    const orFilter = tokens
+      .flatMap((token) => [
+        `full_name.ilike.%${token}%`,
+        `first_name.ilike.%${token}%`,
+        `middle_name.ilike.%${token}%`,
+        `last_name.ilike.%${token}%`,
+      ])
+      .join(",");
+    const result = (await supabase
+      .from("v_person_details" as never)
+      .select("*")
+      .or(orFilter)
+      .order("full_name" as never, { ascending: true })
+      .limit(Math.min(safeLimit * 5, 100))) as unknown as { data: PersonDetailsSearchRow[] | null; error: unknown };
+
+    if (result.error || !result.data) return result;
+
+    const filtered = result.data.filter((person) => {
+      const searchable = [person.full_name, person.first_name, person.middle_name, person.last_name]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return tokens.every((token) => searchable.includes(token.toLowerCase().replace(/[%_\\]/g, "")));
+    });
+
+    return { data: filtered.slice(0, safeLimit), error: null };
   }, []);
 }
 
@@ -1644,6 +1674,13 @@ export async function searchClearancePhoneticMatches(
   );
 }
 
+export async function getCaseClassifications(): Promise<SupabaseQueryResult<TableRow<"case_classifications">[]>> {
+  return runSupabaseQuery("getCaseClassifications", "v_ref_case_classifications" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_ref_case_classifications" as never).select("*").order("display_label" as never, { ascending: true })) as unknown as { data: TableRow<"case_classifications">[] | null; error: unknown };
+  }, []);
+}
+
 export async function getParticipantRoles(): Promise<SupabaseQueryResult<TableRow<"participant_roles">[]>> {
   return runSupabaseQuery("getParticipantRoles", "v_ref_participant_roles" as RelationName, async () => {
     const supabase = await getSupabaseBrowserClient();
@@ -1816,7 +1853,7 @@ export interface NewDocketParticipantInput {
     email?: string | null;
   } | null;
   aliases?: { id?: string; aliasName?: string | null; aliasType?: string | null }[];
-  addresses?: (NewDocketAddressInput & { id?: string; suggestionQuery?: string; selectedExistingLabel?: string | null })[];
+  addresses?: (NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null; existingRelation?: boolean })[];
   organizationName?: string | null;
   organizationType?: string | null;
   registrationNumber?: string | null;
@@ -1843,8 +1880,11 @@ export interface NewDocketParticipantInput {
     ageYears?: number | null;
     genderText?: string | null;
     genderNormalized?: string | null;
+    minorText?: string | null;
     isMinorAtCase?: boolean | null;
+    seniorText?: string | null;
     isSeniorAtCase?: boolean | null;
+    pwdText?: string | null;
     isPwdAtCase?: boolean | null;
     residentOfGentriText?: string | null;
     isResidentOfGentri?: boolean | null;

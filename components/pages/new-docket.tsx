@@ -17,6 +17,7 @@ import {
   createNewDocketEntry,
   getAddressTypes,
   getCaseStatuses,
+  getCaseClassifications,
   getCurrentDatabaseUser,
   getDocketTypes,
   getNextDocketNumber,
@@ -43,6 +44,7 @@ type LookupState = {
   addressTypes: TableRow<'address_types'>[];
   violations: TableRow<'violations'>[];
   statuses: TableRow<'case_statuses'>[];
+  caseClassifications: TableRow<'case_classifications'>[];
   prosecutors: TableRow<'prosecutors'>[];
 };
 
@@ -52,8 +54,9 @@ type MessageState =
   | null;
 
 type AliasEntry = { id: string; aliasName: string; aliasType?: string | null };
-type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; aliases?: AliasEntry[]; addresses?: (NewDocketAddressInput & { id?: string; suggestionQuery?: string; selectedExistingLabel?: string | null })[] };
-type AddressEntry = NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null };
+type ExistingAliasEntry = { aliasName: string; aliasType?: string | null };
+type AddressEntry = NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null; existingRelation?: boolean };
+type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; aliases?: AliasEntry[]; existingAliases?: ExistingAliasEntry[]; addresses?: AddressEntry[] };
 type ViolationEntry = NewDocketViolationInput & { id: string; searchText: string; selectedExistingTitle?: string | null; createNew?: boolean; newViolationTitle?: string | null; referenceCode?: string | null; shortLabel?: string | null; description?: string | null; lawReference?: string | null };
 
 const emptyLookups: LookupState = {
@@ -62,6 +65,7 @@ const emptyLookups: LookupState = {
   addressTypes: [],
   violations: [],
   statuses: [],
+  caseClassifications: [],
   prosecutors: [],
 };
 
@@ -134,6 +138,30 @@ function formatAddress(address: TableRow<'addresses'>) {
     .join(', ');
 }
 
+function formatAddressLike(address: Partial<NewDocketAddressInput> & { zip_code?: string | null }) {
+  return [address.line1, address.line2, address.barangay, address.city, address.province, address.region, address.zipCode ?? address.zip_code, address.country]
+    .filter(Boolean)
+    .join(', ');
+}
+
+function makeEmptyAddress(defaultAddressTypeId: string, prefix = 'address'): AddressEntry {
+  return {
+    id: makeId(prefix),
+    addressTypeId: toNumber(defaultAddressTypeId),
+    line1: '',
+    line2: '',
+    barangay: '',
+    city: '',
+    province: '',
+    region: defaultRegionCode,
+    zipCode: '',
+    country: 'Philippines',
+    remarks: '',
+    suggestionQuery: '',
+    isPrimary: false,
+  };
+}
+
 export default function NewDocket() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('case-info');
@@ -149,6 +177,7 @@ export default function NewDocket() {
   const [isLoadingNextDocket, setIsLoadingNextDocket] = useState(false);
   const [dateReceived, setDateReceived] = useState(new Date().toISOString().slice(0, 10));
   const [initialStatusId, setInitialStatusId] = useState('');
+  const [caseClassificationId, setCaseClassificationId] = useState('');
   const [caseAlsoRaffled, setCaseAlsoRaffled] = useState(false);
   const [assignedProsecutorId, setAssignedProsecutorId] = useState('');
   const [assignmentDate, setAssignmentDate] = useState(new Date().toISOString().slice(0, 10));
@@ -158,7 +187,7 @@ export default function NewDocket() {
   const [isSummaryProcedure, setIsSummaryProcedure] = useState(false);
 
   const [persons, setPersons] = useState<PersonEntry[]>([]);
-  const [addresses, setAddresses] = useState<AddressEntry[]>([]);
+  const [placeOfCommission, setPlaceOfCommission] = useState<AddressEntry | null>(null);
   const [violations, setViolations] = useState<ViolationEntry[]>([]);
   const [personSuggestions, setPersonSuggestions] = useState<Record<string, PersonDetailsSearchRow[]>>({});
   const [organizationSuggestions, setOrganizationSuggestions] = useState<Record<string, OrganizationDetailsSearchRow[]>>({});
@@ -170,12 +199,13 @@ export default function NewDocket() {
 
     async function loadLookups() {
       setIsLoadingLookups(true);
-      const [docketTypes, participantRoles, addressTypes, violationsResult, statuses, prosecutors, userResult] = await Promise.all([
+      const [docketTypes, participantRoles, addressTypes, violationsResult, statuses, caseClassifications, prosecutors, userResult] = await Promise.all([
         getDocketTypes(),
         getParticipantRoles(),
         getAddressTypes(),
         getViolations(500),
         getCaseStatuses(),
+        getCaseClassifications(),
         getProsecutors(250),
         getCurrentDatabaseUser(),
       ]);
@@ -184,7 +214,7 @@ export default function NewDocket() {
         return;
       }
 
-      const firstError = [docketTypes, participantRoles, addressTypes, violationsResult, statuses, prosecutors, userResult].find(
+      const firstError = [docketTypes, participantRoles, addressTypes, violationsResult, statuses, caseClassifications, prosecutors, userResult].find(
         (result) => result.error,
       )?.error;
 
@@ -198,6 +228,7 @@ export default function NewDocket() {
         addressTypes: addressTypes.data ?? [],
         violations: violationsResult.data ?? [],
         statuses: statuses.data ?? [],
+        caseClassifications: caseClassifications.data ?? [],
         prosecutors: prosecutors.data ?? [],
       };
 
@@ -291,24 +322,17 @@ export default function NewDocket() {
   };
 
   const addAddress = () => {
-    setAddresses((current) => [
-      ...current,
-      {
-        id: makeId('address'),
-        addressTypeId: toNumber(defaultAddressTypeId),
-        line1: '',
-        line2: '',
-        barangay: '',
-        city: '',
-        province: '',
-        region: defaultRegionCode,
-        zipCode: '',
-        country: 'Philippines',
-        remarks: '',
-        suggestionQuery: '',
-      },
-    ]);
+    setPlaceOfCommission((current) => current ?? makeEmptyAddress(defaultAddressTypeId, 'place'));
   };
+
+  const addParticipantAddress = (personId: string) => {
+    setPersons((current) => current.map((person) => (
+      person.id === personId
+        ? { ...person, addresses: [...(person.addresses ?? []), makeEmptyAddress(defaultAddressTypeId, 'participant-address')] }
+        : person
+    )));
+  };
+
 
   const addViolation = () => {
     setViolations((current) => [
@@ -328,11 +352,12 @@ export default function NewDocket() {
     setRegionCode(defaultRegionCode);
     setSummaryText('');
     setRemarks('');
+    setCaseClassificationId('');
     setIsSummaryProcedure(false);
     setCaseAlsoRaffled(false);
     setAssignedProsecutorId('');
     setPersons([]);
-    setAddresses([]);
+    setPlaceOfCommission(null);
     setViolations([]);
     setPersonSuggestions({});
     setOrganizationSuggestions({});
@@ -346,11 +371,11 @@ export default function NewDocket() {
   };
 
   const updateParticipantAddress = (personId: string, addressId: string, updates: Partial<AddressEntry>) => {
-    setPersons((current) => current.map((person) => person.id === personId ? { ...person, addresses: (person.addresses ?? []).map((address) => address.id === addressId ? { ...address, ...updates } : address) } : person));
+    setPersons((current) => current.map((person) => person.id === personId ? { ...person, addresses: (person.addresses ?? []).map((address) => address.id === addressId ? { ...address, ...updates } : address) as AddressEntry[] } : person));
   };
 
   const updateAddress = (id: string, updates: Partial<AddressEntry>) => {
-    setAddresses((current) => current.map((address) => (address.id === id ? { ...address, ...updates } : address)));
+    setPlaceOfCommission((current) => (current?.id === id ? { ...current, ...updates } : current));
   };
 
   const updateViolation = (id: string, updates: Partial<ViolationEntry>) => {
@@ -436,7 +461,26 @@ export default function NewDocket() {
       middleName: person.middle_name ?? '',
       suffix: person.suffix ?? '',
       noMiddleName: person.middle_name === 'NMN',
-      aliases: Array.isArray(person.person_aliases) ? person.person_aliases.map((alias: any) => ({ id: makeId('alias'), aliasName: alias.alias_name ?? '', aliasType: alias.alias_type ?? 'AKA' })) : [],
+      existingAliases: Array.isArray(person.person_aliases) ? person.person_aliases.map((alias: any) => ({ aliasName: alias.alias_name ?? '', aliasType: alias.alias_type ?? 'AKA' })) : [],
+      aliases: [],
+      addresses: Array.isArray(person.person_addresses) ? person.person_addresses.map((entry: any) => ({
+        id: makeId('participant-address'),
+        existingAddressId: entry.addresses?.id ?? null,
+        addressTypeId: entry.address_type_id ?? toNumber(defaultAddressTypeId),
+        isPrimary: entry.is_primary === true,
+        remarks: entry.remarks ?? '',
+        line1: entry.addresses?.line1 ?? '',
+        line2: entry.addresses?.line2 ?? '',
+        barangay: entry.addresses?.barangay ?? '',
+        city: entry.addresses?.city ?? '',
+        province: entry.addresses?.province ?? '',
+        region: entry.addresses?.region ?? defaultRegionCode,
+        zipCode: entry.addresses?.zip_code ?? '',
+        country: entry.addresses?.country ?? 'Philippines',
+        suggestionQuery: formatAddressLike({ ...(entry.addresses ?? {}), zipCode: entry.addresses?.zip_code }),
+        selectedExistingLabel: formatAddressLike({ ...(entry.addresses ?? {}), zipCode: entry.addresses?.zip_code }),
+        existingRelation: true,
+      })) : [],
     });
     setPersonSuggestions((current) => ({ ...current, [entryId]: [] }));
   };
@@ -452,7 +496,8 @@ export default function NewDocket() {
       contactPerson: organization.contact_person,
       contactNumber: organization.contact_number,
       email: organization.email,
-      aliases: Array.isArray(organization.organization_aliases) ? organization.organization_aliases.map((alias: any) => ({ id: makeId('alias'), aliasName: alias.alias_name ?? '' })) : [],
+      existingAliases: Array.isArray(organization.organization_aliases) ? organization.organization_aliases.map((alias: any) => ({ aliasName: alias.alias_name ?? '' })) : [],
+      aliases: [],
     });
     setOrganizationSuggestions((current) => ({ ...current, [entryId]: [] }));
   };
@@ -470,6 +515,24 @@ export default function NewDocket() {
       zipCode: address.zip_code ?? '',
       existingAddressId: address.id,
       selectedExistingLabel: formatAddress(address),
+    });
+    setAddressSuggestions((current) => ({ ...current, [entryId]: [] }));
+  };
+
+  const applyParticipantAddressSuggestion = (personId: string, entryId: string, address: TableRow<'addresses'>) => {
+    updateParticipantAddress(personId, entryId, {
+      barangay: address.barangay ?? '',
+      city: address.city ?? '',
+      country: address.country ?? 'Philippines',
+      line1: address.line1 ?? '',
+      line2: address.line2 ?? '',
+      province: address.province ?? '',
+      region: address.region ?? defaultRegionCode,
+      suggestionQuery: formatAddress(address),
+      zipCode: address.zip_code ?? '',
+      existingAddressId: address.id,
+      selectedExistingLabel: formatAddress(address),
+      existingRelation: false,
     });
     setAddressSuggestions((current) => ({ ...current, [entryId]: [] }));
   };
@@ -519,8 +582,12 @@ export default function NewDocket() {
       return 'Each violation must use a selected suggestion or an explicit Create new violation action with a title.';
     }
 
-    if (addresses.some((address) => !address.addressTypeId)) {
-      return 'Each address entry must select a database address type.';
+    if (placeOfCommission && !placeOfCommission.addressTypeId) {
+      return 'Place of commission must select a database address type.';
+    }
+
+    if (persons.some((person) => (person.addresses ?? []).some((address) => !address.addressTypeId))) {
+      return 'Each participant address must select a database address type.';
     }
 
     return null;
@@ -548,9 +615,10 @@ export default function NewDocket() {
       remarks: remarks || null,
       isSummaryProcedure,
       caseAlsoRaffled,
-      assignmentDate,
+      assignmentDate: dateReceived,
       assignedProsecutorId: caseAlsoRaffled && assignedProsecutorId ? toNumber(assignedProsecutorId) : null,
-      placeOfCommission: addresses[0] ? { ...addresses[0], newAddress: addresses[0].existingAddressId ? undefined : { line1: addresses[0].line1, line2: addresses[0].line2, barangay: addresses[0].barangay, city: addresses[0].city, province: addresses[0].province, region: addresses[0].region, zipCode: addresses[0].zipCode, country: addresses[0].country } } : null,
+      caseClassificationId: caseClassificationId ? toNumber(caseClassificationId) : null,
+      placeOfCommission: placeOfCommission ? { ...placeOfCommission, newAddress: placeOfCommission.existingAddressId ? undefined : { line1: placeOfCommission.line1, line2: placeOfCommission.line2, barangay: placeOfCommission.barangay, city: placeOfCommission.city, province: placeOfCommission.province, region: placeOfCommission.region, zipCode: placeOfCommission.zipCode, country: placeOfCommission.country } } : null,
       participants: persons.map(({ id: _id, selectedExistingName: _selectedExistingName, selectedExistingOrganizationName: _selectedExistingOrganizationName, fullNamePreview: _fullNamePreview, age, gender, aliases, addresses: participantAddresses, ...person }, index) => ({
         ...person,
         participantOrder: person.participantOrder ?? index + 1,
@@ -568,19 +636,15 @@ export default function NewDocket() {
           notes: person.notes,
           personDescriptor: person.personDescriptor,
         } : undefined,
-        attributes: person.attributes ?? {
-          ageText: age ?? null,
-          ageYears: age ? Number.parseInt(age, 10) || null : null,
-          genderText: gender ?? null,
-          genderNormalized: gender && gender !== 'Unspecified' ? gender.toUpperCase() : 'UNKNOWN',
+        attributes: {
+          ...(person.attributes ?? {}),
+          ageText: age ?? person.attributes?.ageText ?? null,
+          ageYears: age ? Number.parseInt(age, 10) || null : person.attributes?.ageYears ?? null,
+          genderText: gender ?? person.attributes?.genderText ?? null,
+          genderNormalized: gender && gender !== 'Unspecified' ? gender.toUpperCase() : person.attributes?.genderNormalized ?? 'UNKNOWN',
         },
-      })),
-      addresses: addresses.map(({ id: _id, suggestionQuery: _suggestionQuery, selectedExistingLabel: _label, ...address }) => ({
-        ...address,
-        newAddress: address.existingAddressId ? undefined : {
-          line1: address.line1, line2: address.line2, barangay: address.barangay, city: address.city, province: address.province, region: address.region, zipCode: address.zipCode, country: address.country,
-        },
-      })),
+      })) as NewDocketParticipantInput[],
+      addresses: [],
       violations: violations.map(({ id: _id, searchText: _searchText, selectedExistingTitle: _title, createNew, newViolationTitle, referenceCode, shortLabel, description, lawReference, ...violation }, index) => ({
         ...violation,
         violationOrder: violation.violationOrder ?? index + 1,
@@ -684,6 +748,16 @@ export default function NewDocket() {
                   <Label htmlFor="region-code">Region</Label>
                   <Input id="region-code" value={regionCode} onChange={(event) => setRegionCode(event.target.value)} className="mt-1" />
                 </div>
+                <div>
+                  <Label htmlFor="case-classification">Case Classification</Label>
+                  <Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}>
+                    <SelectTrigger id="case-classification" className="mt-1"><SelectValue placeholder="Select classification" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No classification</SelectItem>
+                      {lookups.caseClassifications.map((classification) => <SelectItem key={classification.id} value={classification.id.toString()}>{classification.display_label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr]">
@@ -703,7 +777,7 @@ export default function NewDocket() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div><Label htmlFor="assignment-date">Date of Assignment</Label><Input id="assignment-date" type="date" value={assignmentDate} onChange={(event) => setAssignmentDate(event.target.value)} disabled={!caseAlsoRaffled} className="mt-1" /></div>
+                <div><Label htmlFor="assignment-date">Date of Assignment</Label><Input id="assignment-date" type="date" value={dateReceived} readOnly disabled className="mt-1" /></div>
               </div>
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-[10rem_1fr]">
@@ -811,7 +885,9 @@ export default function NewDocket() {
                         </div>
                       ) : null}
 
-                      <div className="space-y-2 rounded-md bg-muted/40 p-3"><div className="flex items-center justify-between"><Label className="text-xs">Aliases</Label><Button type="button" variant="outline" size="sm" onClick={() => updatePerson(person.id, { aliases: [...(person.aliases ?? []), { id: makeId('alias'), aliasName: '', aliasType: person.participantKind === 'ORGANIZATION' ? null : 'AKA' }] })}>+ Add Alias</Button></div>{(person.aliases ?? []).map((alias) => <div key={alias.id} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_10rem]"><Input placeholder="Alias name" value={alias.aliasName ?? ''} onChange={(event) => updatePerson(person.id, { aliases: (person.aliases ?? []).map((item) => item.id === alias.id ? { ...item, id: item.id ?? makeId('alias'), aliasName: event.target.value } : { ...item, id: item.id ?? makeId('alias') }) as AliasEntry[] })} /><Input placeholder="Alias type" value={alias.aliasType ?? ''} onChange={(event) => updatePerson(person.id, { aliases: (person.aliases ?? []).map((item) => item.id === alias.id ? { ...item, id: item.id ?? makeId('alias'), aliasType: event.target.value } : { ...item, id: item.id ?? makeId('alias') }) as AliasEntry[] })} /></div>)}</div>
+                      <div className="space-y-2 rounded-md bg-muted/40 p-3"><div className="flex items-center justify-between"><div><Label className="text-xs">Aliases</Label>{(person.existingAliases ?? []).length ? <p className="text-[11px] text-muted-foreground">Existing: {(person.existingAliases ?? []).map((alias) => alias.aliasName).filter(Boolean).join(', ')}</p> : null}</div><Button type="button" variant="outline" size="sm" onClick={() => updatePerson(person.id, { aliases: [...(person.aliases ?? []), { id: makeId('alias'), aliasName: '', aliasType: person.participantKind === 'ORGANIZATION' ? null : 'AKA' }] })}>+ Add Alias</Button></div>{(person.aliases ?? []).map((alias) => <div key={alias.id} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_10rem]"><Input placeholder="New alias name" value={alias.aliasName ?? ''} onChange={(event) => updatePerson(person.id, { aliases: (person.aliases ?? []).map((item) => item.id === alias.id ? { ...item, id: item.id ?? makeId('alias'), aliasName: event.target.value } : { ...item, id: item.id ?? makeId('alias') }) as AliasEntry[] })} /><Input placeholder="Alias type" value={alias.aliasType ?? ''} onChange={(event) => updatePerson(person.id, { aliases: (person.aliases ?? []).map((item) => item.id === alias.id ? { ...item, id: item.id ?? makeId('alias'), aliasType: event.target.value } : { ...item, id: item.id ?? makeId('alias') }) as AliasEntry[] })} /></div>)}</div>
+
+                      {person.participantKind !== 'ORGANIZATION' ? <div className="space-y-3 rounded-md bg-muted/40 p-3"><div className="flex items-center justify-between"><Label className="text-xs">Addresses</Label><Button type="button" variant="outline" size="sm" onClick={() => addParticipantAddress(person.id)}>+ Add Address</Button></div>{(person.addresses ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No participant addresses added.</p> : null}{(person.addresses ?? []).map((address) => <div key={address.id} className="space-y-2 rounded-md border bg-background p-3"><div className="flex items-start justify-between gap-3"><div className="grid flex-1 grid-cols-1 gap-2 md:grid-cols-[12rem_1fr]"><div><Label className="text-xs">Address Type</Label><Select value={address.addressTypeId ? address.addressTypeId.toString() : ''} onValueChange={(value) => updateParticipantAddress(person.id, address.id, { addressTypeId: toNumber(value), existingRelation: false })}><SelectTrigger className="mt-1"><SelectValue placeholder="Select type" /></SelectTrigger><SelectContent>{lookups.addressTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.display_label}</SelectItem>)}</SelectContent></Select></div><div><Label className="text-xs">Existing address or new address</Label><Input value={address.suggestionQuery ?? ''} placeholder="Search existing address" onChange={(event) => { updateParticipantAddress(person.id, address.id, { suggestionQuery: event.target.value, existingAddressId: null, existingRelation: false }); loadAddressSuggestions(address.id, event.target.value); }} className="mt-1" /></div></div><Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => updatePerson(person.id, { addresses: (person.addresses ?? []).filter((item) => item.id !== address.id) as AddressEntry[] })}><X className="h-4 w-4" /></Button></div>{addressSuggestions[address.id]?.length ? <div className="rounded-md border bg-background p-2 text-sm shadow-sm"><p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing address suggestions</p><div className="flex flex-wrap gap-2">{addressSuggestions[address.id].map((suggestion) => <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyParticipantAddressSuggestion(person.id, address.id, suggestion)}>{formatAddress(suggestion) || `Address #${suggestion.id}`}</Button>)}</div></div> : null}<div className="grid grid-cols-1 gap-2 md:grid-cols-4"><div><Label className="text-xs">Line 1</Label><Input value={address.line1 ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { line1: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Line 2</Label><Input value={address.line2 ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { line2: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Barangay</Label><Input value={address.barangay ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { barangay: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">City</Label><Input value={address.city ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { city: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Province</Label><Input value={address.province ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { province: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Region</Label><Input value={address.region ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { region: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">ZIP Code</Label><Input value={address.zipCode ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { zipCode: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Country</Label><Input value={address.country ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { country: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><label className="flex items-center gap-2 text-xs"><Checkbox checked={address.isPrimary === true} onCheckedChange={(checked) => updateParticipantAddress(person.id, address.id, { isPrimary: checked === true })} /> Primary</label><div className="md:col-span-3"><Label className="text-xs">Remarks</Label><Input value={address.remarks ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { remarks: event.target.value })} className="mt-1" /></div></div></div>)}</div> : null}
 
                       <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
                         <div>
@@ -830,6 +906,10 @@ export default function NewDocket() {
                         </div>
                         <div><Label className="text-xs">Birth Date</Label><Input type="date" value={person.birthDate ?? ''} onChange={(event) => updatePerson(person.id, { birthDate: event.target.value })} className="mt-1" /></div>
                         <div><Label className="text-xs">Age</Label><Input value={person.age ?? ''} onChange={(event) => updatePerson(person.id, { age: event.target.value })} className="mt-1" /></div>
+                        <label className="flex items-center gap-2 self-end text-xs"><Checkbox checked={person.attributes?.isMinorAtCase === true} onCheckedChange={(checked) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), isMinorAtCase: checked === true, minorText: checked === true ? 'YES' : null } })} /> Minor</label>
+                        <label className="flex items-center gap-2 self-end text-xs"><Checkbox checked={person.attributes?.isSeniorAtCase === true} onCheckedChange={(checked) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), isSeniorAtCase: checked === true, seniorText: checked === true ? 'YES' : null } })} /> Senior</label>
+                        <label className="flex items-center gap-2 self-end text-xs"><Checkbox checked={person.attributes?.isPwdAtCase === true} onCheckedChange={(checked) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), isPwdAtCase: checked === true, pwdText: checked === true ? 'YES' : null } })} /> PWD</label>
+                        <div><Label className="text-xs">Resident of GenTri</Label><Input value={person.attributes?.residentOfGentriText ?? ''} onChange={(event) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), residentOfGentriText: event.target.value, isResidentOfGentri: event.target.value ? event.target.value.toLowerCase().startsWith('y') : null } })} className="mt-1" /></div>
                         <div><Label className="text-xs">Remarks</Label><Input value={person.remarks ?? ''} onChange={(event) => updatePerson(person.id, { remarks: event.target.value })} className="mt-1" /></div>
                       </div>
                     </div>
@@ -843,60 +923,58 @@ export default function NewDocket() {
             <TabsContent value="addresses" className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="font-semibold">Case Addresses</h3>
-                  <p className="text-sm text-muted-foreground">Search reusable addresses with Postgres-backed suggestions while typing.</p>
+                  <h3 className="font-semibold">Place of Commission</h3>
+                  <p className="text-sm text-muted-foreground">This case address is separate from participant addresses.</p>
                 </div>
-                <Button onClick={addAddress} variant="outline" size="sm" disabled={!defaultAddressTypeId}>
-                  <Plus className="mr-2 h-4 w-4" /> Add Address
-                </Button>
+                {!placeOfCommission ? (
+                  <Button onClick={addAddress} variant="outline" size="sm" disabled={!defaultAddressTypeId}>
+                    <Plus className="mr-2 h-4 w-4" /> Add Place
+                  </Button>
+                ) : null}
               </div>
 
-              {addresses.length === 0 ? (
-                <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No addresses added yet</div>
+              {!placeOfCommission ? (
+                <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No place of commission added yet</div>
               ) : (
-                <div className="space-y-4">
-                  {addresses.map((address) => (
-                    <div key={address.id} className="space-y-3 rounded-lg border p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-[14rem_1fr_1fr]">
-                          <div>
-                            <Label className="text-xs">Address Type *</Label>
-                            <Select value={address.addressTypeId ? address.addressTypeId.toString() : ''} onValueChange={(value) => updateAddress(address.id, { addressTypeId: toNumber(value) })}>
-                              <SelectTrigger className="mt-1"><SelectValue placeholder="Select type" /></SelectTrigger>
-                              <SelectContent>{lookups.addressTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.display_label}</SelectItem>)}</SelectContent>
-                            </Select>
-                          </div>
-                          <div className="md:col-span-2"><Label className="text-xs">Search Existing Address</Label><Input value={address.suggestionQuery} placeholder="Type street, barangay, city, province, or region" onChange={(event) => { updateAddress(address.id, { suggestionQuery: event.target.value }); loadAddressSuggestions(address.id, event.target.value); }} className="mt-1" /></div>
-                        </div>
-                        <Button onClick={() => setAddresses((current) => current.filter((item) => item.id !== address.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-[14rem_1fr]">
+                      <div>
+                        <Label className="text-xs">Address Type *</Label>
+                        <Select value={placeOfCommission.addressTypeId ? placeOfCommission.addressTypeId.toString() : ''} onValueChange={(value) => updateAddress(placeOfCommission.id, { addressTypeId: toNumber(value) })}>
+                          <SelectTrigger className="mt-1"><SelectValue placeholder="Select type" /></SelectTrigger>
+                          <SelectContent>{lookups.addressTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.display_label}</SelectItem>)}</SelectContent>
+                        </Select>
                       </div>
+                      <div><Label className="text-xs">Search Existing Address</Label><Input value={placeOfCommission.suggestionQuery} placeholder="Type street, barangay, city, province, or region" onChange={(event) => { updateAddress(placeOfCommission.id, { suggestionQuery: event.target.value, existingAddressId: null }); loadAddressSuggestions(placeOfCommission.id, event.target.value); }} className="mt-1" /></div>
+                    </div>
+                    <Button onClick={() => setPlaceOfCommission(null)} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
+                  </div>
 
-                      {addressSuggestions[address.id]?.length ? (
-                        <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
-                          <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing address suggestions</p>
-                          <div className="flex flex-wrap gap-2">
-                            {addressSuggestions[address.id].map((suggestion) => (
-                              <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyAddressSuggestion(address.id, suggestion)}>
-                                {formatAddress(suggestion) || `Address #${suggestion.id}`}
-                              </Button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-
-                      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                        <div><Label className="text-xs">Line 1</Label><Input value={address.line1 ?? ''} onChange={(event) => updateAddress(address.id, { line1: event.target.value })} className="mt-1" /></div>
-                        <div><Label className="text-xs">Line 2</Label><Input value={address.line2 ?? ''} onChange={(event) => updateAddress(address.id, { line2: event.target.value })} className="mt-1" /></div>
-                        <div><Label className="text-xs">Barangay</Label><Input value={address.barangay ?? ''} onChange={(event) => updateAddress(address.id, { barangay: event.target.value })} className="mt-1" /></div>
-                        <div><Label className="text-xs">City</Label><Input value={address.city ?? ''} onChange={(event) => updateAddress(address.id, { city: event.target.value })} className="mt-1" /></div>
-                        <div><Label className="text-xs">Province</Label><Input value={address.province ?? ''} onChange={(event) => updateAddress(address.id, { province: event.target.value })} className="mt-1" /></div>
-                        <div><Label className="text-xs">Region</Label><Input value={address.region ?? ''} onChange={(event) => updateAddress(address.id, { region: event.target.value })} className="mt-1" /></div>
-                        <div><Label className="text-xs">ZIP Code</Label><Input value={address.zipCode ?? ''} onChange={(event) => updateAddress(address.id, { zipCode: event.target.value })} className="mt-1" /></div>
-                        <div><Label className="text-xs">Country</Label><Input value={address.country ?? ''} onChange={(event) => updateAddress(address.id, { country: event.target.value })} className="mt-1" /></div>
-                        <div className="md:col-span-4"><Label className="text-xs">Remarks</Label><Input value={address.remarks ?? ''} onChange={(event) => updateAddress(address.id, { remarks: event.target.value })} className="mt-1" /></div>
+                  {addressSuggestions[placeOfCommission.id]?.length ? (
+                    <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
+                      <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing address suggestions</p>
+                      <div className="flex flex-wrap gap-2">
+                        {addressSuggestions[placeOfCommission.id].map((suggestion) => (
+                          <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyAddressSuggestion(placeOfCommission.id, suggestion)}>
+                            {formatAddress(suggestion) || `Address #${suggestion.id}`}
+                          </Button>
+                        ))}
                       </div>
                     </div>
-                  ))}
+                  ) : null}
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                    <div><Label className="text-xs">Line 1</Label><Input value={placeOfCommission.line1 ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { line1: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">Line 2</Label><Input value={placeOfCommission.line2 ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { line2: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">Barangay</Label><Input value={placeOfCommission.barangay ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { barangay: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">City</Label><Input value={placeOfCommission.city ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { city: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">Province</Label><Input value={placeOfCommission.province ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { province: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">Region</Label><Input value={placeOfCommission.region ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { region: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">ZIP Code</Label><Input value={placeOfCommission.zipCode ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { zipCode: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">Country</Label><Input value={placeOfCommission.country ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { country: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div className="md:col-span-4"><Label className="text-xs">Remarks</Label><Input value={placeOfCommission.remarks ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { remarks: event.target.value })} className="mt-1" /></div>
+                  </div>
                 </div>
               )}
 
@@ -974,7 +1052,7 @@ export default function NewDocket() {
                   <p><strong>Preview docket:</strong> {generatedDocketNumber}</p>
                   <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; initial status {selectedStatus?.display_label ?? '—'}; prosecutor {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? 'Not assigned'}</p>
                   <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.existingPersonId ? `Existing #${person.existingPersonId}: ${person.selectedExistingName}` : `New: ${buildPersonFullName(person)}`}</div>) : ' none'}</div>
-                  <div><strong>Addresses:</strong>{addresses.length ? addresses.map((address) => <div key={address.id}>• {address.existingAddressId ? `Existing #${address.existingAddressId}: ${address.selectedExistingLabel}` : ['New', address.line1, address.barangay, address.city].filter(Boolean).join(' — ')}</div>) : ' none'}</div>
+                  <div><strong>Place of commission:</strong>{placeOfCommission ? <div>• {placeOfCommission.existingAddressId ? `Existing #${placeOfCommission.existingAddressId}: ${placeOfCommission.selectedExistingLabel}` : ['New', placeOfCommission.line1, placeOfCommission.barangay, placeOfCommission.city].filter(Boolean).join(' — ')}</div> : ' none'}</div>
                   <div><strong>Violations:</strong>{violations.length ? violations.map((violation) => <div key={violation.id}>• {violation.existingViolationId ? `Existing #${violation.existingViolationId}: ${violation.selectedExistingTitle}` : `New: ${violation.newViolationTitle || violation.searchText || 'Untitled'}`}</div>) : ' none'}</div>
                 </CardContent>
               </Card>
