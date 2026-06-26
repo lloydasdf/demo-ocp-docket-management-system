@@ -16,7 +16,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ChevronDown, X } from 'lucide-react';
+import { ChevronDown, RefreshCw, X } from 'lucide-react';
 import {
   getDocketCaseLabelsForCases,
   getDocketParticipantsForCases,
@@ -398,9 +398,11 @@ export default function CasesPage() {
   const [classificationsByCase, setClassificationsByCase] = useState<CaseClassificationByCase>(cachedInitialState?.classificationsByCase ?? {});
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(640);
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
+    const isManualRefresh = refreshNonce > 0;
 
     function cacheCasesPageState(
       nextCases: CompactCase[],
@@ -477,17 +479,11 @@ export default function CasesPage() {
     }
 
     async function loadCases() {
-      if (cachedInitialState) {
+      if (cachedInitialState && !isManualRefresh) {
         setIsLoading(false);
-
-        if (!cachedInitialState.hasAllCases) {
-          void hydrateParticipantsLabelsAndQuickDetails(cachedInitialState.cases);
-        }
-
-        return;
+      } else {
+        setIsLoading(true);
       }
-
-      setIsLoading(true);
       const shellResult = await getDocketShellDisplay();
 
       if (!isMounted) {
@@ -505,7 +501,8 @@ export default function CasesPage() {
       const shellCases = withEmptyHydratedColumns(shellResult.data);
       setErrorMessage(null);
       setCases(shellCases);
-      cacheCasesPageState(shellCases);
+      setSelectedCaseKey(null);
+      cacheCasesPageState(shellCases, { hasAllCases: false });
       setIsLoading(false);
 
       void hydrateParticipantsLabelsAndQuickDetails(shellCases);
@@ -516,7 +513,28 @@ export default function CasesPage() {
     return () => {
       isMounted = false;
     };
+  }, [cachedInitialState, refreshNonce]);
+
+
+  useEffect(() => {
+    function refreshCasesWhenPageBecomesActive() {
+      if (document.visibilityState === 'visible') {
+        setRefreshNonce((currentNonce) => currentNonce + 1);
+      }
+    }
+
+    document.addEventListener('visibilitychange', refreshCasesWhenPageBecomesActive);
+    window.addEventListener('focus', refreshCasesWhenPageBecomesActive);
+
+    return () => {
+      document.removeEventListener('visibilitychange', refreshCasesWhenPageBecomesActive);
+      window.removeEventListener('focus', refreshCasesWhenPageBecomesActive);
+    };
   }, []);
+
+  function refreshCases() {
+    setRefreshNonce((currentNonce) => currentNonce + 1);
+  }
 
   useEffect(() => {
     const currentCache = readCasesPageCache();
@@ -978,8 +996,16 @@ export default function CasesPage() {
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden p-4 pt-16 md:p-8">
         <div className="flex min-h-0 flex-1 flex-col gap-6">
           <div className="shrink-0">
-            <h1 className="text-3xl font-bold text-foreground">All Cases</h1>
-            <p className="text-muted-foreground mt-1">Browse all cases in the system</p>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h1 className="text-3xl font-bold text-foreground">All Cases</h1>
+                <p className="text-muted-foreground mt-1">Browse all cases in the system</p>
+              </div>
+              <Button type="button" variant="outline" onClick={refreshCases} disabled={isLoading || isLoadingAllCases}>
+                <RefreshCw className={`mr-2 size-4 ${(isLoading || isLoadingAllCases) ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
           </div>
 
           {errorMessage ? (
