@@ -169,6 +169,16 @@ function formatAddressLike(address: Partial<NewDocketAddressInput> & { zip_code?
     .join(', ');
 }
 
+function formatCaseReceivedDefaultDescription(dateReceived: string) {
+  const date = new Date(`${dateReceived}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Case received';
+  }
+
+  return `Case received on ${date.toLocaleDateString('en-US')}`;
+}
+
 function makeEmptyAddress(defaultAddressTypeId: string, prefix = 'address'): AddressEntry {
   return {
     id: makeId(prefix),
@@ -201,6 +211,8 @@ export default function NewDocket() {
   const [nextDocketNumber, setNextDocketNumber] = useState<number | null>(null);
   const [isLoadingNextDocket, setIsLoadingNextDocket] = useState(false);
   const [dateReceived, setDateReceived] = useState(new Date().toISOString().slice(0, 10));
+  const [caseReceivedDescription, setCaseReceivedDescription] = useState(() => formatCaseReceivedDefaultDescription(new Date().toISOString().slice(0, 10)));
+  const [isCaseReceivedDescriptionEdited, setIsCaseReceivedDescriptionEdited] = useState(false);
   const [initialStatusId, setInitialStatusId] = useState('');
   const [caseClassificationId, setCaseClassificationId] = useState('');
   const [caseAlsoRaffled, setCaseAlsoRaffled] = useState(false);
@@ -210,6 +222,12 @@ export default function NewDocket() {
   const [summaryText, setSummaryText] = useState('');
   const [remarks, setRemarks] = useState('');
   const [isSummaryProcedure, setIsSummaryProcedure] = useState(false);
+
+  useEffect(() => {
+    if (!isCaseReceivedDescriptionEdited) {
+      setCaseReceivedDescription(formatCaseReceivedDefaultDescription(dateReceived));
+    }
+  }, [dateReceived, isCaseReceivedDescriptionEdited]);
 
   const [persons, setPersons] = useState<PersonEntry[]>([]);
   const [placeOfCommission, setPlaceOfCommission] = useState<AddressEntry | null>(null);
@@ -769,6 +787,7 @@ export default function NewDocket() {
       docketMonthCode: docketMonthCode === '—' ? null : docketMonthCode,
       summaryText: summaryText || null,
       remarks: remarks || null,
+      caseReceivedDescription: caseReceivedDescription.trim() || null,
       isSummaryProcedure,
       caseAlsoRaffled,
       assignmentDate: dateReceived,
@@ -891,6 +910,19 @@ export default function NewDocket() {
                   <div>
                     <Label htmlFor="region-code">Region</Label>
                     <Input id="region-code" value={regionCode} onChange={(event) => setRegionCode(event.target.value)} className="mt-1" />
+                  </div>
+                  <div className="md:col-span-2">
+                    <Label htmlFor="case-received-description">Case Received Description</Label>
+                    <Textarea
+                      id="case-received-description"
+                      value={caseReceivedDescription}
+                      onChange={(event) => {
+                        setIsCaseReceivedDescriptionEdited(true);
+                        setCaseReceivedDescription(event.target.value);
+                      }}
+                      className="mt-1 min-h-20"
+                      placeholder={formatCaseReceivedDefaultDescription(dateReceived)}
+                    />
                   </div>
                 </div>
               </div>

@@ -1936,6 +1936,7 @@ export interface NewDocketEntryInput {
   regionCode?: string | null;
   summaryText?: string | null;
   remarks?: string | null;
+  caseReceivedDescription?: string | null;
   isSummaryProcedure?: boolean | null;
   caseAlsoRaffled?: boolean | null;
   assignmentDate?: string | null;
