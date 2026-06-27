@@ -124,14 +124,14 @@ SELECT
   actor_user_id,
   entity_name,
   entity_id,
-  case_id,
   action,
-  summary,
-  metadata,
   old_data,
   new_data,
   ip_address,
-  created_at
+  created_at,
+  case_id,
+  summary,
+  metadata
 FROM public.audit_logs;
 
 GRANT SELECT ON public.v_recent_audit_logs TO anon, authenticated, service_role;
