@@ -97,6 +97,20 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.v_case_participants_detail WHERE case_id = v_case_id) THEN RAISE EXCEPTION 'v_case_participants_detail row missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.v_case_timeline WHERE case_id = v_case_id) THEN RAISE EXCEPTION 'v_case_timeline row missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.v_case_assignment_detail WHERE case_id = v_case_id) THEN RAISE EXCEPTION 'v_case_assignment_detail row missing'; END IF;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.audit_logs
+    WHERE actor_user_id = v_user_id
+      AND action = 'CREATE_DOCKET'
+      AND entity_name = 'cases'
+      AND entity_id = v_case_id
+      AND case_id = v_case_id
+      AND summary = 'user[' || v_user_id::text || '] created the new docket ' || (v_result->>'docketDisplayNumber')
+      AND metadata->'payload' ? 'participants'
+      AND metadata#>>'{inserted,cases,id}' = v_case_id::text
+      AND metadata#>'{inserted,cases,columns}' ? 'docket_number'
+      AND metadata#>'{inserted,case_participants,columns}' ? 'display_name_snapshot'
+  ) THEN RAISE EXCEPTION 'CREATE_DOCKET audit log row missing or incomplete'; END IF;
 END $$;
 
 ROLLBACK;
