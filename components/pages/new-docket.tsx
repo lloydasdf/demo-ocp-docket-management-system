@@ -233,7 +233,7 @@ export default function NewDocket() {
   }, [dateReceived, isCaseReceivedDescriptionEdited]);
 
   const [persons, setPersons] = useState<PersonEntry[]>([]);
-  const [placeOfCommission, setPlaceOfCommission] = useState<AddressEntry | null>(null);
+  const [placesOfCommission, setPlacesOfCommission] = useState<AddressEntry[]>([]);
   const [violations, setViolations] = useState<ViolationEntry[]>([{ id: makeId('violation'), existingViolationId: null, violationOrder: 1, rawViolationText: '', searchText: '', createNew: true }]);
   const [personSuggestions, setPersonSuggestions] = useState<Record<string, PersonDetailsSearchRow[]>>({});
   const [organizationSuggestions, setOrganizationSuggestions] = useState<Record<string, OrganizationDetailsSearchRow[]>>({});
@@ -365,7 +365,13 @@ export default function NewDocket() {
   };
 
   const addAddress = () => {
-    setPlaceOfCommission((current) => current ?? makeEmptyAddress(defaultAddressTypeId, 'place'));
+    setPlacesOfCommission((current) => [
+      ...current,
+      {
+        ...makeEmptyAddress(defaultAddressTypeId, 'place'),
+        isPrimary: current.length === 0,
+      },
+    ]);
   };
 
   const addParticipantAddress = (personId: string) => {
@@ -417,7 +423,7 @@ export default function NewDocket() {
     setCaseAlsoRaffled(false);
     setAssignedProsecutorId('');
     setPersons([]);
-    setPlaceOfCommission(null);
+    setPlacesOfCommission([]);
     setViolations([]);
     setPersonSuggestions({});
     setOrganizationSuggestions({});
@@ -501,7 +507,7 @@ export default function NewDocket() {
       },
     ]);
 
-    setPlaceOfCommission({
+    setPlacesOfCommission([{
       ...makeEmptyAddress(defaultAddressTypeId, 'place'),
       addressTypeId,
       line1: `Place of Commission ${unique}`,
@@ -512,7 +518,7 @@ export default function NewDocket() {
       country: 'Philippines',
       isPrimary: true,
       remarks: `Place remarks ${unique}`,
-    });
+    }]);
 
     setViolations([{ id: makeId('violation'), existingViolationId: null, violationOrder: 1, rawViolationText: '', searchText: `Test Violation ${unique}`, createNew: true, newViolationTitle: `Test Violation ${unique}` }]);
     setActiveTab('case-info');
@@ -567,7 +573,7 @@ export default function NewDocket() {
   };
 
   const updateAddress = (id: string, updates: Partial<AddressEntry>) => {
-    setPlaceOfCommission((current) => (current?.id === id ? { ...current, ...updates } : current));
+    setPlacesOfCommission((current) => current.map((address) => (address.id === id ? { ...address, ...updates } : address)));
   };
 
   const updateViolation = (id: string, updates: Partial<ViolationEntry>) => {
@@ -771,8 +777,8 @@ export default function NewDocket() {
       return 'Each violation needs a selected suggestion or a typed violation title.';
     }
 
-    if (placeOfCommission && !placeOfCommission.addressTypeId) {
-      return 'Place of commission must select a database address type.';
+    if (placesOfCommission.some((address) => !address.addressTypeId)) {
+      return 'Each place of commission must select a database address type.';
     }
 
     if (persons.some((person) => (person.addresses ?? []).some((address) => !address.addressTypeId))) {
@@ -814,7 +820,7 @@ export default function NewDocket() {
       assignmentRemarks: caseAlsoRaffled ? assignmentRemarks.trim() || null : null,
       assignedProsecutorId: caseAlsoRaffled && assignedProsecutorId ? toNumber(assignedProsecutorId) : null,
       caseClassificationId: caseClassificationId ? toNumber(caseClassificationId) : null,
-      placeOfCommission: placeOfCommission ? { ...placeOfCommission, newAddress: placeOfCommission.existingAddressId ? undefined : { line1: placeOfCommission.line1, line2: placeOfCommission.line2, barangay: placeOfCommission.barangay, city: placeOfCommission.city, province: placeOfCommission.province, region: placeOfCommission.region, zipCode: placeOfCommission.zipCode, country: placeOfCommission.country } } : null,
+      placesOfCommission: placesOfCommission.map(({ id: _id, suggestionQuery: _sq, selectedExistingLabel: _sel, ...address }, index) => ({ ...address, isPrimary: address.isPrimary ?? index === 0, newAddress: address.existingAddressId ? undefined : { line1: address.line1, line2: address.line2, barangay: address.barangay, city: address.city, province: address.province, region: address.region, zipCode: address.zipCode, country: address.country } })),
       participants: persons.map(({ id: _id, selectedExistingName: _selectedExistingName, selectedExistingOrganizationName: _selectedExistingOrganizationName, fullNamePreview: _fullNamePreview, age, gender, aliases, addresses: participantAddresses, contactInformations, ...person }, index) => ({
         ...person,
         participantOrder: person.participantOrder ?? index + 1,
@@ -1025,20 +1031,20 @@ export default function NewDocket() {
 
               <div className="space-y-4 rounded-lg border p-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-semibold">Address (place of commission)</h3>
-                {!placeOfCommission ? (
+                  <h3 className="font-semibold">Addresses (places of commission)</h3>
                   <Button onClick={addAddress} variant="outline" size="sm" disabled={!defaultAddressTypeId}>
                     <Plus className="mr-2 h-4 w-4" /> Add Place
                   </Button>
-                ) : null}
               </div>
 
-              {!placeOfCommission ? (
+              {placesOfCommission.length === 0 ? (
                 <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No place of commission added yet</div>
               ) : (
-                <div className="space-y-3 rounded-lg border p-4">
+                placesOfCommission.map((placeOfCommission, index) => (
+                <div key={placeOfCommission.id} className="space-y-3 rounded-lg border p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-[14rem_1fr]">
+                      <p className="md:col-span-2 text-sm font-medium">Place #{index + 1}</p>
                       <div>
                         <Label className="text-xs">Address Type *</Label>
                         <Select value={placeOfCommission.addressTypeId ? placeOfCommission.addressTypeId.toString() : ''} onValueChange={(value) => updateAddress(placeOfCommission.id, { addressTypeId: toNumber(value) })}>
@@ -1048,7 +1054,7 @@ export default function NewDocket() {
                       </div>
                       <div><Label className="text-xs">Search Existing Address</Label><Input value={placeOfCommission.suggestionQuery} placeholder="Type street, barangay, city, province, or region" onChange={(event) => { updateAddress(placeOfCommission.id, { suggestionQuery: event.target.value, existingAddressId: null }); loadAddressSuggestions(placeOfCommission.id, event.target.value); }} className="mt-1" /></div>
                     </div>
-                    <Button onClick={() => setPlaceOfCommission(null)} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
+                    <Button onClick={() => setPlacesOfCommission((current) => current.filter((address) => address.id !== placeOfCommission.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
                   </div>
 
                   {addressSuggestions[placeOfCommission.id]?.length ? (
@@ -1076,6 +1082,7 @@ export default function NewDocket() {
                     <div className="md:col-span-4"><Label className="text-xs">Remarks</Label><Input value={placeOfCommission.remarks ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { remarks: event.target.value })} className="mt-1" /></div>
                   </div>
                 </div>
+                ))
               )}
  
               </div>
@@ -1249,7 +1256,7 @@ export default function NewDocket() {
                   <p><strong>Preview docket:</strong> {generatedDocketNumber}</p>
                   <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; prosecutor {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? 'Not assigned'}</p>
                   <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization: ${person.organizationName || 'Unnamed'}${(person.organizationDetails ?? []).some((detail) => detail.fieldTitle.trim() || detail.fieldValue.trim()) ? ' (custom details included)' : ''}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person: ${buildPersonFullName(person)}`)}</div>) : ' none'}</div>
-                  <div><strong>Place of commission:</strong>{placeOfCommission ? <div>• {placeOfCommission.existingAddressId ? `Existing #${placeOfCommission.existingAddressId}: ${placeOfCommission.selectedExistingLabel}` : ['New', placeOfCommission.line1, placeOfCommission.barangay, placeOfCommission.city].filter(Boolean).join(' — ')}</div> : ' none'}</div>
+                  <div><strong>Places of commission:</strong>{placesOfCommission.length ? placesOfCommission.map((placeOfCommission) => <div key={placeOfCommission.id}>• {placeOfCommission.existingAddressId ? `Existing #${placeOfCommission.existingAddressId}: ${placeOfCommission.selectedExistingLabel}` : ['New', placeOfCommission.line1, placeOfCommission.barangay, placeOfCommission.city].filter(Boolean).join(' — ')}</div>) : ' none'}</div>
                   <div><strong>Violations:</strong>{violations.length ? violations.map((violation) => <div key={violation.id}>• {violation.existingViolationId ? `Existing #${violation.existingViolationId}: ${violation.selectedExistingTitle}` : `New: ${violation.newViolationTitle || violation.searchText || 'Untitled'}`}</div>) : ' none'}</div>
                 </CardContent>
               </Card>

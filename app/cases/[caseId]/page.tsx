@@ -567,7 +567,7 @@ export default function CaseDetailsPage() {
                   <div className="grid gap-6 border-t pt-4 md:grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)] md:gap-x-12">
                     <div className="space-y-4">
                       <OptionalDetailItem
-                        label="Place of commission"
+                        label="Places of commission"
                         value={placeOfCommission(data.details)}
                       />
                       <DetailItem

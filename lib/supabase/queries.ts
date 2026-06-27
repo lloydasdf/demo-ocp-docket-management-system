@@ -1954,6 +1954,7 @@ export interface NewDocketEntryInput {
   assignedProsecutorId?: number | null;
   participants: NewDocketParticipantInput[];
   placeOfCommission?: NewDocketAddressInput | null;
+  placesOfCommission?: NewDocketAddressInput[];
   addresses: NewDocketAddressInput[];
   violations: NewDocketViolationInput[];
   notes?: string | null;
