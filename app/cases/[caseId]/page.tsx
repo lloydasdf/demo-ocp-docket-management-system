@@ -416,7 +416,7 @@ export default function CaseDetailsPage() {
                         </Badge>
                       ) : null}
                       {data.details.is_summary_procedure ? (
-                        <Badge variant="outline">Summary Procedure</Badge>
+                        <Badge className="border-transparent bg-blue-500 text-white">Summary Procedure</Badge>
                       ) : null}
                     </div>
                     <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
