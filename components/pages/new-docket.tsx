@@ -73,6 +73,7 @@ const emptyLookups: LookupState = {
 const thisYear = new Date().getFullYear();
 const genderOptions = ['Female', 'Male', 'Other', 'Unspecified'];
 const defaultRegionCode = 'IV-31';
+const defaultAddressRegionCode = 'IV-A';
 const isDevelopment = process.env.NODE_ENV !== 'production';
 
 function makeId(prefix: string) {
@@ -188,7 +189,7 @@ function makeEmptyAddress(defaultAddressTypeId: string, prefix = 'address'): Add
     barangay: '',
     city: '',
     province: '',
-    region: defaultRegionCode,
+    region: defaultAddressRegionCode,
     zipCode: '',
     country: 'Philippines',
     remarks: '',
@@ -440,7 +441,7 @@ export default function NewDocket() {
           barangay: 'Sample Barangay',
           city: 'General Trias',
           province: 'Cavite',
-          region: defaultRegionCode,
+          region: defaultAddressRegionCode,
           country: 'Philippines',
           isPrimary: true,
         }],
@@ -486,7 +487,7 @@ export default function NewDocket() {
       barangay: 'Sample Barangay',
       city: 'General Trias',
       province: 'Cavite',
-      region: defaultRegionCode,
+      region: defaultAddressRegionCode,
       country: 'Philippines',
       isPrimary: true,
       remarks: `Place remarks ${unique}`,
@@ -644,7 +645,7 @@ export default function NewDocket() {
         barangay: entry.addresses?.barangay ?? '',
         city: entry.addresses?.city ?? '',
         province: entry.addresses?.province ?? '',
-        region: entry.addresses?.region ?? defaultRegionCode,
+        region: entry.addresses?.region ?? defaultAddressRegionCode,
         zipCode: entry.addresses?.zip_code ?? '',
         country: entry.addresses?.country ?? 'Philippines',
         suggestionQuery: formatAddressLike({ ...(entry.addresses ?? {}), zipCode: entry.addresses?.zip_code }),
@@ -677,7 +678,7 @@ export default function NewDocket() {
       line1: address.line1 ?? '',
       line2: address.line2 ?? '',
       province: address.province ?? '',
-      region: address.region ?? defaultRegionCode,
+      region: address.region ?? defaultAddressRegionCode,
       suggestionQuery: formatAddress(address),
       zipCode: address.zip_code ?? '',
       existingAddressId: address.id,
@@ -694,7 +695,7 @@ export default function NewDocket() {
       line1: address.line1 ?? '',
       line2: address.line2 ?? '',
       province: address.province ?? '',
-      region: address.region ?? defaultRegionCode,
+      region: address.region ?? defaultAddressRegionCode,
       suggestionQuery: formatAddress(address),
       zipCode: address.zip_code ?? '',
       existingAddressId: address.id,
