@@ -173,14 +173,14 @@ BEGIN
   SELECT ce.id, csh.id INTO v_received_event_id, v_status_history_id
   FROM public.case_events ce
   JOIN public.case_status_history csh ON csh.case_event_id = ce.id
-  WHERE ce.case_id = v_case_id AND ce.source_table = 'case_status_history' AND ce.source_id = csh.id;
-  IF v_received_event_id IS NULL OR v_status_history_id IS NULL THEN RAISE EXCEPTION 'received event links missing'; END IF;
+  WHERE ce.case_id = v_case_id AND ce.source_table = 'case_status_history' AND ce.source_id = csh.id AND ce.details_jsonb = '{}'::jsonb;
+  IF v_received_event_id IS NULL OR v_status_history_id IS NULL THEN RAISE EXCEPTION 'received event links missing or details_jsonb filled'; END IF;
 
   SELECT ca.id, ce.id INTO v_assignment_id, v_raffle_event_id
   FROM public.case_assignments ca
   JOIN public.case_events ce ON ce.id = ca.case_event_id AND ce.source_id = ca.id
-  WHERE ca.case_id = v_case_id AND ce.source_table = 'case_assignments';
-  IF v_assignment_id IS NULL OR v_raffle_event_id IS NULL THEN RAISE EXCEPTION 'raffle event links missing'; END IF;
+  WHERE ca.case_id = v_case_id AND ce.source_table = 'case_assignments' AND ce.details_jsonb = '{}'::jsonb;
+  IF v_assignment_id IS NULL OR v_raffle_event_id IS NULL THEN RAISE EXCEPTION 'raffle event links missing or details_jsonb filled'; END IF;
 
   v_no_raffle_result := public.create_new_docket_entry(jsonb_build_object(
     'docketTypeId', v_docket_type_id,
