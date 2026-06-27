@@ -104,7 +104,7 @@ function getDocketMonthCode(dateReceived: string) {
     return '—';
   }
 
-  return date.toLocaleString('en-US', { month: 'short' }).toUpperCase();
+  return String.fromCharCode(65 + date.getMonth());
 }
 
 function formatDocketNumber(prefix: string | undefined, year: string, number: number | null, monthCode?: string | null, regionCode?: string | null) {
@@ -189,7 +189,7 @@ export default function NewDocket() {
 
   const [persons, setPersons] = useState<PersonEntry[]>([]);
   const [placeOfCommission, setPlaceOfCommission] = useState<AddressEntry | null>(null);
-  const [violations, setViolations] = useState<ViolationEntry[]>([]);
+  const [violations, setViolations] = useState<ViolationEntry[]>([{ id: makeId('violation'), existingViolationId: null, violationOrder: 1, rawViolationText: '', searchText: '', createNew: true }]);
   const [personSuggestions, setPersonSuggestions] = useState<Record<string, PersonDetailsSearchRow[]>>({});
   const [organizationSuggestions, setOrganizationSuggestions] = useState<Record<string, OrganizationDetailsSearchRow[]>>({});
   const [addressSuggestions, setAddressSuggestions] = useState<Record<string, TableRow<'addresses'>[]>>({});
@@ -287,10 +287,6 @@ export default function NewDocket() {
   const selectedDocketType = useMemo(
     () => lookups.docketTypes.find((type) => type.id.toString() === docketTypeId),
     [docketTypeId, lookups.docketTypes],
-  );
-  const selectedStatus = useMemo(
-    () => lookups.statuses.find((status) => status.id.toString() === initialStatusId),
-    [initialStatusId, lookups.statuses],
   );
   const selectedProsecutor = useMemo(
     () => lookups.prosecutors.find((prosecutor) => prosecutor.id.toString() === assignedProsecutorId),
@@ -453,7 +449,7 @@ export default function NewDocket() {
       remarks: `Place remarks ${unique}`,
     });
 
-    setViolations([{ id: makeId('violation'), existingViolationId: null, violationOrder: 1, rawViolationText: `Raw violation ${unique}`, searchText: `Test Violation ${unique}`, createNew: true, newViolationTitle: `Test Violation ${unique}` }]);
+    setViolations([{ id: makeId('violation'), existingViolationId: null, violationOrder: 1, rawViolationText: '', searchText: `Test Violation ${unique}`, createNew: true, newViolationTitle: `Test Violation ${unique}` }]);
     setActiveTab('case-info');
   };
 
@@ -700,7 +696,7 @@ export default function NewDocket() {
     }
 
     if (violations.length === 0) {
-      return 'Add at least one violation from the database violations table.';
+      return 'Add at least one violation.';
     }
 
     const selectedIds = violations.map((violation) => violation.existingViolationId).filter(Boolean);
@@ -708,8 +704,8 @@ export default function NewDocket() {
       return 'The same existing violation cannot be attached more than once.';
     }
 
-    if (violations.some((violation) => !violation.existingViolationId && !(violation.createNew && cleanString(violation.newViolationTitle)))) {
-      return 'Each violation must use a selected suggestion or an explicit Create new violation action with a title.';
+    if (violations.some((violation) => !violation.existingViolationId && !cleanString(violation.searchText))) {
+      return 'Each violation needs a selected suggestion or a typed violation title.';
     }
 
     if (placeOfCommission && !placeOfCommission.addressTypeId) {
@@ -775,10 +771,10 @@ export default function NewDocket() {
         } : undefined,
       })) as NewDocketParticipantInput[],
       addresses: [],
-      violations: violations.map(({ id: _id, searchText: _searchText, selectedExistingTitle: _title, createNew, newViolationTitle, referenceCode, shortLabel, description, lawReference, ...violation }, index) => ({
+      violations: violations.map(({ id: _id, searchText, selectedExistingTitle: _title, createNew: _createNew, newViolationTitle, referenceCode, shortLabel, description, lawReference, ...violation }, index) => ({
         ...violation,
         violationOrder: violation.violationOrder ?? index + 1,
-        newViolation: createNew ? { title: newViolationTitle ?? '', referenceCode, shortLabel, description, lawReference } : undefined,
+        newViolation: !violation.existingViolationId ? { title: cleanString(newViolationTitle) || cleanString(searchText) || '', referenceCode, shortLabel, description, lawReference } : undefined,
       })),
     };
 
@@ -795,19 +791,15 @@ export default function NewDocket() {
   };
 
   return (
-    <div className="p-8 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">New Docket Entry</h1>
-        <p className="text-muted-foreground mt-1">
-          Create a live case record using the current PostgreSQL docket schema.
-        </p>
-        {isDevelopment ? (
-          <Button type="button" variant="outline" size="sm" onClick={fillTestData} className="mt-3" disabled={isLoadingLookups || !defaultRoleId || !defaultAddressTypeId}>
+    <div className="mx-auto flex w-full max-w-[824px] flex-col gap-4 p-3 pt-16 md:gap-6 md:p-8">
+      {isDevelopment ? (
+        <div>
+          <Button type="button" variant="outline" size="sm" onClick={fillTestData} disabled={isLoadingLookups || !defaultRoleId || !defaultAddressTypeId}>
             Fill Test Data
           </Button>
-        ) : null}
-        {/* TODO: Remove debug Fill Test Data button before production hardening. */}
-      </div>
+          {/* TODO: Remove debug Fill Test Data button before production hardening. */}
+        </div>
+      ) : null}
 
       {message && (
         <Alert variant={message.type === 'error' ? 'destructive' : 'default'}>
@@ -825,120 +817,201 @@ export default function NewDocket() {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Case Information</CardTitle>
-          <CardDescription>
-            Fields match the cases, participants, addresses, status history, and violations tables.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 sm:p-6">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="case-info">Case</TabsTrigger>
               <TabsTrigger value="persons">Participants</TabsTrigger>
-              <TabsTrigger value="addresses">Addresses</TabsTrigger>
-              <TabsTrigger value="violations">Violations</TabsTrigger>
+              <TabsTrigger value="review">Review</TabsTrigger>
             </TabsList>
 
             <TabsContent value="case-info" className="space-y-4">
-              <div className="rounded-lg border bg-muted/30 p-4">
-                <p className="text-sm font-medium text-muted-foreground">Preview Docket No.</p>
-                <div className="mt-1 flex flex-wrap items-center gap-3">
-                  <p className="text-2xl font-bold tracking-tight text-primary">
+              <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
+                <div>
+                  <h3 className="font-semibold">Docket information</h3>
+                  <p className="mt-2 text-2xl font-bold tracking-tight text-primary">
                     {isLoadingNextDocket ? 'Detecting next number…' : generatedDocketNumber}
                   </p>
-                  <span className="rounded-full bg-background px-3 py-1 text-xs text-muted-foreground">
-                    Month code: {docketMonthCode}
-                  </span>
-                  <span className="rounded-full bg-background px-3 py-1 text-xs text-muted-foreground">
-                    Initial status: {selectedStatus?.display_label ?? 'Received'}
-                  </span>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <Label htmlFor="docket-type">Docket Type *</Label>
+                    <Select value={docketTypeId} onValueChange={setDocketTypeId} disabled={isLoadingLookups}>
+                      <SelectTrigger id="docket-type" className="mt-1">
+                        <SelectValue placeholder="Select docket type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {lookups.docketTypes.map((type) => (
+                          <SelectItem key={type.id} value={type.id.toString()}>
+                            {type.prefix} — {type.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="docket-year">Docket Year *</Label>
+                    <Input id="docket-year" type="number" value={docketYear} onChange={(event) => setDocketYear(event.target.value)} className="mt-1" />
+                  </div>
+                  <div>
+                    <Label htmlFor="date-received">Date Received *</Label>
+                    <Input id="date-received" type="date" value={dateReceived} onChange={(event) => setDateReceived(event.target.value)} className="mt-1" />
+                  </div>
+                  <div>
+                    <Label htmlFor="region-code">Region</Label>
+                    <Input id="region-code" value={regionCode} onChange={(event) => setRegionCode(event.target.value)} className="mt-1" />
+                  </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_10rem_10rem_7rem]">
-                <div>
-                  <Label htmlFor="docket-type">Docket Type *</Label>
-                  <Select value={docketTypeId} onValueChange={setDocketTypeId} disabled={isLoadingLookups}>
-                    <SelectTrigger id="docket-type" className="mt-1">
-                      <SelectValue placeholder="Select docket type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {lookups.docketTypes.map((type) => (
-                        <SelectItem key={type.id} value={type.id.toString()}>
-                          {type.prefix} — {type.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              <div className="space-y-4 rounded-lg border p-4">
+                <h3 className="font-semibold">Violations</h3>
+
+                <div className="space-y-3">
+                  {violations.map((violation, index) => (
+                    <div key={violation.id} className="space-y-3 rounded-lg border p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="grid flex-1 gap-3 md:grid-cols-2">
+                          <div>
+                            <Label className="text-xs">Violation *</Label>
+                            <Input value={violation.searchText} placeholder="Type a violation, law reference, or code" onChange={(event) => { updateViolation(violation.id, { searchText: event.target.value, existingViolationId: null, selectedExistingTitle: null, createNew: true, newViolationTitle: event.target.value }); loadViolationSuggestions(violation.id, event.target.value); }} className="mt-1" />
+                          </div>
+                          {index === 0 ? (
+                            <div>
+                              <Label htmlFor="case-classification">Case Classification</Label>
+                              <Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}>
+                                <SelectTrigger id="case-classification" className="mt-1"><SelectValue placeholder="Select classification" /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">No classification</SelectItem>
+                                  {lookups.caseClassifications.map((classification) => <SelectItem key={classification.id} value={classification.id.toString()}>{classification.display_label}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : null}
+                        </div>
+                        <Button onClick={() => setViolations((current) => current.filter((item) => item.id !== violation.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
+                      </div>
+
+                      {violationSuggestions[violation.id]?.length ? (
+                        <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
+                          <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Violation suggestions</p>
+                          <div className="flex flex-wrap gap-2">
+                            {violationSuggestions[violation.id].map((suggestion) => (
+                              <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyViolationSuggestion(violation.id, suggestion)}>
+                                {suggestion.title}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {violation.existingViolationId ? <span className="inline-flex rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">Existing violation #{violation.existingViolationId}: {violation.selectedExistingTitle}</span> : null}
+                    </div>
+                  ))}
                 </div>
-                <div>
-                  <Label htmlFor="docket-year">Docket Year *</Label>
-                  <Input id="docket-year" type="number" value={docketYear} onChange={(event) => setDocketYear(event.target.value)} className="mt-1" />
-                </div>
-                <div>
-                  <Label htmlFor="date-received">Date Received *</Label>
-                  <Input id="date-received" type="date" value={dateReceived} onChange={(event) => setDateReceived(event.target.value)} className="mt-1" />
-                </div>
-                <div>
-                  <Label htmlFor="region-code">Region</Label>
-                  <Input id="region-code" value={regionCode} onChange={(event) => setRegionCode(event.target.value)} className="mt-1" />
-                </div>
-                <div>
-                  <Label htmlFor="case-classification">Case Classification</Label>
-                  <Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}>
-                    <SelectTrigger id="case-classification" className="mt-1"><SelectValue placeholder="Select classification" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No classification</SelectItem>
-                      {lookups.caseClassifications.map((classification) => <SelectItem key={classification.id} value={classification.id.toString()}>{classification.display_label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+
+                <Button onClick={addViolation} variant="outline" size="sm">
+                  <Plus className="mr-2 h-4 w-4" /> Add another violation
+                </Button>
+
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <Checkbox id="summary-procedure" checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} />
+                  Summary procedure case
+                </label>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <Label htmlFor="summary-text">Summary</Label>
+                    <Textarea id="summary-text" placeholder="Case summary stored in summary_text" value={summaryText} onChange={(event) => setSummaryText(event.target.value)} className="mt-1" />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="remarks">Remarks</Label>
+                    <Textarea id="remarks" placeholder="Optional remarks" value={remarks} onChange={(event) => setRemarks(event.target.value)} className="mt-1" />
+                  </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr]">
-                <div>
-                  <div className="flex items-center gap-2"><Checkbox id="case-also-raffled" checked={caseAlsoRaffled} onCheckedChange={(checked) => setCaseAlsoRaffled(checked === true)} /><Label htmlFor="case-also-raffled">Case also raffled</Label></div><Label htmlFor="assigned-prosecutor" className="mt-3 block">Prosecutor</Label>
-                  <Select value={assignedProsecutorId || 'none'} onValueChange={(value) => setAssignedProsecutorId(value === 'none' ? '' : value)} disabled={isLoadingLookups || !caseAlsoRaffled}>
-                    <SelectTrigger id="assigned-prosecutor" className="mt-1">
-                      <SelectValue placeholder="Select prosecutor" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No prosecutor selected</SelectItem>
-                      {lookups.prosecutors.map((prosecutor) => (
-                        <SelectItem key={prosecutor.id} value={prosecutor.id.toString()}>
-                          {prosecutor.short_name ?? prosecutor.full_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+
+              <div className="space-y-4 rounded-lg border p-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold">Address (place of commission)</h3>
+                {!placeOfCommission ? (
+                  <Button onClick={addAddress} variant="outline" size="sm" disabled={!defaultAddressTypeId}>
+                    <Plus className="mr-2 h-4 w-4" /> Add Place
+                  </Button>
+                ) : null}
+              </div>
+
+              {!placeOfCommission ? (
+                <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No place of commission added yet</div>
+              ) : (
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-[14rem_1fr]">
+                      <div>
+                        <Label className="text-xs">Address Type *</Label>
+                        <Select value={placeOfCommission.addressTypeId ? placeOfCommission.addressTypeId.toString() : ''} onValueChange={(value) => updateAddress(placeOfCommission.id, { addressTypeId: toNumber(value) })}>
+                          <SelectTrigger className="mt-1"><SelectValue placeholder="Select type" /></SelectTrigger>
+                          <SelectContent>{lookups.addressTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.display_label}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </div>
+                      <div><Label className="text-xs">Search Existing Address</Label><Input value={placeOfCommission.suggestionQuery} placeholder="Type street, barangay, city, province, or region" onChange={(event) => { updateAddress(placeOfCommission.id, { suggestionQuery: event.target.value, existingAddressId: null }); loadAddressSuggestions(placeOfCommission.id, event.target.value); }} className="mt-1" /></div>
+                    </div>
+                    <Button onClick={() => setPlaceOfCommission(null)} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
+                  </div>
+
+                  {addressSuggestions[placeOfCommission.id]?.length ? (
+                    <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
+                      <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing address suggestions</p>
+                      <div className="flex flex-wrap gap-2">
+                        {addressSuggestions[placeOfCommission.id].map((suggestion) => (
+                          <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyAddressSuggestion(placeOfCommission.id, suggestion)}>
+                            {formatAddress(suggestion) || `Address #${suggestion.id}`}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                    <div><Label className="text-xs">Line 1</Label><Input value={placeOfCommission.line1 ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { line1: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">Line 2</Label><Input value={placeOfCommission.line2 ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { line2: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">Barangay</Label><Input value={placeOfCommission.barangay ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { barangay: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">City</Label><Input value={placeOfCommission.city ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { city: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">Province</Label><Input value={placeOfCommission.province ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { province: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">Region</Label><Input value={placeOfCommission.region ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { region: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">ZIP Code</Label><Input value={placeOfCommission.zipCode ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { zipCode: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div><Label className="text-xs">Country</Label><Input value={placeOfCommission.country ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { country: event.target.value, existingAddressId: null })} className="mt-1" /></div>
+                    <div className="md:col-span-4"><Label className="text-xs">Remarks</Label><Input value={placeOfCommission.remarks ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { remarks: event.target.value })} className="mt-1" /></div>
+                  </div>
                 </div>
-                <div><Label htmlFor="assignment-date">Date of Assignment</Label><Input id="assignment-date" type="date" value={dateReceived} readOnly disabled className="mt-1" /></div>
+              )}
+ 
               </div>
 
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-[10rem_1fr]">
-                <div>
-                  <Label htmlFor="next-docket-number">Next No.</Label>
-                  <Input id="next-docket-number" value={nextDocketNumber ?? ''} readOnly disabled className="mt-1" />
+              <div className="space-y-4 rounded-lg border p-4">
+                <h3 className="font-semibold">Assignment</h3>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <div className="flex items-center gap-2"><Checkbox id="case-also-raffled" checked={caseAlsoRaffled} onCheckedChange={(checked) => setCaseAlsoRaffled(checked === true)} /><Label htmlFor="case-also-raffled">Case also raffled</Label></div><Label htmlFor="assigned-prosecutor" className="mt-3 block">Prosecutor</Label>
+                    <Select value={assignedProsecutorId || 'none'} onValueChange={(value) => setAssignedProsecutorId(value === 'none' ? '' : value)} disabled={isLoadingLookups || !caseAlsoRaffled}>
+                      <SelectTrigger id="assigned-prosecutor" className="mt-1">
+                        <SelectValue placeholder="Select prosecutor" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No prosecutor selected</SelectItem>
+                        {lookups.prosecutors.map((prosecutor) => (
+                          <SelectItem key={prosecutor.id} value={prosecutor.id.toString()}>
+                            {prosecutor.short_name ?? prosecutor.full_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div><Label htmlFor="assignment-date">Date of Assignment</Label><Input id="assignment-date" type="date" value={dateReceived} readOnly disabled className="mt-1" /></div>
                 </div>
-                <p className="self-end text-xs text-muted-foreground">
-                  This is only a preview. The database RPC takes an advisory lock and assigns the official number when saved, so the final number may change.
-                </p>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <Checkbox id="summary-procedure" checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} />
-                <Label htmlFor="summary-procedure">Summary procedure case</Label>
-              </div>
-
-              <div>
-                <Label htmlFor="summary-text">Summary</Label>
-                <Textarea id="summary-text" placeholder="Case summary stored in summary_text" value={summaryText} onChange={(event) => setSummaryText(event.target.value)} className="mt-1" />
-              </div>
-
-              <div>
-                <Label htmlFor="remarks">Remarks</Label>
-                <Textarea id="remarks" placeholder="Optional remarks" value={remarks} onChange={(event) => setRemarks(event.target.value)} className="mt-1" />
               </div>
 
               <Button onClick={() => setActiveTab('persons')} className="mt-2">Continue to Participants</Button>
@@ -1055,132 +1128,12 @@ export default function NewDocket() {
                 </div>
               )}
 
-              <Button onClick={() => setActiveTab('addresses')} className="mt-2">Continue to Addresses</Button>
+              <Button onClick={() => setActiveTab('review')} className="mt-2">Continue to Review</Button>
             </TabsContent>
 
-            <TabsContent value="addresses" className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold">Place of Commission</h3>
-                  <p className="text-sm text-muted-foreground">This case address is separate from participant addresses.</p>
-                </div>
-                {!placeOfCommission ? (
-                  <Button onClick={addAddress} variant="outline" size="sm" disabled={!defaultAddressTypeId}>
-                    <Plus className="mr-2 h-4 w-4" /> Add Place
-                  </Button>
-                ) : null}
-              </div>
 
-              {!placeOfCommission ? (
-                <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No place of commission added yet</div>
-              ) : (
-                <div className="space-y-3 rounded-lg border p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-[14rem_1fr]">
-                      <div>
-                        <Label className="text-xs">Address Type *</Label>
-                        <Select value={placeOfCommission.addressTypeId ? placeOfCommission.addressTypeId.toString() : ''} onValueChange={(value) => updateAddress(placeOfCommission.id, { addressTypeId: toNumber(value) })}>
-                          <SelectTrigger className="mt-1"><SelectValue placeholder="Select type" /></SelectTrigger>
-                          <SelectContent>{lookups.addressTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.display_label}</SelectItem>)}</SelectContent>
-                        </Select>
-                      </div>
-                      <div><Label className="text-xs">Search Existing Address</Label><Input value={placeOfCommission.suggestionQuery} placeholder="Type street, barangay, city, province, or region" onChange={(event) => { updateAddress(placeOfCommission.id, { suggestionQuery: event.target.value, existingAddressId: null }); loadAddressSuggestions(placeOfCommission.id, event.target.value); }} className="mt-1" /></div>
-                    </div>
-                    <Button onClick={() => setPlaceOfCommission(null)} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
-                  </div>
 
-                  {addressSuggestions[placeOfCommission.id]?.length ? (
-                    <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
-                      <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing address suggestions</p>
-                      <div className="flex flex-wrap gap-2">
-                        {addressSuggestions[placeOfCommission.id].map((suggestion) => (
-                          <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyAddressSuggestion(placeOfCommission.id, suggestion)}>
-                            {formatAddress(suggestion) || `Address #${suggestion.id}`}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                    <div><Label className="text-xs">Line 1</Label><Input value={placeOfCommission.line1 ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { line1: event.target.value, existingAddressId: null })} className="mt-1" /></div>
-                    <div><Label className="text-xs">Line 2</Label><Input value={placeOfCommission.line2 ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { line2: event.target.value, existingAddressId: null })} className="mt-1" /></div>
-                    <div><Label className="text-xs">Barangay</Label><Input value={placeOfCommission.barangay ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { barangay: event.target.value, existingAddressId: null })} className="mt-1" /></div>
-                    <div><Label className="text-xs">City</Label><Input value={placeOfCommission.city ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { city: event.target.value, existingAddressId: null })} className="mt-1" /></div>
-                    <div><Label className="text-xs">Province</Label><Input value={placeOfCommission.province ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { province: event.target.value, existingAddressId: null })} className="mt-1" /></div>
-                    <div><Label className="text-xs">Region</Label><Input value={placeOfCommission.region ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { region: event.target.value, existingAddressId: null })} className="mt-1" /></div>
-                    <div><Label className="text-xs">ZIP Code</Label><Input value={placeOfCommission.zipCode ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { zipCode: event.target.value, existingAddressId: null })} className="mt-1" /></div>
-                    <div><Label className="text-xs">Country</Label><Input value={placeOfCommission.country ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { country: event.target.value, existingAddressId: null })} className="mt-1" /></div>
-                    <div className="md:col-span-4"><Label className="text-xs">Remarks</Label><Input value={placeOfCommission.remarks ?? ''} onChange={(event) => updateAddress(placeOfCommission.id, { remarks: event.target.value })} className="mt-1" /></div>
-                  </div>
-                </div>
-              )}
-
-              <Button onClick={() => setActiveTab('violations')} className="mt-2">Continue to Violations</Button>
-            </TabsContent>
-
-            <TabsContent value="violations" className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold">Case Violations</h3>
-                  <p className="text-sm text-muted-foreground">Search the violations table by title, short label, reference code, law reference, or description.</p>
-                </div>
-                <Button onClick={addViolation} variant="outline" size="sm">
-                  <Plus className="mr-2 h-4 w-4" /> Add Violation
-                </Button>
-              </div>
-
-              {violations.length === 0 ? (
-                <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No violations added yet</div>
-              ) : (
-                <div className="space-y-4">
-                  {violations.map((violation) => (
-                    <div key={violation.id} className="space-y-3 rounded-lg border p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1">
-                          <Label className="text-xs">Search Violation *</Label>
-                          <Input value={violation.searchText} placeholder="Type a violation, law reference, or code" onChange={(event) => { updateViolation(violation.id, { searchText: event.target.value, existingViolationId: null, selectedExistingTitle: null, createNew: false }); loadViolationSuggestions(violation.id, event.target.value); }} className="mt-1" />
-                        </div>
-                        <Button onClick={() => setViolations((current) => current.filter((item) => item.id !== violation.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
-                      </div>
-
-                      {violationSuggestions[violation.id]?.length ? (
-                        <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
-                          <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Violation suggestions</p>
-                          <div className="flex flex-wrap gap-2">
-                            {violationSuggestions[violation.id].map((suggestion) => (
-                              <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyViolationSuggestion(violation.id, suggestion)}>
-                                {suggestion.title}
-                              </Button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        {violation.existingViolationId ? <span className="rounded-full bg-muted px-2 py-1">Existing violation #{violation.existingViolationId}: {violation.selectedExistingTitle}</span> : null}
-                        {!violation.existingViolationId ? <Button type="button" variant={violation.createNew ? 'default' : 'outline'} size="sm" onClick={() => updateViolation(violation.id, { createNew: true, newViolationTitle: violation.newViolationTitle || violation.searchText })}>Create new violation</Button> : null}
-                      </div>
-
-                      {violation.createNew && !violation.existingViolationId ? (
-                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                          <div><Label className="text-xs">New Violation Title *</Label><Input value={violation.newViolationTitle ?? ''} onChange={(event) => updateViolation(violation.id, { newViolationTitle: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Reference Code</Label><Input value={violation.referenceCode ?? ''} onChange={(event) => updateViolation(violation.id, { referenceCode: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Short Label</Label><Input value={violation.shortLabel ?? ''} onChange={(event) => updateViolation(violation.id, { shortLabel: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Law Reference</Label><Input value={violation.lawReference ?? ''} onChange={(event) => updateViolation(violation.id, { lawReference: event.target.value })} className="mt-1" /></div>
-                          <div className="md:col-span-2"><Label className="text-xs">Description</Label><Textarea value={violation.description ?? ''} onChange={(event) => updateViolation(violation.id, { description: event.target.value })} className="mt-1" /></div>
-                        </div>
-                      ) : null}
-
-                      <div>
-                        <Label className="text-xs">Raw Violation Text</Label>
-                        <Textarea value={violation.rawViolationText ?? ''} onChange={(event) => updateViolation(violation.id, { rawViolationText: event.target.value })} className="mt-1" placeholder="Optional original text from complaint or intake document" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
+            <TabsContent value="review" className="space-y-4">
               <Card className="mt-6 bg-muted/20">
                 <CardHeader>
                   <CardTitle className="text-base">Review before submission</CardTitle>
@@ -1188,7 +1141,7 @@ export default function NewDocket() {
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
                   <p><strong>Preview docket:</strong> {generatedDocketNumber}</p>
-                  <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; initial status {selectedStatus?.display_label ?? '—'}; prosecutor {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? 'Not assigned'}</p>
+                  <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; prosecutor {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? 'Not assigned'}</p>
                   <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization: ${person.organizationName || 'Unnamed'}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person: ${buildPersonFullName(person)}`)}</div>) : ' none'}</div>
                   <div><strong>Place of commission:</strong>{placeOfCommission ? <div>• {placeOfCommission.existingAddressId ? `Existing #${placeOfCommission.existingAddressId}: ${placeOfCommission.selectedExistingLabel}` : ['New', placeOfCommission.line1, placeOfCommission.barangay, placeOfCommission.city].filter(Boolean).join(' — ')}</div> : ' none'}</div>
                   <div><strong>Violations:</strong>{violations.length ? violations.map((violation) => <div key={violation.id}>• {violation.existingViolationId ? `Existing #${violation.existingViolationId}: ${violation.selectedExistingTitle}` : `New: ${violation.newViolationTitle || violation.searchText || 'Untitled'}`}</div>) : ' none'}</div>
@@ -1200,9 +1153,12 @@ export default function NewDocket() {
                   {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   Submit Docket Entry
                 </Button>
-                <Button onClick={() => setActiveTab('case-info')} variant="outline">Back to Case</Button>
+              </div>
+              <div className="flex gap-4">
+                <Button onClick={() => setActiveTab('persons')} variant="outline">Back to Participants</Button>
               </div>
             </TabsContent>
+
           </Tabs>
         </CardContent>
       </Card>
