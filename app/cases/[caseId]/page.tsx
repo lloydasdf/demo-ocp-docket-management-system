@@ -216,8 +216,8 @@ function placeOfCommission(details: CaseDetailsPageViewRecord | null) {
         const detailText = caseAddressDetail(address);
 
         return (
-          <div key={address.id ?? addressText}>
-            <p>{addressText}</p>
+          <div key={address.id ?? addressText} className="min-w-0">
+            <p className="break-words">{addressText}</p>
             {detailText ? (
               <p className="text-xs font-normal text-muted-foreground">
                 {detailText}
@@ -264,11 +264,13 @@ function DetailItem({
   value: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1">
+    <div className="min-w-0 space-y-1">
       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </p>
-      <div className="text-sm font-medium text-foreground">{value}</div>
+      <div className="min-w-0 break-words text-sm font-medium text-foreground">
+        {value}
+      </div>
     </div>
   );
 }
@@ -411,7 +413,7 @@ export default function CaseDetailsPage() {
                     </CardDescription>
                   </div>
 
-                  <div className="grid gap-3 border-t pt-4 sm:grid-cols-[max-content_minmax(0,14rem)_max-content] sm:gap-x-10">
+                  <div className="grid gap-4 border-t pt-4 sm:grid-cols-2 lg:grid-cols-3">
                     <DetailItem
                       label="Date received"
                       value={formatDate(
