@@ -920,7 +920,7 @@ export type CaseParticipantRecord = TableRow<"case_participants"> & {
     "code" | "display_label"
   > | null;
   persons: (CaseParticipantPersonRecord & { person_aliases?: Json | null }) | null;
-  organizations?: { id: number; organization_name: string; contact_person?: string | null; contact_number?: string | null; email?: string | null; organization_aliases?: Json | null } | null;
+  organizations?: { id: number; organization_name: string; contact_person?: string | null; contact_number?: string | null; email?: string | null; details_jsonb?: Json | null; organization_aliases?: Json | null } | null;
 };
 
 export type CaseAssignmentRecord = TableRow<"case_assignments"> & {
@@ -1848,6 +1848,7 @@ export interface NewDocketParticipantInput {
     contactPerson?: string | null;
     contactNumber?: string | null;
     email?: string | null;
+    detailsJsonb?: Json | null;
   } | null;
   aliases?: { id?: string; aliasName?: string | null }[];
   addresses?: (NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null; existingRelation?: boolean })[];
@@ -1855,6 +1856,9 @@ export interface NewDocketParticipantInput {
   contactPerson?: string | null;
   contactNumber?: string | null;
   email?: string | null;
+  detailsJsonb?: Json | null;
+  detailsJsonText?: string | null;
+  showOrganizationDetails?: boolean;
   firstName?: string | null;
   middleName?: string | null;
   lastName?: string | null;

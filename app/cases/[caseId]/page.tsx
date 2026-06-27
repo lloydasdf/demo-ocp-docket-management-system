@@ -109,6 +109,13 @@ function participantName(participant: CaseParticipantRecord) {
   return participant.persons?.full_name ?? participant.organizations?.organization_name ?? participant.display_name_snapshot ?? "Unnamed participant";
 }
 
+function formatOrganizationDetails(details: unknown) {
+  if (!details || typeof details !== "object" || Array.isArray(details) || Object.keys(details as Record<string, unknown>).length === 0) return null;
+  return Object.entries(details as Record<string, unknown>)
+    .map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
+    .join("; ");
+}
+
 function participantAliases(participant: CaseParticipantRecord) {
   const aliases = participant.participant_kind === "ORGANIZATION" ? participant.organizations?.organization_aliases : participant.persons?.person_aliases;
   if (!Array.isArray(aliases)) return null;
@@ -471,6 +478,10 @@ export default function CaseDetailsPage() {
                                         ? formatDate(participant.persons.birth_date)
                                         : null
                                     }
+                                  />
+                                  <OptionalDetailItem
+                                    label="Organization details"
+                                    value={formatOrganizationDetails(participant.organizations?.details_jsonb)}
                                   />
                                   <OptionalDetailItem
                                     label="Aliases"

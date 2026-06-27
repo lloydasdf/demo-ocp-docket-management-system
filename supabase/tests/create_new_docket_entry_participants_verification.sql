@@ -125,7 +125,7 @@ BEGIN
       jsonb_build_object(
         'roleId', v_role_id,
         'participantOrder', 3,
-        'newOrganization', jsonb_build_object('organizationName','New Verification Organization','organizationType','ORGANIZATION','registrationNumber','REG-NEW','taxIdentificationNumber','TIN-NEW','contactPerson','Org Contact','contactNumber','09170000001','email','new-org@example.test'),
+        'newOrganization', jsonb_build_object('organizationName','New Verification Organization','contactPerson','Org Contact','contactNumber','09170000001','email','new-org@example.test','detailsJsonb',jsonb_build_object('permitNumber','PERMIT-NEW','officeHours','8AM-5PM')),
         'aliases', jsonb_build_array(jsonb_build_object('aliasName','New Org Alias'))
       ),
       jsonb_build_object(
@@ -153,6 +153,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.case_participants WHERE case_id = v_case_id AND person_id IS NOT NULL AND participant_kind = 'PERSON') THEN RAISE EXCEPTION 'person participant missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.case_participants WHERE case_id = v_case_id AND organization_id = v_existing_org_id AND person_id IS NULL AND participant_kind = 'ORGANIZATION') THEN RAISE EXCEPTION 'existing organization participant missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.case_participants cp JOIN public.organizations o ON o.id = cp.organization_id WHERE cp.case_id = v_case_id AND o.organization_name = 'New Verification Organization' AND cp.participant_kind = 'ORGANIZATION') THEN RAISE EXCEPTION 'new organization participant missing'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.case_participants cp JOIN public.organizations o ON o.id = cp.organization_id WHERE cp.case_id = v_case_id AND o.organization_name = 'New Verification Organization' AND o.details_jsonb->>'permitNumber' = 'PERMIT-NEW') THEN RAISE EXCEPTION 'new organization details_jsonb missing'; END IF;
   IF (SELECT count(*) FROM public.person_aliases WHERE person_id = v_existing_person_id AND alias_name = 'Existing Alias') <> 1 THEN RAISE EXCEPTION 'existing person alias duplicated'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.person_aliases WHERE person_id = v_existing_person_id AND alias_name = 'Existing Alias' AND is_active IS TRUE) THEN RAISE EXCEPTION 'inactive existing person alias was not reactivated'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.person_aliases WHERE person_id = v_existing_person_id AND alias_name = 'Only New Alias') THEN RAISE EXCEPTION 'new person alias missing'; END IF;

@@ -6,6 +6,7 @@ DROP VIEW IF EXISTS public.v_organization_details;
 DROP VIEW IF EXISTS public.v_case_participants_detail;
 
 ALTER TABLE public.organizations
+  ADD COLUMN IF NOT EXISTS details_jsonb jsonb NOT NULL DEFAULT '{}'::jsonb,
   DROP COLUMN IF EXISTS organization_type,
   DROP COLUMN IF EXISTS registration_number,
   DROP COLUMN IF EXISTS tax_identification_number;
@@ -17,6 +18,7 @@ SELECT
   o.contact_person,
   o.contact_number,
   o.email,
+  o.details_jsonb,
   o.notes,
   o.is_active,
   o.source,
@@ -52,7 +54,7 @@ SELECT
   CASE WHEN cpa.case_participant_id IS NULL THEN NULL::jsonb ELSE jsonb_build_object('age_text', cpa.age_text, 'age_years', cpa.age_years, 'gender_text', cpa.gender_text, 'gender_normalized', cpa.gender_normalized, 'is_minor_at_case', cpa.is_minor_at_case, 'is_senior_at_case', cpa.is_senior_at_case, 'is_pwd_at_case', cpa.is_pwd_at_case) END AS case_participant_attributes,
   jsonb_build_object('code', pr.code, 'display_label', pr.display_label) AS participant_roles,
   CASE WHEN p.id IS NULL THEN NULL::jsonb ELSE jsonb_build_object('age', p.age, 'birth_date', p.birth_date, 'first_name', p.first_name, 'full_name', p.full_name, 'gender', p.gender, 'id', p.id, 'is_minor', p.is_minor, 'is_pwd', p.is_pwd, 'is_senior', p.is_senior, 'last_name', p.last_name, 'middle_name', p.middle_name, 'notes', p.notes, 'person_descriptor', p.person_descriptor, 'suffix', p.suffix, 'person_aliases', COALESCE(pal.person_aliases, '[]'::jsonb), 'person_addresses', COALESCE(pa.person_addresses, '[]'::jsonb)) END AS persons,
-  CASE WHEN o.id IS NULL THEN NULL::jsonb ELSE jsonb_build_object('id', o.id, 'organization_name', o.organization_name, 'contact_person', o.contact_person, 'contact_number', o.contact_number, 'email', o.email, 'organization_aliases', COALESCE(oa.organization_aliases, '[]'::jsonb)) END AS organizations
+  CASE WHEN o.id IS NULL THEN NULL::jsonb ELSE jsonb_build_object('id', o.id, 'organization_name', o.organization_name, 'contact_person', o.contact_person, 'contact_number', o.contact_number, 'email', o.email, 'details_jsonb', o.details_jsonb, 'organization_aliases', COALESCE(oa.organization_aliases, '[]'::jsonb)) END AS organizations
 FROM public.case_participants cp
 LEFT JOIN public.case_participant_private_details cppd ON cppd.case_participant_id = cp.id
 LEFT JOIN public.case_participant_attributes cpa ON cpa.case_participant_id = cp.id
@@ -123,7 +125,7 @@ BEGIN
     v_person_id := NULL; v_org_id := NULL;
     IF nullif(v_item->>'existingOrganizationId','') IS NOT NULL OR v_item ? 'newOrganization' THEN
       IF nullif(v_item->>'existingOrganizationId','') IS NOT NULL THEN SELECT id, organization_name INTO v_org_id, v_name FROM public.organizations WHERE id=(v_item->>'existingOrganizationId')::bigint; IF v_org_id IS NULL THEN RAISE EXCEPTION 'Existing organization not found'; END IF;
-      ELSE v_name := nullif(btrim(v_item#>>'{newOrganization,organizationName}'),''); IF v_name IS NULL THEN RAISE EXCEPTION 'Organization name is required'; END IF; INSERT INTO public.organizations(organization_name,contact_person,contact_number,email,created_by_user_id,updated_by_user_id) VALUES (v_name,nullif(btrim(v_item#>>'{newOrganization,contactPerson}'),''),nullif(btrim(v_item#>>'{newOrganization,contactNumber}'),''),nullif(btrim(v_item#>>'{newOrganization,email}'),''),v_user_id,v_user_id) RETURNING id INTO v_org_id; END IF;
+      ELSE v_name := nullif(btrim(v_item#>>'{newOrganization,organizationName}'),''); IF v_name IS NULL THEN RAISE EXCEPTION 'Organization name is required'; END IF; INSERT INTO public.organizations(organization_name,contact_person,contact_number,email,details_jsonb,created_by_user_id,updated_by_user_id) VALUES (v_name,nullif(btrim(v_item#>>'{newOrganization,contactPerson}'),''),nullif(btrim(v_item#>>'{newOrganization,contactNumber}'),''),nullif(btrim(v_item#>>'{newOrganization,email}'),''),COALESCE(NULLIF(v_item#>'{newOrganization,detailsJsonb}', 'null'::jsonb), '{}'::jsonb),v_user_id,v_user_id) RETURNING id INTO v_org_id; END IF;
       FOR v_sub IN SELECT * FROM jsonb_array_elements(COALESCE(v_item->'aliases','[]'::jsonb)) LOOP IF nullif(btrim(v_sub->>'aliasName'),'') IS NOT NULL THEN UPDATE public.organization_aliases oa SET is_active = TRUE, updated_at = now() WHERE oa.organization_id = v_org_id AND lower(btrim(oa.alias_name)) = lower(btrim(v_sub->>'aliasName')) AND oa.is_active IS FALSE; INSERT INTO public.organization_aliases(organization_id,alias_name,source) SELECT v_org_id,btrim(v_sub->>'aliasName'),'MANUAL_ENTRY' WHERE NOT EXISTS (SELECT 1 FROM public.organization_aliases oa WHERE oa.organization_id = v_org_id AND lower(btrim(oa.alias_name)) = lower(btrim(v_sub->>'aliasName'))); END IF; END LOOP;
     ELSE
       IF nullif(v_item->>'existingPersonId','') IS NOT NULL THEN SELECT id, full_name INTO v_person_id, v_name FROM public.persons WHERE id=(v_item->>'existingPersonId')::bigint; IF v_person_id IS NULL THEN RAISE EXCEPTION 'Existing person not found'; END IF; v_reused_persons := v_reused_persons+1;

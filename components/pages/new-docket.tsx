@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, CheckCircle2, Loader2, Plus, Search, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, Plus, Search, Settings2, X } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -56,7 +56,7 @@ type MessageState =
 type AliasEntry = { id: string; aliasName: string };
 type ExistingAliasEntry = { aliasName: string };
 type AddressEntry = NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null; existingRelation?: boolean };
-type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; aliases?: AliasEntry[]; existingAliases?: ExistingAliasEntry[]; addresses?: AddressEntry[] };
+type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; aliases?: AliasEntry[]; existingAliases?: ExistingAliasEntry[]; addresses?: AddressEntry[]; detailsJsonText?: string | null; showOrganizationDetails?: boolean };
 type ViolationEntry = NewDocketViolationInput & { id: string; searchText: string; selectedExistingTitle?: string | null; createNew?: boolean; newViolationTitle?: string | null; referenceCode?: string | null; shortLabel?: string | null; description?: string | null; lawReference?: string | null };
 
 const emptyLookups: LookupState = {
@@ -137,6 +137,20 @@ function formatAddress(address: TableRow<'addresses'>) {
   return [address.line1, address.line2, address.barangay, address.city, address.province, address.region]
     .filter(Boolean)
     .join(', ');
+}
+
+function parseJsonObject(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) return { value: null, error: null };
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+      return { value: null, error: 'Organization custom details must be a JSON object.' };
+    }
+    return { value: parsed, error: null };
+  } catch {
+    return { value: null, error: 'Organization custom details must be valid JSON.' };
+  }
 }
 
 function formatAddressLike(address: Partial<NewDocketAddressInput> & { zip_code?: string | null }) {
@@ -426,6 +440,8 @@ export default function NewDocket() {
         contactPerson: `Contact ${unique}`,
         contactNumber: '09170000000',
         email: `org-${unique}@example.test`,
+        showOrganizationDetails: true,
+        detailsJsonText: JSON.stringify({ accreditation: `ACC-${unique}`, officeHours: 'Monday-Friday 8:00 AM-5:00 PM', intakeDesk: `Desk ${unique}` }, null, 2),
         remarks: `Organization remarks ${unique}`,
         aliases: [{ id: makeId('alias'), aliasName: `Org Alias ${unique}` }],
         existingAliases: [],
@@ -471,6 +487,8 @@ export default function NewDocket() {
       aliases: [],
       existingAliases: [],
       addresses: [],
+      detailsJsonText: '',
+      showOrganizationDetails: false,
     } : person)));
   };
 
@@ -709,6 +727,11 @@ export default function NewDocket() {
       return 'Each participant address must select a database address type.';
     }
 
+    const invalidOrganizationDetails = persons.find((person) => person.participantKind === 'ORGANIZATION' && parseJsonObject(person.detailsJsonText).error);
+    if (invalidOrganizationDetails) {
+      return parseJsonObject(invalidOrganizationDetails.detailsJsonText).error;
+    }
+
     return null;
   };
 
@@ -743,7 +766,7 @@ export default function NewDocket() {
         participantOrder: person.participantOrder ?? index + 1,
         aliases: aliases?.map(({ id: _aliasId, ...alias }) => alias),
         addresses: participantAddresses?.map(({ id: _addressId, suggestionQuery: _sq, selectedExistingLabel: _sel, ...address }) => ({ ...address, newAddress: address.existingAddressId ? undefined : { line1: address.line1, line2: address.line2, barangay: address.barangay, city: address.city, province: address.province, region: address.region, zipCode: address.zipCode, country: address.country } })),
-        newOrganization: person.participantKind === 'ORGANIZATION' && !person.existingOrganizationId ? { organizationName: person.organizationName, contactPerson: person.contactPerson, contactNumber: person.contactNumber, email: person.email } : undefined,
+        newOrganization: person.participantKind === 'ORGANIZATION' && !person.existingOrganizationId ? { organizationName: person.organizationName, contactPerson: person.contactPerson, contactNumber: person.contactNumber, email: person.email, detailsJsonb: parseJsonObject(person.detailsJsonText).value } : undefined,
         newPerson: person.participantKind === 'PERSON' && !person.existingPersonId ? {
           firstName: person.firstName,
           middleName: person.noMiddleName ? 'NMN' : person.middleName,
@@ -1049,6 +1072,8 @@ export default function NewDocket() {
                           <div><Label className="text-xs">Contact Person</Label><Input value={person.contactPerson ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ contactPerson: event.target.value }) : { contactPerson: event.target.value })} className="mt-1" /></div>
                           <div><Label className="text-xs">Contact Number</Label><Input value={person.contactNumber ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ contactNumber: event.target.value }) : { contactNumber: event.target.value })} className="mt-1" /></div>
                           <div><Label className="text-xs">Email</Label><Input value={person.email ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ email: event.target.value }) : { email: event.target.value })} className="mt-1" /></div>
+                          <div className="md:col-span-4"><Button type="button" variant={person.showOrganizationDetails ? 'default' : 'outline'} size="sm" className="mt-1 w-full justify-start font-semibold" onClick={() => updatePerson(person.id, { showOrganizationDetails: !person.showOrganizationDetails })}><Settings2 className="mr-2 h-4 w-4" /> Custom organization details (JSON)</Button></div>
+                          {person.showOrganizationDetails ? <div className="md:col-span-4"><Label className="text-xs">Custom details for organizations.details_jsonb</Label><Textarea value={person.detailsJsonText ?? ''} placeholder={'{\n  "permitNumber": "...",\n  "officeHours": "..."\n}'} onChange={(event) => updatePerson(person.id, { detailsJsonText: event.target.value })} className="mt-1 min-h-28 font-mono text-xs" /><p className="mt-1 text-[11px] text-muted-foreground">Saved only for new organizations as a JSON object.</p></div> : null}
                           </>}
                         </div>
                         <Button onClick={() => setPersons((current) => current.filter((item) => item.id !== person.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
@@ -1132,7 +1157,7 @@ export default function NewDocket() {
                 <CardContent className="space-y-3 text-sm">
                   <p><strong>Preview docket:</strong> {generatedDocketNumber}</p>
                   <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; prosecutor {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? 'Not assigned'}</p>
-                  <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization: ${person.organizationName || 'Unnamed'}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person: ${buildPersonFullName(person)}`)}</div>) : ' none'}</div>
+                  <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization: ${person.organizationName || 'Unnamed'}${person.detailsJsonText?.trim() ? ' (custom details included)' : ''}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person: ${buildPersonFullName(person)}`)}</div>) : ' none'}</div>
                   <div><strong>Place of commission:</strong>{placeOfCommission ? <div>• {placeOfCommission.existingAddressId ? `Existing #${placeOfCommission.existingAddressId}: ${placeOfCommission.selectedExistingLabel}` : ['New', placeOfCommission.line1, placeOfCommission.barangay, placeOfCommission.city].filter(Boolean).join(' — ')}</div> : ' none'}</div>
                   <div><strong>Violations:</strong>{violations.length ? violations.map((violation) => <div key={violation.id}>• {violation.existingViolationId ? `Existing #${violation.existingViolationId}: ${violation.selectedExistingTitle}` : `New: ${violation.newViolationTitle || violation.searchText || 'Untitled'}`}</div>) : ' none'}</div>
                 </CardContent>
