@@ -1,16 +1,84 @@
-'use client';
+"use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
-import { StatusBadge } from '@/components/status-badge';
-import { getCaseById, getCaseWithAttachments, dockets } from '@/lib/dummy-data';
-import { Button } from '@/components/ui/button';
-import { Download, Mail } from 'lucide-react';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/status-badge";
+import { getCaseById, getCaseWithAttachments, dockets } from "@/lib/dummy-data";
+import { Button } from "@/components/ui/button";
+import { Download, Mail } from "lucide-react";
 
 interface CaseDetailsProps {
   caseId: string;
   docketId: string;
+}
+
+function formatPersonAddress(address: {
+  type: string;
+  street: string;
+  barangay: string;
+  municipality: string;
+  province: string;
+  zipCode: string;
+  isPrimary: boolean;
+}) {
+  return [
+    address.street,
+    address.barangay ? `Brgy. ${address.barangay}` : null,
+    address.municipality,
+    address.province,
+    address.zipCode,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function PersonAddresses({
+  addresses,
+}: {
+  addresses: Array<{
+    id: string;
+    type: string;
+    street: string;
+    barangay: string;
+    municipality: string;
+    province: string;
+    zipCode: string;
+    isPrimary: boolean;
+  }>;
+}) {
+  if (addresses.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 space-y-2 text-sm">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Addresses
+      </p>
+      {addresses.map((address) => (
+        <div key={address.id} className="rounded-md bg-muted/40 p-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{address.type}</span>
+            {address.isPrimary ? (
+              <Badge variant="secondary" className="text-xs">
+                Primary
+              </Badge>
+            ) : null}
+          </div>
+          <p className="text-muted-foreground">
+            {formatPersonAddress(address)}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
@@ -35,8 +103,12 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">{caseDetail.caseNumber}</h1>
-          <p className="text-muted-foreground mt-1">Docket: {docket.docketNumber}</p>
+          <h1 className="text-3xl font-bold text-foreground">
+            {caseDetail.caseNumber}
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            Docket: {docket.docketNumber}
+          </p>
         </div>
         <StatusBadge status={caseDetail.status} size="lg" />
       </div>
@@ -55,11 +127,15 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Assigned Prosecutor</p>
-            <p className="text-lg font-semibold">{caseDetail.prosecutor || 'Unassigned'}</p>
+            <p className="text-lg font-semibold">
+              {caseDetail.prosecutor || "Unassigned"}
+            </p>
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Violations</p>
-            <p className="text-lg font-semibold">{caseDetail.violations.length}</p>
+            <p className="text-lg font-semibold">
+              {caseDetail.violations.length}
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -87,22 +163,32 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
                   <h4 className="font-semibold mb-3">Key Details</h4>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Case Number:</span>
-                      <span className="font-medium">{caseDetail.caseNumber}</span>
+                      <span className="text-muted-foreground">
+                        Case Number:
+                      </span>
+                      <span className="font-medium">
+                        {caseDetail.caseNumber}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Status:</span>
                       <StatusBadge status={caseDetail.status} size="sm" />
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Date of Incident:</span>
+                      <span className="text-muted-foreground">
+                        Date of Incident:
+                      </span>
                       <span className="font-medium">
-                        {new Date(caseDetail.dateOfIncident).toLocaleDateString()}
+                        {new Date(
+                          caseDetail.dateOfIncident,
+                        ).toLocaleDateString()}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Prosecutor:</span>
-                      <span className="font-medium">{caseDetail.prosecutor || '—'}</span>
+                      <span className="font-medium">
+                        {caseDetail.prosecutor || "—"}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -110,16 +196,26 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
                   <h4 className="font-semibold mb-3">Parties Involved</h4>
                   <div className="space-y-2 text-sm">
                     <div>
-                      <span className="text-muted-foreground">Complainants:</span>
-                      <span className="ml-2 font-medium">{caseDetail.complainants.length}</span>
+                      <span className="text-muted-foreground">
+                        Complainants:
+                      </span>
+                      <span className="ml-2 font-medium">
+                        {caseDetail.complainants.length}
+                      </span>
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Respondents:</span>
-                      <span className="ml-2 font-medium">{caseDetail.respondents.length}</span>
+                      <span className="text-muted-foreground">
+                        Respondents:
+                      </span>
+                      <span className="ml-2 font-medium">
+                        {caseDetail.respondents.length}
+                      </span>
                     </div>
                     <div>
                       <span className="text-muted-foreground">Witnesses:</span>
-                      <span className="ml-2 font-medium">{caseDetail.witnesses.length}</span>
+                      <span className="ml-2 font-medium">
+                        {caseDetail.witnesses.length}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -137,21 +233,31 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
             </CardHeader>
             <CardContent>
               {caseDetail.complainants.length === 0 ? (
-                <p className="text-muted-foreground">No complainants recorded</p>
+                <p className="text-muted-foreground">
+                  No complainants recorded
+                </p>
               ) : (
                 <div className="space-y-3">
                   {caseDetail.complainants.map((person) => (
-                    <div key={person.id} className="p-3 border border-border rounded">
+                    <div
+                      key={person.id}
+                      className="p-3 border border-border rounded"
+                    >
                       <p className="font-semibold">
                         {person.firstName} {person.middleName} {person.lastName}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {person.contactNumber} | {person.email}
                       </p>
+                      <PersonAddresses addresses={person.addresses} />
                       {person.aliases.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-2">
                           {person.aliases.map((alias) => (
-                            <Badge key={alias} variant="secondary" className="text-xs">
+                            <Badge
+                              key={alias}
+                              variant="secondary"
+                              className="text-xs"
+                            >
                               {alias}
                             </Badge>
                           ))}
@@ -175,17 +281,25 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
               ) : (
                 <div className="space-y-3">
                   {caseDetail.respondents.map((person) => (
-                    <div key={person.id} className="p-3 border border-border rounded">
+                    <div
+                      key={person.id}
+                      className="p-3 border border-border rounded"
+                    >
                       <p className="font-semibold">
                         {person.firstName} {person.middleName} {person.lastName}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {person.contactNumber} | {person.email}
                       </p>
+                      <PersonAddresses addresses={person.addresses} />
                       {person.aliases.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-2">
                           {person.aliases.map((alias) => (
-                            <Badge key={alias} variant="secondary" className="text-xs">
+                            <Badge
+                              key={alias}
+                              variant="secondary"
+                              className="text-xs"
+                            >
                               {alias}
                             </Badge>
                           ))}
@@ -209,13 +323,17 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
               ) : (
                 <div className="space-y-3">
                   {caseDetail.witnesses.map((person) => (
-                    <div key={person.id} className="p-3 border border-border rounded">
+                    <div
+                      key={person.id}
+                      className="p-3 border border-border rounded"
+                    >
                       <p className="font-semibold">
                         {person.firstName} {person.middleName} {person.lastName}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {person.contactNumber} | {person.email}
                       </p>
+                      <PersonAddresses addresses={person.addresses} />
                     </div>
                   ))}
                 </div>
@@ -267,28 +385,45 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
               ) : (
                 <div className="space-y-4">
                   {caseDetail.violations.map((violation) => (
-                    <div key={violation.id} className="p-4 border border-border rounded-lg">
+                    <div
+                      key={violation.id}
+                      className="p-4 border border-border rounded-lg"
+                    >
                       <div className="flex items-start justify-between mb-2">
-                        <h4 className="font-semibold">{violation.description}</h4>
-                        <Badge className="bg-primary">{violation.statute}</Badge>
+                        <h4 className="font-semibold">
+                          {violation.description}
+                        </h4>
+                        <Badge className="bg-primary">
+                          {violation.statute}
+                        </Badge>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                         <div>
-                          <span className="text-muted-foreground">Date Committed:</span>
+                          <span className="text-muted-foreground">
+                            Date Committed:
+                          </span>
                           <p className="font-medium">
                             {violation.dateCommitted
-                              ? new Date(violation.dateCommitted).toLocaleDateString()
-                              : '—'}
+                              ? new Date(
+                                  violation.dateCommitted,
+                                ).toLocaleDateString()
+                              : "—"}
                           </p>
                         </div>
                         <div>
-                          <span className="text-muted-foreground">Location:</span>
-                          <p className="font-medium">{violation.location || '—'}</p>
+                          <span className="text-muted-foreground">
+                            Location:
+                          </span>
+                          <p className="font-medium">
+                            {violation.location || "—"}
+                          </p>
                         </div>
                       </div>
                       {violation.details && (
                         <div className="mt-3 pt-3 border-t border-border">
-                          <p className="text-sm text-muted-foreground mb-1">Details:</p>
+                          <p className="text-sm text-muted-foreground mb-1">
+                            Details:
+                          </p>
                           <p className="text-sm">{violation.details}</p>
                         </div>
                       )}
@@ -308,7 +443,9 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
             </CardHeader>
             <CardContent>
               {caseDetail.statusHistory.length === 0 ? (
-                <p className="text-muted-foreground">No status history recorded</p>
+                <p className="text-muted-foreground">
+                  No status history recorded
+                </p>
               ) : (
                 <div className="space-y-4">
                   {caseDetail.statusHistory.map((update, index) => (
@@ -326,8 +463,12 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
                             {new Date(update.date).toLocaleDateString()}
                           </p>
                         </div>
-                        <p className="text-sm text-muted-foreground mb-1">{update.remarks}</p>
-                        <p className="text-xs text-muted-foreground">By: {update.updatedBy}</p>
+                        <p className="text-sm text-muted-foreground mb-1">
+                          {update.remarks}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          By: {update.updatedBy}
+                        </p>
                       </div>
                     </div>
                   ))}
@@ -344,7 +485,8 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
               <CardTitle>Attachments</CardTitle>
             </CardHeader>
             <CardContent>
-              {!caseWithAttachments || caseWithAttachments.attachments.length === 0 ? (
+              {!caseWithAttachments ||
+              caseWithAttachments.attachments.length === 0 ? (
                 <p className="text-muted-foreground">No attachments</p>
               ) : (
                 <div className="space-y-2">
@@ -354,10 +496,13 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
                       className="flex items-center justify-between p-3 border border-border rounded-lg hover:bg-muted/50"
                     >
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{attachment.fileName}</p>
+                        <p className="font-medium truncate">
+                          {attachment.fileName}
+                        </p>
                         <p className="text-xs text-muted-foreground">
-                          {attachment.size} • Uploaded {new Date(attachment.uploadDate).toLocaleDateString()} by{' '}
-                          {attachment.uploadedBy}
+                          {attachment.size} • Uploaded{" "}
+                          {new Date(attachment.uploadDate).toLocaleDateString()}{" "}
+                          by {attachment.uploadedBy}
                         </p>
                       </div>
                       <Button variant="ghost" size="sm">

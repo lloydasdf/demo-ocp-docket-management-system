@@ -36,7 +36,6 @@ import {
 } from "@/lib/supabase/queries";
 import type { TableRow as SupabaseTableRow } from "@/lib/supabase/types";
 
-
 type CaseAddressRecord = {
   id?: number | null;
   address_type_label?: string | null;
@@ -96,7 +95,10 @@ function formatFileSize(bytes: number | null) {
 }
 
 function firstDisplayValue(...values: (string | number | null | undefined)[]) {
-  return values.find((value) => value !== null && value !== undefined && String(value).trim() !== "");
+  return values.find(
+    (value) =>
+      value !== null && value !== undefined && String(value).trim() !== "",
+  );
 }
 
 function displayValue(value: string | number | null | undefined) {
@@ -106,20 +108,43 @@ function displayValue(value: string | number | null | undefined) {
 }
 
 function participantName(participant: CaseParticipantRecord) {
-  return participant.persons?.full_name ?? participant.organizations?.organization_name ?? participant.display_name_snapshot ?? "Unnamed participant";
+  return (
+    participant.persons?.full_name ??
+    participant.organizations?.organization_name ??
+    participant.display_name_snapshot ??
+    "Unnamed participant"
+  );
 }
 
 function formatOrganizationDetails(details: unknown) {
-  if (!details || typeof details !== "object" || Array.isArray(details) || Object.keys(details as Record<string, unknown>).length === 0) return null;
+  if (
+    !details ||
+    typeof details !== "object" ||
+    Array.isArray(details) ||
+    Object.keys(details as Record<string, unknown>).length === 0
+  )
+    return null;
   return Object.entries(details as Record<string, unknown>)
-    .map(([key, value]) => `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`)
+    .map(
+      ([key, value]) =>
+        `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`,
+    )
     .join("; ");
 }
 
 function participantAliases(participant: CaseParticipantRecord) {
-  const aliases = participant.participant_kind === "ORGANIZATION" ? participant.organizations?.organization_aliases : participant.persons?.person_aliases;
+  const aliases =
+    participant.participant_kind === "ORGANIZATION"
+      ? participant.organizations?.organization_aliases
+      : participant.persons?.person_aliases;
   if (!Array.isArray(aliases)) return null;
-  const names = aliases.map((alias) => typeof alias === "object" && alias && "alias_name" in alias ? String(alias.alias_name) : null).filter(Boolean);
+  const names = aliases
+    .map((alias) =>
+      typeof alias === "object" && alias && "alias_name" in alias
+        ? String(alias.alias_name)
+        : null,
+    )
+    .filter(Boolean);
   return names.length ? names.join(", ") : null;
 }
 
@@ -135,10 +160,9 @@ function formatPersonDemographics(participant: CaseParticipantRecord) {
   const attributes = participant.case_participant_attributes;
   const age = attributes?.age_text ?? attributes?.age_years;
   const gender = attributes?.gender_text ?? attributes?.gender_normalized;
-  const parts = [
-    age ? `Age at case: ${age}` : null,
-    gender ?? null,
-  ].filter((part): part is string => Boolean(part));
+  const parts = [age ? `Age at case: ${age}` : null, gender ?? null].filter(
+    (part): part is string => Boolean(part),
+  );
 
   return parts.join(" • ");
 }
@@ -177,17 +201,62 @@ function formatAddress(
   return parts.length > 0 ? parts.join(", ") : null;
 }
 
-function primaryAddress(participant: CaseParticipantRecord) {
-  const addresses = participant.participant_kind === "ORGANIZATION"
-    ? participant.organizations?.organization_addresses ?? []
-    : participant.persons?.person_addresses ?? [];
-  const preferredAddress =
-    addresses.find((address) => address.is_primary) ?? addresses[0];
-  return formatAddress(preferredAddress?.addresses ?? null);
+function participantAddresses(participant: CaseParticipantRecord) {
+  return participant.participant_kind === "ORGANIZATION"
+    ? (participant.organizations?.organization_addresses ?? [])
+    : (participant.persons?.person_addresses ?? []);
 }
 
-function caseAddresses(details: CaseDetailsPageViewRecord | null): CaseAddressRecord[] {
-  return Array.isArray(details?.case_addresses) ? (details.case_addresses as CaseAddressRecord[]) : [];
+function ParticipantAddresses({
+  participant,
+}: {
+  participant: CaseParticipantRecord;
+}) {
+  const addresses = participantAddresses(participant)
+    .map((address) => ({
+      id: address.id,
+      isPrimary: address.is_primary,
+      remarks: address.remarks,
+      text: formatAddress(address.addresses ?? null),
+    }))
+    .filter((address) => address.text);
+
+  if (addresses.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-2">
+      {addresses.map((address, index) => (
+        <div
+          key={address.id ?? `${address.text}-${index}`}
+          className="space-y-1"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span>{address.text}</span>
+            {address.isPrimary ? (
+              <Badge variant="secondary" className="text-xs">
+                Primary
+              </Badge>
+            ) : null}
+          </div>
+          {address.remarks ? (
+            <p className="text-xs font-normal text-muted-foreground">
+              {address.remarks}
+            </p>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function caseAddresses(
+  details: CaseDetailsPageViewRecord | null,
+): CaseAddressRecord[] {
+  return Array.isArray(details?.case_addresses)
+    ? (details.case_addresses as CaseAddressRecord[])
+    : [];
 }
 
 function formatCaseAddress(address: CaseAddressRecord) {
@@ -540,27 +609,41 @@ export default function CaseDetailsPage() {
                                   <DetailItem label="Role" value={role} />
                                   <OptionalDetailItem
                                     label="Organization contact"
-                                    value={participant.organizations?.contact_person ?? participant.organizations?.contact_number ?? participant.organizations?.email}
+                                    value={
+                                      participant.organizations
+                                        ?.contact_person ??
+                                      participant.organizations
+                                        ?.contact_number ??
+                                      participant.organizations?.email
+                                    }
                                   />
                                   <OptionalDetailItem
                                     label="Birthdate"
                                     value={
                                       participant.persons?.birth_date
-                                        ? formatDate(participant.persons.birth_date)
+                                        ? formatDate(
+                                            participant.persons.birth_date,
+                                          )
                                         : null
                                     }
                                   />
                                   <OptionalDetailItem
                                     label="Organization details"
-                                    value={formatOrganizationDetails(participant.organizations?.details_jsonb)}
+                                    value={formatOrganizationDetails(
+                                      participant.organizations?.details_jsonb,
+                                    )}
                                   />
                                   <OptionalDetailItem
                                     label="Aliases"
                                     value={participantAliases(participant)}
                                   />
                                   <OptionalDetailItem
-                                    label="Address"
-                                    value={primaryAddress(participant)}
+                                    label="Addresses"
+                                    value={
+                                      <ParticipantAddresses
+                                        participant={participant}
+                                      />
+                                    }
                                   />
                                   <OptionalDetailItem
                                     label="Case flags"
@@ -591,7 +674,8 @@ export default function CaseDetailsPage() {
                   <CardHeader>
                     <CardTitle>Attachments</CardTitle>
                     <CardDescription>
-                      Google Drive folder and indexed file records, when available.
+                      Google Drive folder and indexed file records, when
+                      available.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -625,8 +709,8 @@ export default function CaseDetailsPage() {
                                   {attachment.file_name}
                                 </p>
                                 <p className="text-muted-foreground">
-                                  {formatFileSize(attachment.file_size_bytes)}{" "}
-                                  • {attachment.file_status}
+                                  {formatFileSize(attachment.file_size_bytes)} •{" "}
+                                  {attachment.file_status}
                                 </p>
                               </div>
                               {attachment.web_view_link ? (
