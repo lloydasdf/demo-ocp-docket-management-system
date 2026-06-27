@@ -14,17 +14,12 @@ CREATE TABLE IF NOT EXISTS public.organization_addresses (
 CREATE INDEX IF NOT EXISTS organization_addresses_organization_id_idx ON public.organization_addresses(organization_id);
 CREATE INDEX IF NOT EXISTS organization_addresses_address_id_idx ON public.organization_addresses(address_id);
 
-ALTER TABLE public.organization_addresses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.organization_addresses DISABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS organization_addresses_select_authenticated ON public.organization_addresses;
 DROP POLICY IF EXISTS organization_addresses_insert_authenticated ON public.organization_addresses;
 DROP POLICY IF EXISTS organization_addresses_update_authenticated ON public.organization_addresses;
 DROP POLICY IF EXISTS organization_addresses_delete_authenticated ON public.organization_addresses;
-
-CREATE POLICY organization_addresses_select_authenticated ON public.organization_addresses FOR SELECT TO authenticated USING (true);
-CREATE POLICY organization_addresses_insert_authenticated ON public.organization_addresses FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY organization_addresses_update_authenticated ON public.organization_addresses FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY organization_addresses_delete_authenticated ON public.organization_addresses FOR DELETE TO authenticated USING (true);
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.organization_addresses TO authenticated, service_role;
 GRANT USAGE, SELECT ON SEQUENCE public.organization_addresses_id_seq TO authenticated, service_role;
