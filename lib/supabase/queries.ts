@@ -920,7 +920,7 @@ export type CaseParticipantRecord = TableRow<"case_participants"> & {
     "code" | "display_label"
   > | null;
   persons: (CaseParticipantPersonRecord & { person_aliases?: Json | null }) | null;
-  organizations?: { id: number; organization_name: string; contact_person?: string | null; contact_number?: string | null; email?: string | null; details_jsonb?: Json | null; organization_aliases?: Json | null } | null;
+  organizations?: { id: number; organization_name: string; contact_person?: string | null; contact_number?: string | null; email?: string | null; details_jsonb?: Json | null; organization_aliases?: Json | null; organization_addresses?: PersonAddressRecord[] | null } | null;
 };
 
 export type CaseAssignmentRecord = TableRow<"case_assignments"> & {

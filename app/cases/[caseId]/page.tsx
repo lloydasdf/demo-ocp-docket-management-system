@@ -178,7 +178,9 @@ function formatAddress(
 }
 
 function primaryAddress(participant: CaseParticipantRecord) {
-  const addresses = participant.persons?.person_addresses ?? [];
+  const addresses = participant.participant_kind === "ORGANIZATION"
+    ? participant.organizations?.organization_addresses ?? []
+    : participant.persons?.person_addresses ?? [];
   const preferredAddress =
     addresses.find((address) => address.is_primary) ?? addresses[0];
   return formatAddress(preferredAddress?.addresses ?? null);
