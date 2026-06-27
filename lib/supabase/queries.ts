@@ -912,7 +912,18 @@ export type CaseParticipantAttributeRecord = Pick<
   | "is_pwd_at_case"
 >;
 
+export type ParticipantContactInformationRecord = {
+  id: number;
+  participant_contact_information_id?: number | null;
+  contact_type: "PHONE" | "EMAIL" | "OTHER" | string;
+  contact_value: string;
+  label?: string | null;
+  is_primary?: boolean | null;
+  remarks?: string | null;
+};
+
 export type CaseParticipantRecord = TableRow<"case_participants"> & {
+  contact_informations?: ParticipantContactInformationRecord[] | null;
   case_participant_private_details: CaseParticipantPrivateDetailsRecord | null;
   case_participant_attributes: CaseParticipantAttributeRecord | null;
   participant_roles: Pick<
@@ -1843,6 +1854,7 @@ export interface NewDocketParticipantInput {
     notes?: string | null;
     personDescriptor?: string | null;
   } | null;
+  contactInformations?: { id: string; contactType?: "PHONE" | "EMAIL" | "OTHER" | string; contactValue?: string | null; label?: string | null; isPrimary?: boolean | null; remarks?: string | null }[];
   newOrganization?: {
     organizationName?: string | null;
     contactPerson?: string | null;

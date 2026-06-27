@@ -201,6 +201,26 @@ function formatAddress(
   return parts.length > 0 ? parts.join(", ") : null;
 }
 
+
+function participantContacts(participant: CaseParticipantRecord) {
+  const contacts = participant.contact_informations ?? [];
+  if (!Array.isArray(contacts) || contacts.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-1">
+      {contacts.map((contact) => (
+        <div key={contact.participant_contact_information_id ?? contact.id} className="flex flex-wrap items-center gap-2">
+          <span>{contact.contact_value}</span>
+          <Badge variant="outline" className="text-xs">{contact.label || contact.contact_type}</Badge>
+          {contact.is_primary ? <Badge variant="secondary" className="text-xs">Primary</Badge> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function participantAddresses(participant: CaseParticipantRecord) {
   return participant.participant_kind === "ORGANIZATION"
     ? (participant.organizations?.organization_addresses ?? [])
@@ -608,14 +628,8 @@ export default function CaseDetailsPage() {
                                 <div className="grid gap-2 text-sm sm:grid-cols-2">
                                   <DetailItem label="Role" value={role} />
                                   <OptionalDetailItem
-                                    label="Organization contact"
-                                    value={
-                                      participant.organizations
-                                        ?.contact_person ??
-                                      participant.organizations
-                                        ?.contact_number ??
-                                      participant.organizations?.email
-                                    }
+                                    label="Contact information"
+                                    value={participantContacts(participant)}
                                   />
                                   <OptionalDetailItem
                                     label="Birthdate"

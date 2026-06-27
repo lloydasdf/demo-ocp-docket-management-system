@@ -57,6 +57,7 @@ type AliasEntry = { id: string; aliasName: string };
 type ExistingAliasEntry = { aliasName: string };
 type AddressEntry = NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null; existingRelation?: boolean };
 type CustomOrganizationDetailEntry = { id: string; fieldTitle: string; fieldValue: string };
+type ContactInformationEntry = { id: string; contactType: "PHONE" | "EMAIL" | "OTHER"; contactValue: string; label?: string | null; isPrimary?: boolean | null; remarks?: string | null };
 type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; aliases?: AliasEntry[]; existingAliases?: ExistingAliasEntry[]; addresses?: AddressEntry[]; organizationDetails?: CustomOrganizationDetailEntry[]; showOrganizationDetails?: boolean };
 type ViolationEntry = NewDocketViolationInput & { id: string; searchText: string; selectedExistingTitle?: string | null; createNew?: boolean; newViolationTitle?: string | null; referenceCode?: string | null; shortLabel?: string | null; description?: string | null; lawReference?: string | null };
 
@@ -357,6 +358,7 @@ export default function NewDocket() {
         participantKind: 'PERSON',
         aliases: [],
         addresses: [],
+        contactInformations: [],
       },
     ]);
   };
@@ -369,6 +371,22 @@ export default function NewDocket() {
     setPersons((current) => current.map((person) => (
       person.id === personId
         ? { ...person, addresses: [...(person.addresses ?? []), makeEmptyAddress(defaultAddressTypeId, 'participant-address')] }
+        : person
+    )));
+  };
+
+  const addParticipantContact = (personId: string, contactType: 'PHONE' | 'EMAIL' | 'OTHER' = 'PHONE') => {
+    setPersons((current) => current.map((person) => (
+      person.id === personId
+        ? { ...person, contactInformations: [...(person.contactInformations ?? []), { id: makeId('contact'), contactType, contactValue: '', label: '', isPrimary: (person.contactInformations ?? []).length === 0, remarks: '' }] }
+        : person
+    )));
+  };
+
+  const updateParticipantContact = (personId: string, contactId: string, updates: Partial<ContactInformationEntry>) => {
+    setPersons((current) => current.map((person) => (
+      person.id === personId
+        ? { ...person, contactInformations: (person.contactInformations ?? []).map((contact) => contact.id === contactId ? { ...contact, ...updates } : contact) }
         : person
     )));
   };
@@ -793,10 +811,11 @@ export default function NewDocket() {
       assignedProsecutorId: caseAlsoRaffled && assignedProsecutorId ? toNumber(assignedProsecutorId) : null,
       caseClassificationId: caseClassificationId ? toNumber(caseClassificationId) : null,
       placeOfCommission: placeOfCommission ? { ...placeOfCommission, newAddress: placeOfCommission.existingAddressId ? undefined : { line1: placeOfCommission.line1, line2: placeOfCommission.line2, barangay: placeOfCommission.barangay, city: placeOfCommission.city, province: placeOfCommission.province, region: placeOfCommission.region, zipCode: placeOfCommission.zipCode, country: placeOfCommission.country } } : null,
-      participants: persons.map(({ id: _id, selectedExistingName: _selectedExistingName, selectedExistingOrganizationName: _selectedExistingOrganizationName, fullNamePreview: _fullNamePreview, age, gender, aliases, addresses: participantAddresses, ...person }, index) => ({
+      participants: persons.map(({ id: _id, selectedExistingName: _selectedExistingName, selectedExistingOrganizationName: _selectedExistingOrganizationName, fullNamePreview: _fullNamePreview, age, gender, aliases, addresses: participantAddresses, contactInformations, ...person }, index) => ({
         ...person,
         participantOrder: person.participantOrder ?? index + 1,
         aliases: aliases?.map(({ id: _aliasId, ...alias }) => alias),
+        contactInformations: contactInformations?.map(({ id: _contactId, ...contact }) => contact).filter((contact) => cleanString(contact.contactValue)),
         addresses: participantAddresses?.map(({ id: _addressId, suggestionQuery: _sq, selectedExistingLabel: _sel, ...address }) => ({ ...address, newAddress: address.existingAddressId ? undefined : { line1: address.line1, line2: address.line2, barangay: address.barangay, city: address.city, province: address.province, region: address.region, zipCode: address.zipCode, country: address.country } })),
         newOrganization: person.participantKind === 'ORGANIZATION' && !person.existingOrganizationId ? { organizationName: person.organizationName, contactPerson: person.contactPerson, contactNumber: person.contactNumber, email: person.email, detailsJsonb: buildOrganizationDetailsJson(person.organizationDetails).value } : undefined,
         newPerson: person.participantKind === 'PERSON' && !person.existingPersonId ? {
@@ -1139,6 +1158,13 @@ export default function NewDocket() {
                       <p className="text-xs text-muted-foreground">
                         {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization preview: ${cleanString(person.organizationName) || 'Enter organization name'}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person preview: ${buildPersonFullName(person) || 'Enter at least one name component'}`)}
                       </p>
+
+
+                      <div className="space-y-3 rounded-md bg-muted/40 p-3">
+                        <div className="flex items-center justify-between"><Label className="text-xs">Contact numbers / email</Label><Button type="button" variant="outline" size="sm" onClick={() => addParticipantContact(person.id)}>+ Add Contact</Button></div>
+                        {(person.contactInformations ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No participant contacts added.</p> : null}
+                        {(person.contactInformations ?? []).map((contact) => <div key={contact.id} className="grid grid-cols-1 gap-2 rounded-md border bg-background p-3 md:grid-cols-[9rem_1fr_1fr_auto]"><div><Label className="text-xs">Type</Label><Select value={contact.contactType} onValueChange={(value) => updateParticipantContact(person.id, contact.id, { contactType: value as 'PHONE' | 'EMAIL' | 'OTHER' })}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PHONE">Phone</SelectItem><SelectItem value="EMAIL">Email</SelectItem><SelectItem value="OTHER">Other</SelectItem></SelectContent></Select></div><div><Label className="text-xs">Contact value</Label><Input value={contact.contactValue ?? ''} placeholder={contact.contactType === 'EMAIL' ? 'name@example.com' : 'Phone number'} onChange={(event) => updateParticipantContact(person.id, contact.id, { contactValue: event.target.value })} className="mt-1" /></div><div><Label className="text-xs">Label</Label><Input value={contact.label ?? ''} placeholder="Mobile, office, email" onChange={(event) => updateParticipantContact(person.id, contact.id, { label: event.target.value })} className="mt-1" /></div><Button type="button" variant="ghost" size="sm" className="self-end text-destructive" onClick={() => updatePerson(person.id, { contactInformations: (person.contactInformations ?? []).filter((item) => item.id !== contact.id) })}><X className="h-4 w-4" /></Button><label className="flex items-center gap-2 text-xs"><Checkbox checked={contact.isPrimary === true} onCheckedChange={(checked) => updateParticipantContact(person.id, contact.id, { isPrimary: checked === true })} /> Primary</label><div className="md:col-span-3"><Label className="text-xs">Remarks</Label><Input value={contact.remarks ?? ''} onChange={(event) => updateParticipantContact(person.id, contact.id, { remarks: event.target.value })} className="mt-1" /></div></div>)}
+                      </div>
 
                       {organizationSuggestions[person.id]?.length ? (
                         <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
