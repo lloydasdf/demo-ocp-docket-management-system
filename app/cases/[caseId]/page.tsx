@@ -192,16 +192,6 @@ function formatCaseAddress(address: CaseAddressRecord) {
   return formatAddress(address.addresses ?? null);
 }
 
-function caseAddressDetail(address: CaseAddressRecord) {
-  return [
-    address.address_type_label,
-    address.is_primary ? "Primary" : null,
-    address.remarks,
-  ]
-    .filter(Boolean)
-    .join(" • ");
-}
-
 function placeOfCommission(details: CaseDetailsPageViewRecord | null) {
   const addresses = caseAddresses(details);
 
@@ -213,17 +203,11 @@ function placeOfCommission(details: CaseDetailsPageViewRecord | null) {
     <div className="space-y-2">
       {addresses.map((address) => {
         const addressText = formatCaseAddress(address) ?? "Unnamed address";
-        const detailText = caseAddressDetail(address);
 
         return (
-          <div key={address.id ?? addressText} className="min-w-0">
-            <p className="break-words">{addressText}</p>
-            {detailText ? (
-              <p className="text-xs font-normal text-muted-foreground">
-                {detailText}
-              </p>
-            ) : null}
-          </div>
+          <p key={address.id ?? addressText} className="min-w-0 break-words">
+            {addressText}
+          </p>
         );
       })}
     </div>
