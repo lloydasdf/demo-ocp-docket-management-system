@@ -415,6 +415,14 @@ export default function CaseDetailsPage() {
                           {classificationLabel(data.details)}
                         </Badge>
                       ) : null}
+                      {data.details.is_summary_procedure ? (
+                        <Badge
+                          variant="outline"
+                          className="border-amber-200 bg-amber-50 text-amber-700"
+                        >
+                          Summary Procedure
+                        </Badge>
+                      ) : null}
                     </div>
                     <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
                       {data.compact.violations ?? "No violation recorded"}
@@ -423,6 +431,31 @@ export default function CaseDetailsPage() {
 
                   <div className="grid gap-6 border-t pt-4 md:grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)] md:gap-x-12">
                     <div className="space-y-4">
+                      {data.details.is_summary_procedure ? (
+                        <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-4">
+                          <div className="mb-3 flex items-center gap-2">
+                            <Badge
+                              variant="outline"
+                              className="border-amber-300 bg-amber-100 text-amber-800"
+                            >
+                              Summary Procedure
+                            </Badge>
+                            <span className="text-xs font-medium uppercase tracking-wide text-amber-800">
+                              Case indicator
+                            </span>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <OptionalDetailItem
+                              label="Summary"
+                              value={data.details.summary_text}
+                            />
+                            <OptionalDetailItem
+                              label="Summary remarks"
+                              value={data.details.remarks}
+                            />
+                          </div>
+                        </div>
+                      ) : null}
                       <OptionalDetailItem
                         label="Place of commission"
                         value={placeOfCommission(data.details)}
