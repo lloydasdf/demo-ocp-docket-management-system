@@ -946,6 +946,11 @@ export default function NewDocket() {
                       placeholder={formatCaseReceivedDefaultDescription(dateReceived)}
                     />
                   </div>
+
+                  <div className="md:col-span-2">
+                    <Label htmlFor="notes">Case notes</Label>
+                    <Textarea id="notes" placeholder="Optional case note stored in notes table" value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-1" />
+                  </div>
                 </div>
               </div>
 
@@ -1013,11 +1018,6 @@ export default function NewDocket() {
                   <div>
                     <Label htmlFor="remarks">Remarks</Label>
                     <Textarea id="remarks" placeholder="Optional summary procedure remarks" value={remarks} onChange={(event) => setRemarks(event.target.value)} className="mt-1" />
-                  </div>
-
-                  <div className="md:col-span-2">
-                    <Label htmlFor="notes">Notes</Label>
-                    <Textarea id="notes" placeholder="Optional case note stored in notes table" value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-1" />
                   </div>
                 </div>
               </div>

@@ -90,6 +90,29 @@ function caseNotes(details: CaseDetailsPageViewRecord | null): CaseNoteRecord[] 
   );
 }
 
+
+function caseNotesDetails(details: CaseDetailsPageViewRecord | null) {
+  const notes = caseNotes(details);
+
+  if (notes.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-3">
+      {notes.map((note, index) => (
+        <div key={note.id ?? `note-${index}`} className="space-y-1">
+          <p className="whitespace-pre-wrap break-words">{note.note_text}</p>
+          <div className="flex flex-wrap items-center gap-2 text-xs font-normal text-muted-foreground">
+            <span>{formatDate(note.created_at)}</span>
+            {note.is_private ? <Badge variant="secondary">Private</Badge> : null}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) {
     return "—";
@@ -562,6 +585,10 @@ export default function CaseDetailsPage() {
                           "—"
                         }
                       />
+                      <OptionalDetailItem
+                        label="Case notes"
+                        value={caseNotesDetails(data.details)}
+                      />
                     </div>
 
                     <div className="space-y-4">
@@ -703,31 +730,6 @@ export default function CaseDetailsPage() {
                   </CardContent>
                 </Card>
 
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Notes</CardTitle>
-                    <CardDescription>Case notes recorded for this docket.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {caseNotes(data.details).length === 0 ? (
-                      <SectionEmpty>No notes recorded.</SectionEmpty>
-                    ) : (
-                      caseNotes(data.details).map((note, index) => (
-                        <div
-                          key={note.id ?? `note-${index}`}
-                          className="rounded-md border bg-muted/30 p-3"
-                        >
-                          <p className="whitespace-pre-wrap text-sm">{note.note_text}</p>
-                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                            <span>{formatDate(note.created_at)}</span>
-                            {note.is_private ? <Badge variant="secondary">Private</Badge> : null}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </CardContent>
-                </Card>
 
                 <CaseTimeline
                   courts={data.courts}
