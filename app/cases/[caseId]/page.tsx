@@ -192,6 +192,15 @@ function formatCaseAddress(address: CaseAddressRecord) {
   return formatAddress(address.addresses ?? null);
 }
 
+function classificationLabel(details: CaseDetailsPageViewRecord) {
+  return (
+    details.case_classifications?.display_label ??
+    details.case_classifications?.name ??
+    details.case_classifications?.code ??
+    null
+  );
+}
+
 function placeOfCommission(details: CaseDetailsPageViewRecord | null) {
   const addresses = caseAddresses(details);
 
@@ -205,9 +214,14 @@ function placeOfCommission(details: CaseDetailsPageViewRecord | null) {
         const addressText = formatCaseAddress(address) ?? "Unnamed address";
 
         return (
-          <p key={address.id ?? addressText} className="min-w-0 break-words">
-            {addressText}
-          </p>
+          <div key={address.id ?? addressText} className="min-w-0 space-y-1">
+            <p className="break-words">{addressText}</p>
+            {address.remarks ? (
+              <p className="break-words text-xs font-normal text-muted-foreground">
+                {address.remarks}
+              </p>
+            ) : null}
+          </div>
         );
       })}
     </div>
@@ -388,66 +402,79 @@ export default function CaseDetailsPage() {
               <Card>
                 <CardHeader className="gap-5 p-4 sm:p-6">
                   <div className="min-w-0">
-                    <CardTitle className="whitespace-nowrap text-2xl sm:text-3xl">
-                      {data.compact.docket_display_number ??
-                        displayValue(data.details.docket_number)}
-                    </CardTitle>
+                    <div className="flex min-w-0 flex-wrap items-center gap-3">
+                      <CardTitle className="text-2xl sm:text-3xl">
+                        {data.compact.docket_display_number ??
+                          displayValue(data.details.docket_number)}
+                      </CardTitle>
+                      {classificationLabel(data.details) ? (
+                        <Badge
+                          variant="outline"
+                          className="border-blue-200 bg-blue-50 text-blue-700"
+                        >
+                          {classificationLabel(data.details)}
+                        </Badge>
+                      ) : null}
+                    </div>
                     <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
                       {data.compact.violations ?? "No violation recorded"}
                     </CardDescription>
                   </div>
 
-                  <div className="grid gap-4 border-t pt-4 sm:grid-cols-2 lg:grid-cols-3">
-                    <DetailItem
-                      label="Date received"
-                      value={formatDate(
-                        data.compact.date_received ??
-                          data.details.date_received,
-                      )}
-                    />
-                    <DetailItem
-                      label="Assigned prosecutor"
-                      value={
-                        data.compact.prosecutor_full_name ??
-                        data.compact.prosecutor_short_name ??
-                        "—"
-                      }
-                    />
-                    <DetailItem
-                      label="Current status"
-                      value={
-                        <Badge variant="outline">
-                          {data.details.current_status?.display_label ??
-                            data.details.current_status?.code ??
-                            data.details.current_status_raw ??
-                            "—"}
-                        </Badge>
-                      }
-                    />
-                    <OptionalDetailItem
-                      label="Status date"
-                      value={formatDate(data.details.current_status_date ?? data.compact.current_status_date)}
-                    />
-                    <OptionalDetailItem
-                      label="Status approved date"
-                      value={firstDisplayValue(data.details.status_approved_date_raw, formatDate(data.details.status_approved_date))}
-                    />
-                    <OptionalDetailItem
-                      label="Status remarks"
-                      value={data.details.current_status_remarks}
-                    />
-                    <OptionalDetailItem
-                      label="Classification"
-                      value={
-                        data.details.case_classifications?.display_label ??
-                        data.details.case_classifications?.name ??
-                        data.details.case_classifications?.code
-                      }
-                    />
-                    <OptionalDetailItem
-                      label="Place of commission"
-                      value={placeOfCommission(data.details)}
-                    />
+                  <div className="grid gap-6 border-t pt-4 md:grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)] md:gap-x-12">
+                    <div className="space-y-4">
+                      <OptionalDetailItem
+                        label="Place of commission"
+                        value={placeOfCommission(data.details)}
+                      />
+                      <DetailItem
+                        label="Date received"
+                        value={formatDate(
+                          data.compact.date_received ??
+                            data.details.date_received,
+                        )}
+                      />
+                      <DetailItem
+                        label="Assigned prosecutor"
+                        value={
+                          data.compact.prosecutor_full_name ??
+                          data.compact.prosecutor_short_name ??
+                          "—"
+                        }
+                      />
+                    </div>
+
+                    <div className="space-y-4">
+                      <DetailItem
+                        label="Current status"
+                        value={
+                          <Badge variant="outline">
+                            {data.details.current_status?.display_label ??
+                              data.details.current_status?.code ??
+                              data.details.current_status_raw ??
+                              "—"}
+                          </Badge>
+                        }
+                      />
+                      <OptionalDetailItem
+                        label="Status date"
+                        value={formatDate(
+                          data.details.current_status_date ??
+                            data.compact.current_status_date,
+                        )}
+                      />
+                      <OptionalDetailItem
+                        label="Status approved date"
+                        value={firstDisplayValue(
+                          data.details.status_approved_date_raw,
+                          formatDate(data.details.status_approved_date),
+                        )}
+                      />
+                      <OptionalDetailItem
+                        label="Status remarks"
+                        value={data.details.current_status_remarks}
+                      />
+                    </div>
                   </div>
                 </CardHeader>
               </Card>
