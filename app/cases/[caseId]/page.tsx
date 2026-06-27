@@ -402,39 +402,30 @@ export default function CaseDetailsPage() {
               <Card>
                 <CardHeader className="gap-5 p-4 sm:p-6">
                   <div className="min-w-0">
-                    <div className="flex min-w-0 flex-wrap items-center gap-3">
-                      <CardTitle className="text-2xl sm:text-3xl">
-                        {data.compact.docket_display_number ??
-                          displayValue(data.details.docket_number)}
-                      </CardTitle>
-                      {classificationLabel(data.details) ? (
-                        <Badge variant="outline">
-                          {classificationLabel(data.details)}
-                        </Badge>
-                      ) : null}
-                      {data.details.is_summary_procedure ? (
-                        <Badge variant="secondary">Summary Procedure</Badge>
-                      ) : null}
-                    </div>
+                    <CardTitle className="text-2xl sm:text-3xl">
+                      {data.compact.docket_display_number ??
+                        displayValue(data.details.docket_number)}
+                    </CardTitle>
                     <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
                       {data.compact.violations ?? "No violation recorded"}
                     </CardDescription>
+                    {classificationLabel(data.details) ||
+                    data.details.is_summary_procedure ? (
+                      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
+                        {classificationLabel(data.details) ? (
+                          <Badge variant="outline">
+                            {classificationLabel(data.details)}
+                          </Badge>
+                        ) : null}
+                        {data.details.is_summary_procedure ? (
+                          <Badge variant="secondary">Summary Procedure</Badge>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="grid gap-6 border-t pt-4 md:grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)] md:gap-x-12">
                     <div className="space-y-4">
-                      {data.details.is_summary_procedure ? (
-                        <>
-                          <OptionalDetailItem
-                            label="Summary"
-                            value={data.details.summary_text}
-                          />
-                          <OptionalDetailItem
-                            label="Summary remarks"
-                            value={data.details.remarks}
-                          />
-                        </>
-                      ) : null}
                       <OptionalDetailItem
                         label="Place of commission"
                         value={placeOfCommission(data.details)}
@@ -475,6 +466,18 @@ export default function CaseDetailsPage() {
                             data.compact.current_status_date,
                         )}
                       />
+                      {data.details.is_summary_procedure ? (
+                        <>
+                          <OptionalDetailItem
+                            label="Summary"
+                            value={data.details.summary_text}
+                          />
+                          <OptionalDetailItem
+                            label="Summary remarks"
+                            value={data.details.remarks}
+                          />
+                        </>
+                      ) : null}
                       <OptionalDetailItem
                         label="Status approved date"
                         value={firstDisplayValue(
