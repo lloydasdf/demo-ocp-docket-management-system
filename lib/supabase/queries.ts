@@ -1856,9 +1856,6 @@ export interface NewDocketParticipantInput {
   contactPerson?: string | null;
   contactNumber?: string | null;
   email?: string | null;
-  detailsJsonb?: Json | null;
-  detailsJsonText?: string | null;
-  showOrganizationDetails?: boolean;
   firstName?: string | null;
   middleName?: string | null;
   lastName?: string | null;
