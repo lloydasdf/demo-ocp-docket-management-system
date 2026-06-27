@@ -113,7 +113,7 @@ BEGIN
           'isPrimary', true,
           'newAddress', jsonb_build_object('line1','New Person Address','city','General Trias','province','Cavite','country','Philippines')
         )),
-        'attributes', jsonb_build_object('ageText','17','ageYears',17,'genderText','Male','genderNormalized','MALE','minorText','YES','isMinorAtCase',true,'seniorText','NO','isSeniorAtCase',false,'pwdText','YES','isPwdAtCase',true,'residentOfGentriText','YES','isResidentOfGentri',true)
+        'attributes', jsonb_build_object('ageText','17','ageYears',17,'genderText','Male','genderNormalized','MALE','minorText','YES','isMinorAtCase',true,'seniorText','NO','isSeniorAtCase',false,'pwdText','YES','isPwdAtCase',true)
       ),
       jsonb_build_object(
         'roleId', v_role_id,
@@ -168,7 +168,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.person_addresses pa JOIN public.case_participants cp ON cp.person_id = pa.person_id WHERE cp.case_id = v_case_id AND cp.participant_order = 1) THEN RAISE EXCEPTION 'new participant address missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.case_addresses WHERE case_id = v_case_id) THEN RAISE EXCEPTION 'place of commission case address missing'; END IF;
   IF (SELECT count(*) FROM public.case_addresses WHERE case_id = v_case_id) <> 1 THEN RAISE EXCEPTION 'participant address was incorrectly saved as case address'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.case_participant_attributes cpa JOIN public.case_participants cp ON cp.id = cpa.case_participant_id WHERE cp.case_id = v_case_id AND cpa.age_years = 17 AND cpa.is_minor_at_case IS TRUE AND cpa.is_pwd_at_case IS TRUE AND cpa.is_resident_of_gentri IS TRUE) THEN RAISE EXCEPTION 'participant attributes missing'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.case_participant_attributes cpa JOIN public.case_participants cp ON cp.id = cpa.case_participant_id WHERE cp.case_id = v_case_id AND cpa.age_years = 17 AND cpa.is_minor_at_case IS TRUE AND cpa.is_pwd_at_case IS TRUE) THEN RAISE EXCEPTION 'participant attributes missing'; END IF;
 
   SELECT ce.id, csh.id INTO v_received_event_id, v_status_history_id
   FROM public.case_events ce

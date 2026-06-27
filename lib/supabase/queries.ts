@@ -1881,8 +1881,6 @@ export interface NewDocketParticipantInput {
     isSeniorAtCase?: boolean | null;
     pwdText?: string | null;
     isPwdAtCase?: boolean | null;
-    residentOfGentriText?: string | null;
-    isResidentOfGentri?: boolean | null;
     notes?: string | null;
   };
 }
