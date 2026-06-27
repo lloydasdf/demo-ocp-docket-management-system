@@ -192,6 +192,43 @@ function formatCaseAddress(address: CaseAddressRecord) {
   return formatAddress(address.addresses ?? null);
 }
 
+function caseAddressDetail(address: CaseAddressRecord) {
+  return [
+    address.address_type_label,
+    address.is_primary ? "Primary" : null,
+    address.remarks,
+  ]
+    .filter(Boolean)
+    .join(" • ");
+}
+
+function placeOfCommission(details: CaseDetailsPageViewRecord | null) {
+  const addresses = caseAddresses(details);
+
+  if (addresses.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-2">
+      {addresses.map((address) => {
+        const addressText = formatCaseAddress(address) ?? "Unnamed address";
+        const detailText = caseAddressDetail(address);
+
+        return (
+          <div key={address.id ?? addressText}>
+            <p>{addressText}</p>
+            {detailText ? (
+              <p className="text-xs font-normal text-muted-foreground">
+                {detailText}
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function SectionEmpty({ children = "No records yet." }: { children?: string }) {
   return (
@@ -421,6 +458,10 @@ export default function CaseDetailsPage() {
                         data.details.case_classifications?.code
                       }
                     />
+                    <OptionalDetailItem
+                      label="Place of commission"
+                      value={placeOfCommission(data.details)}
+                    />
                   </div>
                 </CardHeader>
               </Card>
@@ -503,25 +544,6 @@ export default function CaseDetailsPage() {
                               </div>
                             ))}
                           </div>
-                        </div>
-                      ))
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="p-4 sm:p-6">
-                    <CardTitle>Case Addresses</CardTitle>
-                    <CardDescription>Case-level addresses recorded for this docket.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3 p-4 pt-0 sm:p-6 sm:pt-0">
-                    {caseAddresses(data.details).length === 0 ? (
-                      <SectionEmpty>No case addresses recorded.</SectionEmpty>
-                    ) : (
-                      caseAddresses(data.details).map((address) => (
-                        <div key={address.id ?? formatCaseAddress(address) ?? 'case-address'} className="rounded-lg border p-4 text-sm">
-                          <p className="font-medium">{formatCaseAddress(address) ?? 'Unnamed address'}</p>
-                          <p className="text-muted-foreground">{[address.address_type_label, address.is_primary ? 'Primary' : null, address.remarks].filter(Boolean).join(' • ')}</p>
                         </div>
                       ))
                     )}
