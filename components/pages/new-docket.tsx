@@ -71,7 +71,7 @@ const emptyLookups: LookupState = {
 
 const thisYear = new Date().getFullYear();
 const genderOptions = ['Female', 'Male', 'Other', 'Unspecified'];
-const defaultRegionCode = 'IV-A';
+const defaultRegionCode = 'IV-31';
 const isDevelopment = process.env.NODE_ENV !== 'production';
 
 function makeId(prefix: string) {
