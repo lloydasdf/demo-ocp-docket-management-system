@@ -920,7 +920,7 @@ export type CaseParticipantRecord = TableRow<"case_participants"> & {
     "code" | "display_label"
   > | null;
   persons: (CaseParticipantPersonRecord & { person_aliases?: Json | null }) | null;
-  organizations?: { id: number; organization_name: string; organization_type?: string | null; registration_number?: string | null; tax_identification_number?: string | null; contact_person?: string | null; contact_number?: string | null; email?: string | null; organization_aliases?: Json | null } | null;
+  organizations?: { id: number; organization_name: string; contact_person?: string | null; contact_number?: string | null; email?: string | null; organization_aliases?: Json | null } | null;
 };
 
 export type CaseAssignmentRecord = TableRow<"case_assignments"> & {
@@ -1136,7 +1136,7 @@ export async function searchPersons(query: string, limit?: number): Promise<Supa
   }, []);
 }
 
-export type OrganizationDetailsSearchRow = { id: number; organization_name: string; organization_type: string | null; aliases?: Json | null };
+export type OrganizationDetailsSearchRow = { id: number; organization_name: string; aliases?: Json | null };
 
 export async function searchOrganizations(query: string, limit?: number): Promise<SupabaseQueryResult<OrganizationDetailsSearchRow[]>> {
   const safeLimit = normalizeLimit(limit, 8, 25);
@@ -1147,7 +1147,7 @@ export async function searchOrganizations(query: string, limit?: number): Promis
     return (await supabase
       .from("v_organization_search" as never)
       .select("*")
-      .or(`organization_name.ilike.%${safeQuery}%,organization_type.ilike.%${safeQuery}%`)
+      .ilike("organization_name" as never, `%${safeQuery}%`)
       .order("organization_name" as never, { ascending: true })
       .limit(safeLimit)) as unknown as { data: OrganizationDetailsSearchRow[] | null; error: unknown };
   }, []);
@@ -1845,19 +1845,13 @@ export interface NewDocketParticipantInput {
   } | null;
   newOrganization?: {
     organizationName?: string | null;
-    organizationType?: string | null;
-    registrationNumber?: string | null;
-    taxIdentificationNumber?: string | null;
     contactPerson?: string | null;
     contactNumber?: string | null;
     email?: string | null;
   } | null;
-  aliases?: { id?: string; aliasName?: string | null; aliasType?: string | null }[];
+  aliases?: { id?: string; aliasName?: string | null }[];
   addresses?: (NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null; existingRelation?: boolean })[];
   organizationName?: string | null;
-  organizationType?: string | null;
-  registrationNumber?: string | null;
-  taxIdentificationNumber?: string | null;
   contactPerson?: string | null;
   contactNumber?: string | null;
   email?: string | null;

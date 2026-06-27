@@ -53,8 +53,8 @@ type MessageState =
   | { type: 'error'; text: string }
   | null;
 
-type AliasEntry = { id: string; aliasName: string; aliasType?: string | null };
-type ExistingAliasEntry = { aliasName: string; aliasType?: string | null };
+type AliasEntry = { id: string; aliasName: string };
+type ExistingAliasEntry = { aliasName: string };
 type AddressEntry = NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null; existingRelation?: boolean };
 type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; aliases?: AliasEntry[]; existingAliases?: ExistingAliasEntry[]; addresses?: AddressEntry[] };
 type ViolationEntry = NewDocketViolationInput & { id: string; searchText: string; selectedExistingTitle?: string | null; createNew?: boolean; newViolationTitle?: string | null; referenceCode?: string | null; shortLabel?: string | null; description?: string | null; lawReference?: string | null };
@@ -389,7 +389,7 @@ export default function NewDocket() {
         age: '17',
         birthDate: '',
         remarks: `Person remarks ${unique}`,
-        aliases: [{ id: makeId('alias'), aliasName: `Person Alias ${unique}`, aliasType: 'AKA' }],
+        aliases: [{ id: makeId('alias'), aliasName: `Person Alias ${unique}` }],
         existingAliases: [],
         addresses: [{
           ...makeEmptyAddress(defaultAddressTypeId, 'participant-address'),
@@ -423,9 +423,6 @@ export default function NewDocket() {
         roleId,
         participantOrder: 2,
         organizationName: `Test Organization ${unique}`,
-        organizationType: 'ORGANIZATION',
-        registrationNumber: `REG-${unique}`,
-        taxIdentificationNumber: `TIN-${unique}`,
         contactPerson: `Contact ${unique}`,
         contactNumber: '09170000000',
         email: `org-${unique}@example.test`,
@@ -471,7 +468,6 @@ export default function NewDocket() {
       lastName: '',
       suffix: '',
       organizationName: '',
-      organizationType: participantKind === 'ORGANIZATION' ? 'ORGANIZATION' : undefined,
       aliases: [],
       existingAliases: [],
       addresses: [],
@@ -587,7 +583,7 @@ export default function NewDocket() {
       middleName: person.middle_name ?? '',
       suffix: person.suffix ?? '',
       noMiddleName: person.middle_name === 'NMN',
-      existingAliases: Array.isArray(person.person_aliases) ? person.person_aliases.map((alias: any) => ({ aliasName: alias.alias_name ?? '', aliasType: alias.alias_type ?? 'AKA' })) : [],
+      existingAliases: Array.isArray(person.person_aliases) ? person.person_aliases.map((alias: any) => ({ aliasName: alias.alias_name ?? '' })) : [],
       aliases: [],
       addresses: Array.isArray(person.person_addresses) ? person.person_addresses.map((entry: any) => ({
         id: makeId('participant-address'),
@@ -616,9 +612,6 @@ export default function NewDocket() {
       existingOrganizationId: organization.id,
       selectedExistingOrganizationName: organization.organization_name,
       organizationName: organization.organization_name,
-      organizationType: organization.organization_type,
-      registrationNumber: '',
-      taxIdentificationNumber: '',
       contactPerson: '',
       contactNumber: '',
       email: '',
@@ -750,7 +743,7 @@ export default function NewDocket() {
         participantOrder: person.participantOrder ?? index + 1,
         aliases: aliases?.map(({ id: _aliasId, ...alias }) => alias),
         addresses: participantAddresses?.map(({ id: _addressId, suggestionQuery: _sq, selectedExistingLabel: _sel, ...address }) => ({ ...address, newAddress: address.existingAddressId ? undefined : { line1: address.line1, line2: address.line2, barangay: address.barangay, city: address.city, province: address.province, region: address.region, zipCode: address.zipCode, country: address.country } })),
-        newOrganization: person.participantKind === 'ORGANIZATION' && !person.existingOrganizationId ? { organizationName: person.organizationName, organizationType: person.organizationType, registrationNumber: person.registrationNumber, taxIdentificationNumber: person.taxIdentificationNumber, contactPerson: person.contactPerson, contactNumber: person.contactNumber, email: person.email } : undefined,
+        newOrganization: person.participantKind === 'ORGANIZATION' && !person.existingOrganizationId ? { organizationName: person.organizationName, contactPerson: person.contactPerson, contactNumber: person.contactNumber, email: person.email } : undefined,
         newPerson: person.participantKind === 'PERSON' && !person.existingPersonId ? {
           firstName: person.firstName,
           middleName: person.noMiddleName ? 'NMN' : person.middleName,
@@ -1053,9 +1046,6 @@ export default function NewDocket() {
                           <div><Label className="text-xs">Suffix</Label><Input value={person.suffix ?? ''} onChange={(event) => updatePerson(person.id, clearSelectedPersonData(person, { suffix: event.target.value }))} className="mt-1" /></div>
                           </> : <>
                           <div className="md:col-span-3"><Label className="text-xs">Organization Name *</Label><Input value={person.organizationName ?? ''} onChange={(event) => { updatePerson(person.id, clearSelectedOrganizationData({ organizationName: event.target.value })); }} className="mt-1" /></div>
-                          <div><Label className="text-xs">Organization Type</Label><Input value={person.organizationType ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ organizationType: event.target.value }) : { organizationType: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Registration Number</Label><Input value={person.registrationNumber ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ registrationNumber: event.target.value }) : { registrationNumber: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">TIN</Label><Input value={person.taxIdentificationNumber ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ taxIdentificationNumber: event.target.value }) : { taxIdentificationNumber: event.target.value })} className="mt-1" /></div>
                           <div><Label className="text-xs">Contact Person</Label><Input value={person.contactPerson ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ contactPerson: event.target.value }) : { contactPerson: event.target.value })} className="mt-1" /></div>
                           <div><Label className="text-xs">Contact Number</Label><Input value={person.contactNumber ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ contactNumber: event.target.value }) : { contactNumber: event.target.value })} className="mt-1" /></div>
                           <div><Label className="text-xs">Email</Label><Input value={person.email ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ email: event.target.value }) : { email: event.target.value })} className="mt-1" /></div>
@@ -1094,7 +1084,7 @@ export default function NewDocket() {
                         </div>
                       ) : null}
 
-                      <div className="space-y-2 rounded-md bg-muted/40 p-3"><div className="flex items-center justify-between"><div><Label className="text-xs">Aliases</Label>{(person.existingAliases ?? []).length ? <p className="text-[11px] text-muted-foreground">Existing: {(person.existingAliases ?? []).map((alias) => alias.aliasName).filter(Boolean).join(', ')}</p> : null}</div><Button type="button" variant="outline" size="sm" onClick={() => updatePerson(person.id, { aliases: [...(person.aliases ?? []), { id: makeId('alias'), aliasName: '', aliasType: person.participantKind === 'ORGANIZATION' ? null : 'AKA' }] })}>+ Add Alias</Button></div>{(person.aliases ?? []).map((alias) => <div key={alias.id} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_10rem]"><Input placeholder="New alias name" value={alias.aliasName ?? ''} onChange={(event) => updatePerson(person.id, { aliases: (person.aliases ?? []).map((item) => item.id === alias.id ? { ...item, id: item.id ?? makeId('alias'), aliasName: event.target.value } : { ...item, id: item.id ?? makeId('alias') }) as AliasEntry[] })} /><Input placeholder="Alias type" value={alias.aliasType ?? ''} onChange={(event) => updatePerson(person.id, { aliases: (person.aliases ?? []).map((item) => item.id === alias.id ? { ...item, id: item.id ?? makeId('alias'), aliasType: event.target.value } : { ...item, id: item.id ?? makeId('alias') }) as AliasEntry[] })} /></div>)}</div>
+                      <div className="space-y-2 rounded-md bg-muted/40 p-3"><div className="flex items-center justify-between"><div><Label className="text-xs">Aliases</Label>{(person.existingAliases ?? []).length ? <p className="text-[11px] text-muted-foreground">Existing: {(person.existingAliases ?? []).map((alias) => alias.aliasName).filter(Boolean).join(', ')}</p> : null}</div><Button type="button" variant="outline" size="sm" onClick={() => updatePerson(person.id, { aliases: [...(person.aliases ?? []), { id: makeId('alias'), aliasName: '' }] })}>+ Add Alias</Button></div>{(person.aliases ?? []).map((alias) => <Input key={alias.id} placeholder="New alias name" value={alias.aliasName ?? ''} onChange={(event) => updatePerson(person.id, { aliases: (person.aliases ?? []).map((item) => item.id === alias.id ? { ...item, id: item.id ?? makeId('alias'), aliasName: event.target.value } : { ...item, id: item.id ?? makeId('alias') }) as AliasEntry[] })} />)}</div>
 
                       {person.participantKind !== 'ORGANIZATION' ? <div className="space-y-3 rounded-md bg-muted/40 p-3"><div className="flex items-center justify-between"><Label className="text-xs">Addresses</Label><Button type="button" variant="outline" size="sm" onClick={() => addParticipantAddress(person.id)}>+ Add Address</Button></div>{(person.addresses ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No participant addresses added.</p> : null}{(person.addresses ?? []).map((address) => <div key={address.id} className="space-y-2 rounded-md border bg-background p-3"><div className="flex items-start justify-between gap-3"><div className="grid flex-1 grid-cols-1 gap-2 md:grid-cols-[12rem_1fr]"><div><Label className="text-xs">Address Type</Label><Select value={address.addressTypeId ? address.addressTypeId.toString() : ''} onValueChange={(value) => updateParticipantAddress(person.id, address.id, { addressTypeId: toNumber(value), existingRelation: false })}><SelectTrigger className="mt-1"><SelectValue placeholder="Select type" /></SelectTrigger><SelectContent>{lookups.addressTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.display_label}</SelectItem>)}</SelectContent></Select></div><div><Label className="text-xs">Existing address or new address</Label><Input value={address.suggestionQuery ?? ''} placeholder="Search existing address" onChange={(event) => { updateParticipantAddress(person.id, address.id, { suggestionQuery: event.target.value, existingAddressId: null, existingRelation: false }); loadAddressSuggestions(address.id, event.target.value); }} className="mt-1" /></div></div><Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => updatePerson(person.id, { addresses: (person.addresses ?? []).filter((item) => item.id !== address.id) as AddressEntry[] })}><X className="h-4 w-4" /></Button></div>{addressSuggestions[address.id]?.length ? <div className="rounded-md border bg-background p-2 text-sm shadow-sm"><p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing address suggestions</p><div className="flex flex-wrap gap-2">{addressSuggestions[address.id].map((suggestion) => <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyParticipantAddressSuggestion(person.id, address.id, suggestion)}>{formatAddress(suggestion) || `Address #${suggestion.id}`}</Button>)}</div></div> : null}<div className="grid grid-cols-1 gap-2 md:grid-cols-4"><div><Label className="text-xs">Line 1</Label><Input value={address.line1 ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { line1: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Line 2</Label><Input value={address.line2 ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { line2: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Barangay</Label><Input value={address.barangay ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { barangay: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">City</Label><Input value={address.city ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { city: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Province</Label><Input value={address.province ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { province: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Region</Label><Input value={address.region ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { region: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">ZIP Code</Label><Input value={address.zipCode ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { zipCode: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Country</Label><Input value={address.country ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { country: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><label className="flex items-center gap-2 text-xs"><Checkbox checked={address.isPrimary === true} onCheckedChange={(checked) => updateParticipantAddress(person.id, address.id, { isPrimary: checked === true })} /> Primary</label><div className="md:col-span-3"><Label className="text-xs">Remarks</Label><Input value={address.remarks ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { remarks: event.target.value })} className="mt-1" /></div></div></div>)}</div> : null}
 
