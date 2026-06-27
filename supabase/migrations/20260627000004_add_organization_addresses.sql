@@ -22,7 +22,10 @@ CREATE POLICY organization_addresses_select_authenticated ON public.organization
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.organization_addresses TO authenticated, service_role;
 GRANT USAGE, SELECT ON SEQUENCE public.organization_addresses_id_seq TO authenticated, service_role;
 
-CREATE OR REPLACE VIEW public.v_case_participants_detail AS
+DROP VIEW IF EXISTS public.v_case_participant_details;
+DROP VIEW IF EXISTS public.v_case_participants_detail;
+
+CREATE VIEW public.v_case_participants_detail AS
 SELECT
   cp.*,
   cppd.remarks,
@@ -49,7 +52,7 @@ LEFT JOIN LATERAL (SELECT jsonb_agg(jsonb_build_object('id', oaddr.id, 'address_
 
 GRANT SELECT ON public.v_case_participants_detail TO anon, authenticated, service_role;
 
-CREATE OR REPLACE VIEW public.v_case_participant_details AS SELECT * FROM public.v_case_participants_detail;
+CREATE VIEW public.v_case_participant_details AS SELECT * FROM public.v_case_participants_detail;
 GRANT SELECT ON public.v_case_participant_details TO anon, authenticated, service_role;
 
 -- Add organization address support for docket participant details and manual docket creation.
