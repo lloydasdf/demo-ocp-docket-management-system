@@ -217,7 +217,7 @@ export default function NewDocket() {
   const [caseClassificationId, setCaseClassificationId] = useState('');
   const [caseAlsoRaffled, setCaseAlsoRaffled] = useState(false);
   const [assignedProsecutorId, setAssignedProsecutorId] = useState('');
-  const [assignmentDate, setAssignmentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [assignmentRemarks, setAssignmentRemarks] = useState('Assigned during manual docket creation');
   const [regionCode, setRegionCode] = useState(defaultRegionCode);
   const [summaryText, setSummaryText] = useState('');
   const [remarks, setRemarks] = useState('');
@@ -790,7 +790,7 @@ export default function NewDocket() {
       caseReceivedDescription: caseReceivedDescription.trim() || null,
       isSummaryProcedure,
       caseAlsoRaffled,
-      assignmentDate: dateReceived,
+      assignmentRemarks: caseAlsoRaffled ? assignmentRemarks.trim() || null : null,
       assignedProsecutorId: caseAlsoRaffled && assignedProsecutorId ? toNumber(assignedProsecutorId) : null,
       caseClassificationId: caseClassificationId ? toNumber(caseClassificationId) : null,
       placeOfCommission: placeOfCommission ? { ...placeOfCommission, newAddress: placeOfCommission.existingAddressId ? undefined : { line1: placeOfCommission.line1, line2: placeOfCommission.line2, barangay: placeOfCommission.barangay, city: placeOfCommission.city, province: placeOfCommission.province, region: placeOfCommission.region, zipCode: placeOfCommission.zipCode, country: placeOfCommission.country } } : null,
@@ -1055,7 +1055,7 @@ export default function NewDocket() {
 
               <div className="space-y-4 rounded-lg border p-4">
                 <h3 className="font-semibold">Assignment</h3>
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-4">
                   <div>
                     <div className="flex items-center gap-2"><Checkbox id="case-also-raffled" checked={caseAlsoRaffled} onCheckedChange={(checked) => setCaseAlsoRaffled(checked === true)} /><Label htmlFor="case-also-raffled">Case also raffled</Label></div><Label htmlFor="assigned-prosecutor" className="mt-3 block">Prosecutor</Label>
                     <Select value={assignedProsecutorId || 'none'} onValueChange={(value) => setAssignedProsecutorId(value === 'none' ? '' : value)} disabled={isLoadingLookups || !caseAlsoRaffled}>
@@ -1072,7 +1072,19 @@ export default function NewDocket() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div><Label htmlFor="assignment-date">Date of Assignment</Label><Input id="assignment-date" type="date" value={dateReceived} readOnly disabled className="mt-1" /></div>
+                  {caseAlsoRaffled ? (
+                    <div>
+                      <Label htmlFor="assignment-remarks">Assignment remarks</Label>
+                      <Input
+                        id="assignment-remarks"
+                        value={assignmentRemarks}
+                        onChange={(event) => setAssignmentRemarks(event.target.value)}
+                        placeholder="Optional assignment remarks"
+                        className="mt-1"
+                      />
+                      <p className="mt-1 text-xs text-muted-foreground">Leave blank to save no assignment remark. Assignment date defaults to the docket received date.</p>
+                    </div>
+                  ) : null}
                 </div>
               </div>
 

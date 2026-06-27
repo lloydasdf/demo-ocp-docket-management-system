@@ -1939,7 +1939,7 @@ export interface NewDocketEntryInput {
   caseReceivedDescription?: string | null;
   isSummaryProcedure?: boolean | null;
   caseAlsoRaffled?: boolean | null;
-  assignmentDate?: string | null;
+  assignmentRemarks?: string | null;
   assignedProsecutorId?: number | null;
   participants: NewDocketParticipantInput[];
   placeOfCommission?: NewDocketAddressInput | null;
