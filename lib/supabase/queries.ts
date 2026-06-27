@@ -783,6 +783,7 @@ export type CaseDetailsPageViewRecord = Pick<
   case_classification_label: string | null;
   case_classification_description: string | null;
   case_addresses: Json | null;
+  notes: Json | null;
   case_classifications:
     | { code?: string | null; display_label?: string | null; name?: string | null }
     | null;
@@ -1955,6 +1956,7 @@ export interface NewDocketEntryInput {
   placeOfCommission?: NewDocketAddressInput | null;
   addresses: NewDocketAddressInput[];
   violations: NewDocketViolationInput[];
+  notes?: string | null;
 }
 
 export interface NewDocketEntryResult {

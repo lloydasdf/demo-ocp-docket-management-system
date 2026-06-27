@@ -1622,6 +1622,7 @@ DECLARE
   v_case_classification_id bigint := nullif(p_payload->>'caseClassificationId','')::bigint; v_region_code text := nullif(btrim(p_payload->>'regionCode'), ''); v_month_code text; v_docket_number int; v_display text; v_dt_prefix text;
   v_person_id bigint; v_org_id bigint; v_name text; v_cp_id bigint; v_address_id bigint; v_violation_id bigint; v_received_event_type_id bigint; v_raffled_event_type_id bigint; v_event_id bigint; v_status_history_id bigint; v_assignment_event_id bigint; v_assignment_id bigint;
   v_assigned_prosecutor_id bigint := CASE WHEN COALESCE((p_payload->>'caseAlsoRaffled')::boolean,false) THEN nullif(p_payload->>'assignedProsecutorId','')::bigint ELSE NULL END; v_assignment_date date := v_date_received; v_assignment_remarks text := CASE WHEN p_payload ? 'assignmentRemarks' THEN nullif(btrim(p_payload->>'assignmentRemarks'),'') ELSE 'Assigned during manual docket creation' END;
+  v_case_note_text text := nullif(btrim(p_payload->>'notes'),'');
   v_case_received_description text := COALESCE(nullif(btrim(p_payload->>'caseReceivedDescription'),''), 'Case received on ' || to_char(v_date_received, 'FMMM/FMDD/YYYY'));
   v_seen_violation_ids bigint[] := '{}'; v_created_persons int := 0; v_reused_persons int := 0; v_created_addresses int := 0; v_reused_addresses int := 0; v_created_violations int := 0; v_reused_violations int := 0; v_participant_count int := 0; v_violation_count int := 0;
 BEGIN
@@ -1645,6 +1646,7 @@ BEGIN
   INSERT INTO public.cases(docket_type_id,docket_year,docket_number,date_received,created_by_user_id,updated_by_user_id,is_archived,region_code,docket_month_code,case_classification_id) VALUES (v_docket_type_id,v_docket_year,v_docket_number,v_date_received,v_user_id,v_user_id,false,v_region_code,v_month_code,v_case_classification_id) RETURNING id INTO v_case_id;
   INSERT INTO public.case_private_details(case_id,source,remarks,is_summary_procedure,summary_text,current_status_id,current_status_date) VALUES (v_case_id,'MANUAL_ENTRY',nullif(btrim(p_payload->>'remarks'),''),COALESCE((p_payload->>'isSummaryProcedure')::boolean,false),nullif(btrim(p_payload->>'summaryText'),''),v_initial_status_id,v_date_received);
   INSERT INTO public.docket_number_history(case_id,docket_type_id,docket_year,docket_number,docket_display_number,event_type,changed_by_user_id,changed_at,reason) VALUES (v_case_id,v_docket_type_id,v_docket_year,v_docket_number,v_display,'ASSIGNED',v_user_id,now(),'Manual docket creation');
+  IF v_case_note_text IS NOT NULL THEN INSERT INTO public.notes(case_id,created_by_user_id,note_text,is_private) VALUES (v_case_id,v_user_id,v_case_note_text,false); END IF;
 
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_payload->'participants') LOOP
     IF (nullif(v_item->>'existingPersonId','') IS NOT NULL OR v_item ? 'newPerson') AND (nullif(v_item->>'existingOrganizationId','') IS NOT NULL OR v_item ? 'newOrganization') THEN RAISE EXCEPTION 'Participant cannot contain both person and organization identity'; END IF;
@@ -1702,6 +1704,7 @@ BEGIN
     'inserted', jsonb_build_object(
       'cases', jsonb_build_object('id', v_case_id, 'columns', jsonb_build_array('docket_type_id','docket_year','docket_number','date_received','created_by_user_id','updated_by_user_id','is_archived','region_code','docket_month_code','case_classification_id')),
       'case_private_details', jsonb_build_object('columns', jsonb_build_array('case_id','source','remarks','is_summary_procedure','summary_text','current_status_id','current_status_date')),
+      'notes', CASE WHEN v_case_note_text IS NULL THEN NULL ELSE jsonb_build_object('columns', jsonb_build_array('case_id','created_by_user_id','note_text','is_private')) END,
       'docket_number_history', jsonb_build_object('columns', jsonb_build_array('case_id','docket_type_id','docket_year','docket_number','docket_display_number','event_type','changed_by_user_id','changed_at','reason')),
       'case_participants', jsonb_build_object('count', v_participant_count, 'columns', jsonb_build_array('case_id','person_id','organization_id','role_id','participant_order','participant_kind','display_name_snapshot')),
       'case_addresses', jsonb_build_object('columns', jsonb_build_array('case_id','address_id','address_type_id','is_primary','remarks')),
@@ -13372,6 +13375,11 @@ CREATE VIEW public.v_case_details_page AS
            FROM (public.case_violations cv
              LEFT JOIN public.violations v ON ((v.id = cv.violation_id)))
           GROUP BY cv.case_id
+        ), note_summary AS (
+         SELECT n.case_id,
+            jsonb_agg(jsonb_build_object('id', n.id, 'note_text', n.note_text, 'is_private', n.is_private, 'created_by_user_id', n.created_by_user_id, 'created_at', n.created_at, 'updated_at', n.updated_at) ORDER BY n.created_at DESC, n.id DESC) AS notes
+           FROM public.notes n
+          GROUP BY n.case_id
         ), case_address_summary AS (
          SELECT ca.case_id,
             jsonb_agg(jsonb_build_object('id', ca.id, 'address_id', ca.address_id, 'address_type_id', ca.address_type_id, 'address_type_label', at.display_label, 'is_primary', ca.is_primary, 'remarks', ca.remarks, 'addresses', jsonb_build_object('barangay', a.barangay, 'city', a.city, 'country', a.country, 'line1', a.line1, 'line2', a.line2, 'province', a.province, 'region', a.region, 'zip_code', a.zip_code)) ORDER BY ca.is_primary DESC, ca.id) AS case_addresses
@@ -13433,8 +13441,9 @@ CREATE VIEW public.v_case_details_page AS
     NULL::text AS court_codes,
     NULL::text AS criminal_case_numbers,
     NULL::boolean AS court_needs_review,
-    COALESCE(cas.case_addresses, '[]'::jsonb) AS case_addresses
-   FROM (((((((((public.cases c
+    COALESCE(cas.case_addresses, '[]'::jsonb) AS case_addresses,
+    COALESCE(ns.notes, '[]'::jsonb) AS notes
+   FROM ((((((((((public.cases c
      JOIN public.docket_types dt ON ((dt.id = c.docket_type_id)))
      LEFT JOIN public.case_private_details cpd ON ((cpd.case_id = c.id)))
      LEFT JOIN public.case_statuses cs ON ((cs.id = cpd.current_status_id)))
@@ -13443,6 +13452,7 @@ CREATE VIEW public.v_case_details_page AS
      LEFT JOIN public.staff st ON ((st.id = la.staff_id)))
      LEFT JOIN public.case_classifications cc ON ((cc.id = c.case_classification_id)))
      LEFT JOIN violation_summary vs ON ((vs.case_id = c.id)))
+     LEFT JOIN note_summary ns ON ((ns.case_id = c.id)))
      LEFT JOIN case_address_summary cas ON ((cas.case_id = c.id)))
   WHERE (NOT c.is_archived);
 

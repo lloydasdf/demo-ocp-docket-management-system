@@ -222,7 +222,7 @@ export default function NewDocket() {
   const [assignmentRemarks, setAssignmentRemarks] = useState('Assigned during manual docket creation');
   const [regionCode, setRegionCode] = useState(defaultRegionCode);
   const [summaryText, setSummaryText] = useState('');
-  const [remarks, setRemarks] = useState('');
+  const [notes, setNotes] = useState('');
   const [isSummaryProcedure, setIsSummaryProcedure] = useState(false);
 
   useEffect(() => {
@@ -409,7 +409,7 @@ export default function NewDocket() {
   const resetForm = () => {
     setRegionCode(defaultRegionCode);
     setSummaryText('');
-    setRemarks('');
+    setNotes('');
     setCaseClassificationId('');
     setIsSummaryProcedure(false);
     setCaseAlsoRaffled(false);
@@ -432,7 +432,7 @@ export default function NewDocket() {
 
     setCaseClassificationId(lookups.caseClassifications[0]?.id?.toString() ?? '');
     setSummaryText(`Test summary ${unique}`);
-    setRemarks(`Test remarks ${unique}`);
+    setNotes(`Test notes ${unique}`);
     setCaseAlsoRaffled(Boolean(prosecutor));
     setAssignedProsecutorId(prosecutor?.id?.toString() ?? '');
 
@@ -803,7 +803,7 @@ export default function NewDocket() {
       regionCode: regionCode || defaultRegionCode,
       docketMonthCode: docketMonthCode === '—' ? null : docketMonthCode,
       summaryText: summaryText || null,
-      remarks: remarks || null,
+      notes: notes || null,
       caseReceivedDescription: caseReceivedDescription.trim() || null,
       isSummaryProcedure,
       caseAlsoRaffled,
@@ -1007,8 +1007,8 @@ export default function NewDocket() {
                   </div>
 
                   <div>
-                    <Label htmlFor="remarks">Remarks</Label>
-                    <Textarea id="remarks" placeholder="Optional remarks" value={remarks} onChange={(event) => setRemarks(event.target.value)} className="mt-1" />
+                    <Label htmlFor="notes">Notes</Label>
+                    <Textarea id="notes" placeholder="Optional case note stored in notes table" value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-1" />
                   </div>
                 </div>
               </div>

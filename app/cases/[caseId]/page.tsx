@@ -36,6 +36,16 @@ import {
 } from "@/lib/supabase/queries";
 import type { TableRow as SupabaseTableRow } from "@/lib/supabase/types";
 
+
+type CaseNoteRecord = {
+  id?: number | null;
+  note_text?: string | null;
+  is_private?: boolean | null;
+  created_by_user_id?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 type CaseAddressRecord = {
   id?: number | null;
   address_type_label?: string | null;
@@ -64,6 +74,22 @@ type CaseDetailsState = {
   attachments: SupabaseTableRow<"case_attachment_index">[];
   warnings: string[];
 };
+
+function caseNotes(details: CaseDetailsPageViewRecord | null): CaseNoteRecord[] {
+  if (!details?.notes || !Array.isArray(details.notes)) {
+    return [];
+  }
+
+  return details.notes.filter(
+    (note): note is CaseNoteRecord =>
+      Boolean(note) &&
+      typeof note === "object" &&
+      !Array.isArray(note) &&
+      typeof (note as CaseNoteRecord).note_text === "string" &&
+      (note as CaseNoteRecord).note_text?.trim() !== "",
+  );
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) {
     return "—";
@@ -670,6 +696,32 @@ export default function CaseDetailsPage() {
                                 </div>
                               </div>
                             ))}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
+
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Notes</CardTitle>
+                    <CardDescription>Case notes recorded for this docket.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {caseNotes(data.details).length === 0 ? (
+                      <SectionEmpty>No notes recorded.</SectionEmpty>
+                    ) : (
+                      caseNotes(data.details).map((note, index) => (
+                        <div
+                          key={note.id ?? `note-${index}`}
+                          className="rounded-md border bg-muted/30 p-3"
+                        >
+                          <p className="whitespace-pre-wrap text-sm">{note.note_text}</p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            <span>{formatDate(note.created_at)}</span>
+                            {note.is_private ? <Badge variant="secondary">Private</Badge> : null}
                           </div>
                         </div>
                       ))
