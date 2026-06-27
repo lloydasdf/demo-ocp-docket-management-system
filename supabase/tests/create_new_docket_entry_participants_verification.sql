@@ -32,6 +32,10 @@ BEGIN
   VALUES ('Enhanced','Prosecutor','Enhanced Prosecutor','ENH',true)
   RETURNING id INTO v_prosecutor_id;
 
+  INSERT INTO auth.users(id,aud,role,email,email_confirmed_at,raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
+  VALUES (v_auth_uid,'authenticated','authenticated','enhanced-' || v_auth_uid || '@example.test',now(),'{"provider":"email","providers":["email"]}'::jsonb,'{}'::jsonb,now(),now())
+  ON CONFLICT (id) DO NOTHING;
+
   INSERT INTO public.users(email,password_hash,is_active,auth_user_id,prosecutor_id)
   VALUES ('enhanced-' || v_auth_uid || '@example.test','test-only',true,v_auth_uid,v_prosecutor_id)
   RETURNING id INTO v_user_id;
@@ -81,8 +85,8 @@ BEGIN
   IF has_table_privilege('anon', 'public.v_organization_search', 'SELECT') THEN RAISE EXCEPTION 'anon must not have SELECT on v_organization_search'; END IF;
   IF NOT has_table_privilege('authenticated', 'public.v_organization_search', 'SELECT') THEN RAISE EXCEPTION 'authenticated must have SELECT on v_organization_search'; END IF;
 
-  INSERT INTO public.organizations(organization_name,organization_type,created_by_user_id,updated_by_user_id)
-  VALUES ('Existing Organization','ORGANIZATION',v_user_id,v_user_id)
+  INSERT INTO public.organizations(organization_name,created_by_user_id,updated_by_user_id)
+  VALUES ('Existing Organization',v_user_id,v_user_id)
   RETURNING id INTO v_existing_org_id;
 
   INSERT INTO public.organization_aliases(organization_id,alias_name,source,is_active)

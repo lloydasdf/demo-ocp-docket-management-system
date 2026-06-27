@@ -22,6 +22,10 @@ BEGIN
   VALUES ('Verification','Prosecutor','Verification Prosecutor','VERIF',true)
   RETURNING id INTO v_prosecutor_id;
 
+  INSERT INTO auth.users(id,aud,role,email,email_confirmed_at,raw_app_meta_data,raw_user_meta_data,created_at,updated_at)
+  VALUES (v_auth_uid,'authenticated','authenticated','verification-' || v_auth_uid || '@example.test',now(),'{"provider":"email","providers":["email"]}'::jsonb,'{}'::jsonb,now(),now())
+  ON CONFLICT (id) DO NOTHING;
+
   INSERT INTO public.users(email,password_hash,is_active,auth_user_id,prosecutor_id)
   VALUES ('verification-' || v_auth_uid || '@example.test','test-only',true,v_auth_uid,v_prosecutor_id)
   RETURNING id INTO v_user_id;
