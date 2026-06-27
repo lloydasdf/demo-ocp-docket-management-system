@@ -408,15 +408,12 @@ export default function CaseDetailsPage() {
                           displayValue(data.details.docket_number)}
                       </CardTitle>
                       {classificationLabel(data.details) ? (
-                        <Badge
-                          variant="outline"
-                          className="border-blue-200 bg-blue-50 text-blue-700"
-                        >
+                        <Badge variant="outline">
                           {classificationLabel(data.details)}
                         </Badge>
                       ) : null}
                       {data.details.is_summary_procedure ? (
-                        <Badge className="border-transparent bg-blue-500 text-white">Summary Procedure</Badge>
+                        <Badge variant="secondary">Summary Procedure</Badge>
                       ) : null}
                     </div>
                     <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
