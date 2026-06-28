@@ -25,6 +25,10 @@ DECLARE
   v_new jsonb;
   v_case_id bigint;
 BEGIN
+  IF nullif(trim(p_edit_reason), '') IS NULL THEN
+    RAISE EXCEPTION 'Edit reason is required';
+  END IF;
+
   SELECT to_jsonb(ce), ce.case_id
   INTO v_old, v_case_id
   FROM public.case_events ce
