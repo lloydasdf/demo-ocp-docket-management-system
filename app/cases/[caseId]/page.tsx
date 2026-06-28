@@ -751,6 +751,7 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
   const [mode, setMode] = useState<"add" | "edit">("add");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [placeActionReasons, setPlaceActionReasons] = useState<Record<number, string>>({});
 
   const loadPlaces = useCallback(async () => {
     const result = await getCasePlaces(caseId, showRemoved);
@@ -765,12 +766,20 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
   const optionLabel = (option: RefOption) => option.display_label ?? option.name ?? option.code ?? String(option.id);
 
   async function save(action: "add" | "edit" | "remove" | "restore", place?: CasePlaceRecord) {
-    if (!reason.trim()) { setError("Reason is required."); return; }
+    const actionReason = place ? (placeActionReasons[place.id] ?? "") : reason;
+    if (!actionReason.trim()) { setError(action === "remove" || action === "restore" ? "Remove/restore reason is required." : "Reason is required."); return; }
     setIsSaving(true);
     setError(null);
-    const result = await manageCasePlaces({ caseId, action, reason: reason.trim(), place: place ? { id: place.id } : formData });
+    const result = await manageCasePlaces({ caseId, action, reason: actionReason.trim(), place: place ? { id: place.id } : formData });
     setIsSaving(false);
     if (result.error) { setError(result.error.message); return; }
+    if (place) {
+      setPlaceActionReasons((current) => {
+        const next = { ...current };
+        delete next[place.id];
+        return next;
+      });
+    }
     resetForm();
     await loadPlaces();
     await onSaved();
@@ -797,8 +806,20 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
                   </div>
                   {place.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Removed {formatDate(place.deleted_at)}{place.deleted_by_user_id ? ` by user #${place.deleted_by_user_id}` : ""} — {place.delete_reason ?? "No reason recorded"}</p> : null}
                 </div>
-                <div className="flex gap-2">
-                  {place.is_deleted ? <Button size="sm" variant="outline" onClick={() => save("restore", place)}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setMode("edit"); setFormData(placeToForm(place)); setReason(""); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => save("remove", place)}>Remove</Button></>}
+                <div className="flex min-w-56 flex-col gap-2">
+                  <Input
+                    placeholder={place.is_deleted ? "Restore reason" : "Remove reason"}
+                    value={placeActionReasons[place.id] ?? ""}
+                    onChange={(event) =>
+                      setPlaceActionReasons((current) => ({
+                        ...current,
+                        [place.id]: event.target.value,
+                      }))
+                    }
+                  />
+                  <div className="flex gap-2">
+                    {place.is_deleted ? <Button size="sm" variant="outline" onClick={() => save("restore", place)}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setMode("edit"); setFormData(placeToForm(place)); setReason(""); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => save("remove", place)}>Remove</Button></>}
+                  </div>
                 </div>
               </div>
             </div>
@@ -841,6 +862,7 @@ function ManageNotesDialog({ caseId, open, onOpenChange, onSaved }: { caseId: nu
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [noteActionReasons, setNoteActionReasons] = useState<Record<number, string>>({});
 
   const loadNotes = useCallback(async () => {
     const result = await getCaseManagedNotes(caseId, showDeleted);
@@ -851,11 +873,19 @@ function ManageNotesDialog({ caseId, open, onOpenChange, onSaved }: { caseId: nu
   useEffect(() => { if (open) void loadNotes(); }, [loadNotes, open]);
   const resetForm = () => { setEditingId(null); setNoteText(""); setIsPrivate(false); setReason(""); setError(null); };
   async function save(action: "add" | "edit" | "remove" | "restore", note?: CaseNoteManagementRecord) {
-    if (!reason.trim()) { setError("Reason is required."); return; }
+    const actionReason = note ? (noteActionReasons[note.id] ?? "") : reason;
+    if (!actionReason.trim()) { setError(action === "remove" || action === "restore" ? "Remove/restore reason is required." : "Reason is required."); return; }
     setIsSaving(true); setError(null);
-    const result = await manageCaseNotes({ caseId, action, reason: reason.trim(), note: note ? { id: note.id } : { id: editingId, noteText, isPrivate } });
+    const result = await manageCaseNotes({ caseId, action, reason: actionReason.trim(), note: note ? { id: note.id } : { id: editingId, noteText, isPrivate } });
     setIsSaving(false);
     if (result.error) { setError(result.error.message); return; }
+    if (note) {
+      setNoteActionReasons((current) => {
+        const next = { ...current };
+        delete next[note.id];
+        return next;
+      });
+    }
     resetForm(); await loadNotes(); await onSaved();
   }
   return (
@@ -863,7 +893,7 @@ function ManageNotesDialog({ caseId, open, onOpenChange, onSaved }: { caseId: nu
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader><DialogTitle>Manage Notes</DialogTitle><DialogDescription>Add, update, remove, or restore notes. Changes create audit logs only.</DialogDescription></DialogHeader>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showDeleted} onChange={(event) => setShowDeleted(event.target.checked)} /> Show deleted notes</label>
-        <div className="space-y-3">{notes.length === 0 ? <SectionEmpty>No notes recorded.</SectionEmpty> : notes.map((note) => <div key={note.id} className="rounded-lg border p-3 text-sm"><div className="flex items-start justify-between gap-3"><div><p className="whitespace-pre-wrap">{note.note_text}</p><div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground"><span>{formatDate(note.created_at)}</span>{note.is_private ? <Badge variant="secondary">Private</Badge> : null}{note.is_deleted ? <Badge variant="destructive">DELETED</Badge> : null}</div>{note.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Deleted {formatDate(note.deleted_at)}{note.deleted_by_user_id ? ` by user #${note.deleted_by_user_id}` : ""} — {note.delete_reason ?? "No reason recorded"}</p> : null}</div><div className="flex gap-2">{note.is_deleted ? <Button size="sm" variant="outline" onClick={() => save("restore", note)}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setEditingId(note.id); setNoteText(note.note_text); setIsPrivate(note.is_private); setReason(""); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => save("remove", note)}>Remove</Button></>}</div></div></div>)}</div>
+        <div className="space-y-3">{notes.length === 0 ? <SectionEmpty>No notes recorded.</SectionEmpty> : notes.map((note) => <div key={note.id} className="rounded-lg border p-3 text-sm"><div className="flex items-start justify-between gap-3"><div><p className="whitespace-pre-wrap">{note.note_text}</p><div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground"><span>{formatDate(note.created_at)}</span>{note.is_private ? <Badge variant="secondary">Private</Badge> : null}{note.is_deleted ? <Badge variant="destructive">DELETED</Badge> : null}</div>{note.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Deleted {formatDate(note.deleted_at)}{note.deleted_by_user_id ? ` by user #${note.deleted_by_user_id}` : ""} — {note.delete_reason ?? "No reason recorded"}</p> : null}</div><div className="flex min-w-56 flex-col gap-2"><Input placeholder={note.is_deleted ? "Restore reason" : "Remove reason"} value={noteActionReasons[note.id] ?? ""} onChange={(event) => setNoteActionReasons((current) => ({ ...current, [note.id]: event.target.value }))} /><div className="flex gap-2">{note.is_deleted ? <Button size="sm" variant="outline" onClick={() => save("restore", note)}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setEditingId(note.id); setNoteText(note.note_text); setIsPrivate(note.is_private); setReason(""); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => save("remove", note)}>Remove</Button></>}</div></div></div></div>)}</div>
         <div className="grid gap-4 rounded-lg border p-4"><h3 className="font-semibold">{editingId ? "Edit Note" : "Add Note"}</h3><FieldTextarea label="Note" value={noteText} onChange={setNoteText} /><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={isPrivate} onChange={(event) => setIsPrivate(event.target.checked)} /> Private</label><FieldTextarea label="Reason for edit" value={reason} onChange={setReason} /></div>
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
         <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>{editingId ? <Button variant="outline" onClick={resetForm}>Cancel edit</Button> : null}<Button disabled={isSaving} onClick={() => save(editingId ? "edit" : "add")}>{isSaving ? "Saving..." : editingId ? "Save note" : "Add note"}</Button></DialogFooter>
