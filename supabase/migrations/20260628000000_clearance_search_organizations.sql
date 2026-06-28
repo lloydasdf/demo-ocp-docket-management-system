@@ -84,7 +84,7 @@ begin
 
   insert into public.clearance_phonetic_name_tokens (person_id, organization_id, source_table, source_column, source_value, token, token_order, token_len, phonetic_primary, phonetic_alt, phonetic_codes)
   select x.person_id, x.organization_id, x.source_table, x.source_column, x.source_value,
-    tok.token, tok.token_order::integer, length(tok.token), dmeta(tok.token), dmetaphone_alt(tok.token), public.clearance_phonetic_codes(tok.token)
+    tok.token, tok.token_order::integer, length(tok.token), dmetaphone(tok.token), dmetaphone_alt(tok.token), public.clearance_phonetic_codes(tok.token)
   from (
     select p.id as person_id, null::integer as organization_id, 'persons' as source_table, 'full_name' as source_column, p.full_name as source_value from public.persons p where coalesce(p.is_active, true) = true
     union all select pa.person_id, null::integer, 'person_aliases', 'alias_name', pa.alias_name from public.person_aliases pa join public.persons p on p.id = pa.person_id where coalesce(pa.is_active, true) = true and coalesce(p.is_active, true) = true
@@ -147,12 +147,141 @@ $$;
 create or replace function public.search_clearance_possible_matches_v31(p_query text, p_search_type text default 'all', p_limit integer default 50)
 returns table(person_id integer, organization_id integer, participant_kind text, case_id integer, docket_number text, case_number text, full_name text, aliases text[], status text, last_updated timestamptz, confidence_score integer, match_details text, match_type text, role_label text, age text, violations text)
 language sql stable as $$
-  select * from public.search_clearance_records(p_query, p_search_type, p_limit)
-  union all
-  select r.person_id, r.organization_id, r.participant_kind, r.case_id, r.docket_number, r.case_number, r.full_name, r.aliases, r.status, r.last_updated,
-    greatest(55, least(86, (70 + 20 * similarity(public.clearance_exact_norm(p_query), public.clearance_exact_norm(r.full_name)))::integer)),
-    'Fuzzy organization/person name match', 'fuzzy', r.role_label, r.age, r.violations
-  from public.search_clearance_records('', 'all', 1) r where false;
+  with normalized as (
+    select
+      nullif(trim(p_query), '') as q,
+      public.clearance_exact_tokens(p_query) as q_tokens,
+      cardinality(public.clearance_exact_tokens(p_query)) as q_token_count,
+      case when p_search_type in ('name', 'alias', 'all') then p_search_type else 'all' end as search_type,
+      least(greatest(coalesce(p_limit, 50), 1), 100) as safe_limit
+  ),
+  query_tokens as (
+    select
+      u.token,
+      length(u.token) as token_len,
+      left(u.token, 1) as first_char,
+      left(u.token, 2) as first2,
+      left(u.token, 3) as first3,
+      right(u.token, 2) as last2,
+      right(u.token, 3) as last3,
+      public.clearance_ck_key(u.token) as ck_key,
+      public.clearance_bv_key(u.token) as bv_key,
+      public.clearance_phf_key(u.token) as phf_key,
+      public.clearance_sz_key(u.token) as sz_key,
+      public.clearance_token_skeleton(u.token) as skeleton
+    from normalized n
+    cross join lateral unnest(n.q_tokens) as u(token)
+  ),
+  raw_token_candidates as materialized (
+    select
+      t.person_id,
+      t.organization_id,
+      t.source_value,
+      t.source_table,
+      q.token as query_token,
+      t.token as matched_token,
+      case
+        when t.token = q.token then 'exact'
+        when t.ck_key = q.ck_key then 'c/k variant'
+        when t.bv_key = q.bv_key then 'b/v variant'
+        when t.phf_key = q.phf_key then 'ph/f variant'
+        when t.sz_key = q.sz_key then 's/z variant'
+        when t.skeleton = q.skeleton then 'skeleton variant'
+        else 'fuzzy'
+      end as raw_reason,
+      case
+        when t.token = q.token then 1
+        when t.ck_key = q.ck_key or t.bv_key = q.bv_key or t.phf_key = q.phf_key or t.sz_key = q.sz_key then 2
+        when t.skeleton = q.skeleton then 3
+        else 4
+      end as raw_priority
+    from query_tokens q
+    join public.clearance_possible_name_tokens t
+      on (
+        t.token = q.token
+        or t.ck_key = q.ck_key
+        or t.bv_key = q.bv_key
+        or t.phf_key = q.phf_key
+        or t.sz_key = q.sz_key
+        or (q.token_len >= 4 and t.token_len >= 4 and t.skeleton = q.skeleton)
+        or (q.token_len >= 4 and t.token_len >= 4 and t.first2 = q.first2 and t.last2 = q.last2)
+        or (q.token_len >= 5 and t.token_len >= 5 and t.first_char = q.first_char and levenshtein_less_equal(t.token, q.token, 2) <= 2)
+      )
+    join normalized n on true
+    where n.q is not null
+      and (
+        n.search_type = 'all'
+        or (n.search_type = 'name' and t.source_table in ('persons', 'organizations'))
+        or (n.search_type = 'alias' and t.source_table in ('person_aliases', 'organization_aliases'))
+      )
+  ),
+  entity_candidates as (
+    select
+      person_id,
+      organization_id,
+      min(raw_priority) as best_priority,
+      count(distinct query_token) as matched_query_tokens,
+      (array_agg(source_value order by raw_priority, source_value))[1] as best_source_value,
+      string_agg(distinct raw_reason, ', ' order by raw_reason) as reasons
+    from raw_token_candidates
+    group by person_id, organization_id
+  ),
+  fuzzy_rows as (
+    select
+      r.person_id,
+      r.organization_id,
+      r.participant_kind,
+      r.case_id,
+      r.docket_number,
+      r.case_number,
+      r.full_name,
+      r.aliases,
+      r.status,
+      r.last_updated,
+      greatest(
+        55,
+        least(
+          89,
+          58
+            + case when ec.matched_query_tokens >= (select q_token_count from normalized) and (select q_token_count from normalized) >= 2 then 18 else 0 end
+            + case ec.best_priority when 1 then 10 when 2 then 8 when 3 then 6 else 3 end
+            + least(8, ec.matched_query_tokens * 2)
+        )
+      )::integer as confidence_score,
+      'Possible fuzzy token match (' || ec.reasons || '): ' || coalesce(ec.best_source_value, r.full_name) as match_details,
+      case when ec.best_priority <= 2 then 'variant' else 'fuzzy' end as match_type,
+      r.role_label,
+      r.age,
+      r.violations
+    from entity_candidates ec
+    join lateral public.search_clearance_records(
+      coalesce(
+        (select p.full_name from public.persons p where p.id = ec.person_id),
+        (select o.organization_name from public.organizations o where o.id = ec.organization_id),
+        ec.best_source_value
+      ),
+      'name',
+      100
+    ) r on r.person_id is not distinct from ec.person_id
+       and r.organization_id is not distinct from ec.organization_id
+    where ec.matched_query_tokens > 0
+  ),
+  combined as (
+    select *, 1 as result_priority from public.search_clearance_records(p_query, p_search_type, p_limit)
+    union all
+    select *, 2 as result_priority from fuzzy_rows
+  ),
+  deduped as (
+    select distinct on (person_id, organization_id, case_id)
+      person_id, organization_id, participant_kind, case_id, docket_number, case_number, full_name, aliases,
+      status, last_updated, confidence_score, match_details, match_type, role_label, age, violations
+    from combined
+    order by person_id nulls last, organization_id nulls last, case_id, result_priority, confidence_score desc
+  )
+  select *
+  from deduped
+  order by confidence_score desc, full_name, case_id
+  limit (select safe_limit from normalized);
 $$;
 
 create or replace function public.search_clearance_possible_matches(p_query text, p_search_type text default 'all', p_limit integer default 50)
