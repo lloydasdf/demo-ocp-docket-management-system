@@ -849,16 +849,18 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
                       {place.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Removed {formatDate(place.deleted_at)}{place.deleted_by_user_id ? ` by user #${place.deleted_by_user_id}` : ""} — {place.delete_reason ?? "No reason recorded"}</p> : null}
                     </div>
                     <div className="flex min-w-56 flex-col items-stretch gap-2 sm:items-end">
-                      <div className="flex justify-end gap-2">
-                        {place.is_deleted ? (
-                          <Button size="sm" variant="outline" onClick={() => setPendingPlaceAction({ id: place.id, action: "restore" })}>Restore</Button>
-                        ) : (
-                          <>
-                            <Button size="sm" variant="outline" onClick={() => { setMode("edit"); setFormData(placeToForm(place, refs)); setReason(""); setError(null); setShowEditReason(false); }}>Edit</Button>
-                            <Button size="sm" variant="outline" onClick={() => setPendingPlaceAction({ id: place.id, action: "remove" })}>Remove</Button>
-                          </>
-                        )}
-                      </div>
+                      {pendingAction ? null : (
+                        <div className="flex justify-end gap-2">
+                          {place.is_deleted ? (
+                            <Button size="sm" variant="outline" onClick={() => setPendingPlaceAction({ id: place.id, action: "restore" })}>Restore</Button>
+                          ) : (
+                            <>
+                              <Button size="sm" variant="outline" onClick={() => { setMode("edit"); setFormData(placeToForm(place, refs)); setReason(""); setError(null); setShowEditReason(false); }}>Edit</Button>
+                              <Button size="sm" variant="outline" onClick={() => setPendingPlaceAction({ id: place.id, action: "remove" })}>Remove</Button>
+                            </>
+                          )}
+                        </div>
+                      )}
                       {pendingAction ? (
                         <div className="w-full space-y-2">
                           <Input
@@ -931,6 +933,10 @@ function ManageNotesDialog({ caseId, open, onOpenChange, onSaved }: { caseId: nu
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [noteActionReasons, setNoteActionReasons] = useState<Record<number, string>>({});
+  const [pendingNoteAction, setPendingNoteAction] = useState<{
+    id: number;
+    action: "remove" | "restore";
+  } | null>(null);
 
   const loadNotes = useCallback(async () => {
     const result = await getCaseManagedNotes(caseId, showDeleted);
@@ -953,6 +959,7 @@ function ManageNotesDialog({ caseId, open, onOpenChange, onSaved }: { caseId: nu
         delete next[note.id];
         return next;
       });
+      setPendingNoteAction(null);
     }
     resetForm(); await loadNotes(); await onSaved();
   }
@@ -961,7 +968,47 @@ function ManageNotesDialog({ caseId, open, onOpenChange, onSaved }: { caseId: nu
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader><DialogTitle>Manage Notes</DialogTitle><DialogDescription>Add, update, remove, or restore notes. Changes create audit logs only.</DialogDescription></DialogHeader>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showDeleted} onChange={(event) => setShowDeleted(event.target.checked)} /> Show deleted notes</label>
-        <div className="space-y-3">{notes.length === 0 ? <SectionEmpty>No notes recorded.</SectionEmpty> : notes.map((note) => <div key={note.id} className="rounded-lg border p-3 text-sm"><div className="flex items-start justify-between gap-3"><div><p className="whitespace-pre-wrap">{note.note_text}</p><div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground"><span>{formatDate(note.created_at)}</span>{note.is_private ? <Badge variant="secondary">Private</Badge> : null}{note.is_deleted ? <Badge variant="destructive">DELETED</Badge> : null}</div>{note.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Deleted {formatDate(note.deleted_at)}{note.deleted_by_user_id ? ` by user #${note.deleted_by_user_id}` : ""} — {note.delete_reason ?? "No reason recorded"}</p> : null}</div><div className="flex min-w-56 flex-col gap-2"><Input placeholder={note.is_deleted ? "Restore reason" : "Remove reason"} value={noteActionReasons[note.id] ?? ""} onChange={(event) => setNoteActionReasons((current) => ({ ...current, [note.id]: event.target.value }))} /><div className="flex gap-2">{note.is_deleted ? <Button size="sm" variant="outline" onClick={() => save("restore", note)}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setEditingId(note.id); setNoteText(note.note_text); setIsPrivate(note.is_private); setReason(""); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => save("remove", note)}>Remove</Button></>}</div></div></div></div>)}</div>
+        <div className="space-y-3">
+          {notes.length === 0 ? <SectionEmpty>No notes recorded.</SectionEmpty> : notes.map((note) => {
+            const isPendingAction = pendingNoteAction?.id === note.id;
+            const pendingAction = isPendingAction ? pendingNoteAction.action : null;
+
+            return (
+              <div key={note.id} className="rounded-lg border p-3 text-sm">
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                  <div className="min-w-0">
+                    <p className="whitespace-pre-wrap">{note.note_text}</p>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground"><span>{formatDate(note.created_at)}</span>{note.is_private ? <Badge variant="secondary">Private</Badge> : null}{note.is_deleted ? <Badge variant="destructive">DELETED</Badge> : null}</div>
+                    {note.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Deleted {formatDate(note.deleted_at)}{note.deleted_by_user_id ? ` by user #${note.deleted_by_user_id}` : ""} — {note.delete_reason ?? "No reason recorded"}</p> : null}
+                  </div>
+                  <div className="flex min-w-56 flex-col items-stretch gap-2 sm:items-end">
+                    {pendingAction ? null : (
+                      <div className="flex justify-end gap-2">
+                        {note.is_deleted ? (
+                          <Button size="sm" variant="outline" onClick={() => setPendingNoteAction({ id: note.id, action: "restore" })}>Restore</Button>
+                        ) : (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => { setEditingId(note.id); setNoteText(note.note_text); setIsPrivate(note.is_private); setReason(""); }}>Edit</Button>
+                            <Button size="sm" variant="outline" onClick={() => setPendingNoteAction({ id: note.id, action: "remove" })}>Remove</Button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {pendingAction ? (
+                      <div className="w-full space-y-2">
+                        <Input placeholder={pendingAction === "restore" ? "Restore reason" : "Remove reason"} value={noteActionReasons[note.id] ?? ""} onChange={(event) => setNoteActionReasons((current) => ({ ...current, [note.id]: event.target.value }))} />
+                        <div className="flex justify-end gap-2">
+                          <Button size="sm" variant="outline" onClick={() => setPendingNoteAction(null)}>Cancel</Button>
+                          <Button size="sm" onClick={() => save(pendingAction, note)}>{pendingAction === "restore" ? "Restore" : "Remove"}</Button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
         <div className="grid gap-4 rounded-lg border p-4"><h3 className="font-semibold">{editingId ? "Edit Note" : "Add Note"}</h3><FieldTextarea label="Note" value={noteText} onChange={setNoteText} /><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={isPrivate} onChange={(event) => setIsPrivate(event.target.checked)} /> Private</label><FieldTextarea label="Reason for edit" value={reason} onChange={setReason} /></div>
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
         <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>{editingId ? <Button variant="outline" onClick={resetForm}>Cancel edit</Button> : null}<Button disabled={isSaving} onClick={() => save(editingId ? "edit" : "add")}>{isSaving ? "Saving..." : editingId ? "Save note" : "Add note"}</Button></DialogFooter>
