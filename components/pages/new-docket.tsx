@@ -90,6 +90,23 @@ function getFirstId(rows: { id: number }[]) {
   return rows[0]?.id.toString() ?? '';
 }
 
+function getAddressTypeIdByKeywords(
+  rows: TableRow<'address_types'>[],
+  keywords: string[],
+) {
+  const normalizedKeywords = keywords.map((keyword) => keyword.toLowerCase());
+  const match = rows.find((type) => {
+    const searchable = [type.code, type.display_label]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+    return normalizedKeywords.some((keyword) => searchable.includes(keyword));
+  });
+
+  return match?.id.toString() ?? getFirstId(rows);
+}
+
 function getReceivedStatusId(statuses: TableRow<'case_statuses'>[]) {
   const receivedStatus = statuses.find((status) => {
     const code = status.code.toLowerCase();
@@ -329,6 +346,14 @@ export default function NewDocket() {
 
   const defaultRoleId = useMemo(() => getFirstId(lookups.participantRoles), [lookups.participantRoles]);
   const defaultAddressTypeId = useMemo(() => getFirstId(lookups.addressTypes), [lookups.addressTypes]);
+  const defaultCaseAddressTypeId = useMemo(
+    () => getAddressTypeIdByKeywords(lookups.addressTypes, ['commission', 'incident', 'offense', 'offence']),
+    [lookups.addressTypes],
+  );
+  const defaultPersonAddressTypeId = useMemo(
+    () => getAddressTypeIdByKeywords(lookups.addressTypes, ['residence', 'residential', 'home']),
+    [lookups.addressTypes],
+  );
   const selectedDocketType = useMemo(
     () => lookups.docketTypes.find((type) => type.id.toString() === docketTypeId),
     [docketTypeId, lookups.docketTypes],
@@ -368,7 +393,7 @@ export default function NewDocket() {
     setPlacesOfCommission((current) => [
       ...current,
       {
-        ...makeEmptyAddress(defaultAddressTypeId, 'place'),
+        ...makeEmptyAddress(defaultCaseAddressTypeId, 'place'),
         isPrimary: current.length === 0,
       },
     ]);
@@ -377,7 +402,18 @@ export default function NewDocket() {
   const addParticipantAddress = (personId: string) => {
     setPersons((current) => current.map((person) => (
       person.id === personId
-        ? { ...person, addresses: [...(person.addresses ?? []), makeEmptyAddress(defaultAddressTypeId, 'participant-address')] }
+        ? {
+            ...person,
+            addresses: [
+              ...(person.addresses ?? []),
+              makeEmptyAddress(
+                person.participantKind === 'PERSON'
+                  ? defaultPersonAddressTypeId
+                  : defaultAddressTypeId,
+                'participant-address',
+              ),
+            ],
+          }
         : person
     )));
   };
@@ -435,7 +471,8 @@ export default function NewDocket() {
   const fillTestData = () => {
     const unique = crypto.randomUUID().slice(0, 8);
     const roleId = toNumber(defaultRoleId);
-    const addressTypeId = toNumber(defaultAddressTypeId);
+    const caseAddressTypeId = toNumber(defaultCaseAddressTypeId);
+    const personAddressTypeId = toNumber(defaultPersonAddressTypeId);
     const prosecutor = lookups.prosecutors[0];
 
     setCaseClassificationId(lookups.caseClassifications[0]?.id?.toString() ?? '');
@@ -462,8 +499,8 @@ export default function NewDocket() {
         aliases: [{ id: makeId('alias'), aliasName: `Person Alias ${unique}` }],
         existingAliases: [],
         addresses: [{
-          ...makeEmptyAddress(defaultAddressTypeId, 'participant-address'),
-          addressTypeId,
+          ...makeEmptyAddress(defaultPersonAddressTypeId, 'participant-address'),
+          addressTypeId: personAddressTypeId,
           line1: `Person Address ${unique}`,
           barangay: 'Sample Barangay',
           city: 'General Trias',
@@ -508,8 +545,8 @@ export default function NewDocket() {
     ]);
 
     setPlacesOfCommission([{
-      ...makeEmptyAddress(defaultAddressTypeId, 'place'),
-      addressTypeId,
+      ...makeEmptyAddress(defaultCaseAddressTypeId, 'place'),
+      addressTypeId: caseAddressTypeId,
       line1: `Place of Commission ${unique}`,
       barangay: 'Sample Barangay',
       city: 'General Trias',
@@ -664,7 +701,7 @@ export default function NewDocket() {
       addresses: Array.isArray(person.person_addresses) ? person.person_addresses.map((entry: any) => ({
         id: makeId('participant-address'),
         existingAddressId: entry.address_id ?? entry.addresses?.address_id ?? entry.addresses?.id ?? null,
-        addressTypeId: entry.address_type_id ?? toNumber(defaultAddressTypeId),
+        addressTypeId: entry.address_type_id ?? toNumber(defaultPersonAddressTypeId),
         isPrimary: entry.is_primary === true,
         remarks: entry.remarks ?? '',
         line1: entry.addresses?.line1 ?? '',
