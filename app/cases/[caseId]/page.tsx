@@ -127,6 +127,31 @@ function formatDate(value: string | null | undefined) {
   return parsedDate.toLocaleDateString();
 }
 
+function formatLongDate(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const dateOnlyMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const parsedDate = dateOnlyMatch
+    ? new Date(
+        Number(dateOnlyMatch[1]),
+        Number(dateOnlyMatch[2]) - 1,
+        Number(dateOnlyMatch[3]),
+      )
+    : new Date(value);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return value;
+  }
+
+  return parsedDate.toLocaleDateString("en-US", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
 function formatFileSize(bytes: number | null) {
   if (bytes === null) {
     return "—";
@@ -240,14 +265,15 @@ function personBirthDateAndSex(participant: CaseParticipantRecord) {
     participant.case_participant_attributes?.gender_text ??
     participant.case_participant_attributes?.gender_normalized ??
     participant.persons?.gender;
-  const parts = [
-    participant.persons?.birth_date
-      ? formatDate(participant.persons.birth_date)
-      : null,
-    gender ?? null,
-  ].filter((part): part is string => Boolean(part));
+  const birthdate = formatLongDate(participant.persons?.birth_date);
 
-  return parts.join(" | ");
+  if (!birthdate && !gender) {
+    return "";
+  }
+
+  return [`Birthdate: ${birthdate ?? "—"}`, gender ?? null]
+    .filter((part): part is string => Boolean(part))
+    .join(" | ");
 }
 
 function ageAtCase(participant: CaseParticipantRecord) {
@@ -729,12 +755,12 @@ export default function CaseDetailsPage() {
                                     )}
                                     {caseFlagBadges(participant)}
                                   </div>
+                                  {participantAliasBadges(participant)}
                                   {personBirthDateAndSex(participant) ? (
                                     <p className="text-sm text-muted-foreground">
                                       {personBirthDateAndSex(participant)}
                                     </p>
                                   ) : null}
-                                  {participantAliasBadges(participant)}
                                 </div>
                                 <Separator className="my-3" />
                                 <div className="grid gap-4 text-sm sm:grid-cols-2">
@@ -760,15 +786,12 @@ export default function CaseDetailsPage() {
                                       value={participant.remarks}
                                     />
                                   </div>
-                                  <div className="space-y-2">
-                                    <DetailItem label="Role" value={role} />
-                                    <OptionalDetailItem
-                                      label="Organization details"
-                                      value={formatOrganizationDetails(
-                                        participant.organizations?.details_jsonb,
-                                      )}
-                                    />
-                                  </div>
+                                  <OptionalDetailItem
+                                    label="Organization details"
+                                    value={formatOrganizationDetails(
+                                      participant.organizations?.details_jsonb,
+                                    )}
+                                  />
                                 </div>
                               </div>
                             ))}
