@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict JXw7vSb0ESJYIvIx9Wkwn4VwO27VUejrlj425f14Mj4wdzXaySGvLdmlpjEMegX
+\restrict cqTNGz25bZ9NmiS9PAgtFQxNtuIfGhXwccqcWDPDdWVNZH1aZAscvbUaC0r2MBD
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 18.3
@@ -1657,10 +1657,12 @@ BEGIN
       IF nullif(v_item->>'existingOrganizationId','') IS NOT NULL THEN SELECT id, organization_name INTO v_org_id, v_name FROM public.organizations WHERE id=(v_item->>'existingOrganizationId')::bigint; IF v_org_id IS NULL THEN RAISE EXCEPTION 'Existing organization not found'; END IF;
       ELSE v_name := nullif(btrim(v_item#>>'{newOrganization,organizationName}'),''); IF v_name IS NULL THEN RAISE EXCEPTION 'Organization name is required'; END IF; INSERT INTO public.organizations(organization_name,contact_person,contact_number,email,details_jsonb,created_by_user_id,updated_by_user_id) VALUES (v_name,nullif(btrim(v_item#>>'{newOrganization,contactPerson}'),''),nullif(btrim(v_item#>>'{newOrganization,contactNumber}'),''),nullif(btrim(v_item#>>'{newOrganization,email}'),''),COALESCE(NULLIF(v_item#>'{newOrganization,detailsJsonb}', 'null'::jsonb), '{}'::jsonb),v_user_id,v_user_id) RETURNING id INTO v_org_id; END IF;
       FOR v_sub IN SELECT * FROM jsonb_array_elements(COALESCE(v_item->'aliases','[]'::jsonb)) LOOP IF nullif(btrim(v_sub->>'aliasName'),'') IS NOT NULL THEN UPDATE public.organization_aliases oa SET is_active = TRUE, updated_at = now() WHERE oa.organization_id = v_org_id AND lower(btrim(oa.alias_name)) = lower(btrim(v_sub->>'aliasName')) AND oa.is_active IS FALSE; INSERT INTO public.organization_aliases(organization_id,alias_name,source) SELECT v_org_id,btrim(v_sub->>'aliasName'),'MANUAL_ENTRY' WHERE NOT EXISTS (SELECT 1 FROM public.organization_aliases oa WHERE oa.organization_id = v_org_id AND lower(btrim(oa.alias_name)) = lower(btrim(v_sub->>'aliasName'))); END IF; END LOOP;
+      PERFORM public.upsert_clearance_possible_tokens_for_organization(v_org_id); PERFORM public.upsert_clearance_phonetic_tokens_for_organization(v_org_id);
     ELSE
       IF nullif(v_item->>'existingPersonId','') IS NOT NULL THEN SELECT id, full_name INTO v_person_id, v_name FROM public.persons WHERE id=(v_item->>'existingPersonId')::bigint; IF v_person_id IS NULL THEN RAISE EXCEPTION 'Existing person not found'; END IF; v_reused_persons := v_reused_persons+1;
       ELSE v_name := regexp_replace(concat_ws(' ', nullif(btrim(v_item#>>'{newPerson,firstName}'),''), CASE WHEN COALESCE((v_item#>>'{newPerson,noMiddleName}')::boolean,false) THEN 'NMN' ELSE nullif(btrim(v_item#>>'{newPerson,middleName}'),'') END, nullif(btrim(v_item#>>'{newPerson,lastName}'),''), nullif(btrim(v_item#>>'{newPerson,suffix}'),'')), '\s+', ' ', 'g'); IF v_name = '' THEN RAISE EXCEPTION 'New participant full-name preview cannot be empty'; END IF; INSERT INTO public.persons(first_name,middle_name,last_name,suffix,full_name,gender,birth_date,notes,person_descriptor) VALUES (nullif(btrim(v_item#>>'{newPerson,firstName}'),''),CASE WHEN COALESCE((v_item#>>'{newPerson,noMiddleName}')::boolean,false) THEN 'NMN' ELSE nullif(btrim(v_item#>>'{newPerson,middleName}'),'') END,nullif(btrim(v_item#>>'{newPerson,lastName}'),''),nullif(btrim(v_item#>>'{newPerson,suffix}'),''),v_name,nullif(btrim(v_item#>>'{newPerson,gender}'),''),nullif(v_item#>>'{newPerson,birthDate}','')::date,nullif(btrim(v_item#>>'{newPerson,notes}'),''),nullif(btrim(v_item#>>'{newPerson,personDescriptor}'),'')) RETURNING id INTO v_person_id; v_created_persons := v_created_persons+1; END IF;
       FOR v_sub IN SELECT * FROM jsonb_array_elements(COALESCE(v_item->'aliases','[]'::jsonb)) LOOP IF nullif(btrim(v_sub->>'aliasName'),'') IS NOT NULL THEN UPDATE public.person_aliases pa SET is_active = TRUE, updated_at = now() WHERE pa.person_id = v_person_id AND lower(btrim(pa.alias_name)) = lower(btrim(v_sub->>'aliasName')) AND pa.is_active IS FALSE; INSERT INTO public.person_aliases(person_id,alias_name,alias_type,source) SELECT v_person_id,btrim(v_sub->>'aliasName'),'AKA','MANUAL_ENTRY' WHERE NOT EXISTS (SELECT 1 FROM public.person_aliases pa WHERE pa.person_id = v_person_id AND lower(btrim(pa.alias_name)) = lower(btrim(v_sub->>'aliasName'))); END IF; END LOOP;
+      PERFORM public.upsert_clearance_possible_tokens_for_person(v_person_id); PERFORM public.upsert_clearance_phonetic_tokens_for_person(v_person_id);
     END IF;
     FOR v_sub IN SELECT * FROM jsonb_array_elements(COALESCE(v_item->'addresses','[]'::jsonb)) LOOP
       IF nullif(v_sub->>'existingAddressId','') IS NOT NULL THEN SELECT id INTO v_address_id FROM public.addresses WHERE id=(v_sub->>'existingAddressId')::bigint; IF v_address_id IS NULL THEN RAISE EXCEPTION 'Existing address not found'; END IF; v_reused_addresses:=v_reused_addresses+1; ELSE INSERT INTO public.addresses(line1,line2,barangay,city,province,region,zip_code,country) VALUES (nullif(btrim(v_sub#>>'{newAddress,line1}'),''),nullif(btrim(v_sub#>>'{newAddress,line2}'),''),nullif(btrim(v_sub#>>'{newAddress,barangay}'),''),nullif(btrim(v_sub#>>'{newAddress,city}'),''),nullif(btrim(v_sub#>>'{newAddress,province}'),''),nullif(btrim(v_sub#>>'{newAddress,region}'),''),nullif(btrim(v_sub#>>'{newAddress,zipCode}'),''),COALESCE(nullif(btrim(v_sub#>>'{newAddress,country}'),''),'Philippines')) RETURNING id INTO v_address_id; v_created_addresses:=v_created_addresses+1; END IF;
@@ -1682,7 +1684,7 @@ BEGIN
     IF v_person_id IS NOT NULL AND v_item ? 'attributes' AND v_item->'attributes' <> 'null'::jsonb THEN INSERT INTO public.case_participant_attributes(case_participant_id,age_text,age_years,age_basis_date,age_source,gender_text,gender_normalized,minor_text,is_minor_at_case,senior_text,is_senior_at_case,pwd_text,is_pwd_at_case,notes,created_by_user_id,updated_by_user_id) VALUES (v_cp_id,nullif(btrim(v_item#>>'{attributes,ageText}'),''),nullif(v_item#>>'{attributes,ageYears}','')::int,v_date_received,'MANUAL_ENTRY',nullif(btrim(v_item#>>'{attributes,genderText}'),''),nullif(btrim(v_item#>>'{attributes,genderNormalized}'),''),nullif(btrim(v_item#>>'{attributes,minorText}'),''),nullif(v_item#>>'{attributes,isMinorAtCase}','')::boolean,nullif(btrim(v_item#>>'{attributes,seniorText}'),''),nullif(v_item#>>'{attributes,isSeniorAtCase}','')::boolean,nullif(btrim(v_item#>>'{attributes,pwdText}'),''),nullif(v_item#>>'{attributes,isPwdAtCase}','')::boolean,nullif(btrim(v_item#>>'{attributes,notes}'),''),v_user_id,v_user_id); END IF;
   END LOOP;
 
-  FOR v_item IN SELECT * FROM jsonb_array_elements(CASE WHEN p_payload ? 'placeOfCommission' AND p_payload->'placeOfCommission' <> 'null'::jsonb THEN jsonb_build_array(p_payload->'placeOfCommission') ELSE COALESCE(p_payload->'addresses','[]'::jsonb) END) LOOP
+  FOR v_item IN SELECT * FROM jsonb_array_elements(CASE WHEN p_payload ? 'placesOfCommission' AND jsonb_typeof(p_payload->'placesOfCommission') = 'array' THEN p_payload->'placesOfCommission' WHEN p_payload ? 'placeOfCommission' AND p_payload->'placeOfCommission' <> 'null'::jsonb THEN jsonb_build_array(p_payload->'placeOfCommission') ELSE COALESCE(p_payload->'addresses','[]'::jsonb) END) LOOP
     IF nullif(v_item->>'existingAddressId','') IS NOT NULL THEN SELECT id INTO v_address_id FROM public.addresses WHERE id=(v_item->>'existingAddressId')::bigint; v_reused_addresses:=v_reused_addresses+1; ELSE INSERT INTO public.addresses(line1,line2,barangay,city,province,region,zip_code,country) VALUES (nullif(btrim(v_item#>>'{newAddress,line1}'),''),nullif(btrim(v_item#>>'{newAddress,line2}'),''),nullif(btrim(v_item#>>'{newAddress,barangay}'),''),nullif(btrim(v_item#>>'{newAddress,city}'),''),nullif(btrim(v_item#>>'{newAddress,province}'),''),nullif(btrim(v_item#>>'{newAddress,region}'),''),nullif(btrim(v_item#>>'{newAddress,zipCode}'),''),COALESCE(nullif(btrim(v_item#>>'{newAddress,country}'),''),'Philippines')) RETURNING id INTO v_address_id; v_created_addresses:=v_created_addresses+1; END IF;
     INSERT INTO public.case_addresses(case_id,address_id,address_type_id,is_primary,remarks) VALUES (v_case_id,v_address_id,(v_item->>'addressTypeId')::bigint,COALESCE((v_item->>'isPrimary')::boolean,true),nullif(btrim(v_item->>'remarks'),''));
   END LOOP;
@@ -1726,6 +1728,13 @@ BEGIN
   RETURN jsonb_build_object('caseId',v_case_id,'docketTypeId',v_docket_type_id,'docketYear',v_docket_year,'docketNumber',v_docket_number,'docketMonthCode',v_month_code,'docketDisplayNumber',v_display,'createdPersonCount',v_created_persons,'reusedPersonCount',v_reused_persons,'createdAddressCount',v_created_addresses,'reusedAddressCount',v_reused_addresses,'createdViolationCount',v_created_violations,'reusedViolationCount',v_reused_violations,'participantCount',v_participant_count,'violationCount',v_violation_count);
 END;
 $_$;
+
+
+--
+-- Name: FUNCTION create_new_docket_entry(p_payload jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.create_new_docket_entry(p_payload jsonb) IS 'Creates a docket entry and supports multiple places of commission via placesOfCommission[] (legacy placeOfCommission still accepted).';
 
 
 --
@@ -6377,77 +6386,21 @@ $$;
 CREATE FUNCTION public.refresh_clearance_phonetic_name_tokens() RETURNS void
     LANGUAGE plpgsql
     AS $$
-BEGIN
-  TRUNCATE TABLE public.clearance_phonetic_name_tokens;
+begin
+  truncate table public.clearance_phonetic_name_tokens;
 
-  -- Persons.full_name tokens
-  INSERT INTO public.clearance_phonetic_name_tokens (
-    person_id,
-    source_table,
-    source_column,
-    source_value,
-    token,
-    token_order,
-    token_len,
-    phonetic_primary,
-    phonetic_alt,
-    phonetic_codes
-  )
-  SELECT
-    p.id,
-    'persons',
-    'full_name',
-    p.full_name,
-    tok.token,
-    tok.token_order::integer,
-    length(tok.token),
-    dmetaphone(tok.token),
-    dmetaphone_alt(tok.token),
-    public.clearance_phonetic_codes(tok.token)
-  FROM public.persons p
-  CROSS JOIN LATERAL regexp_split_to_table(
-    public.clearance_exact_norm(p.full_name),
-    ' '
-  ) WITH ORDINALITY AS tok(token, token_order)
-  WHERE coalesce(p.is_active, true) = true
-    AND length(tok.token) >= 3
-    AND cardinality(public.clearance_phonetic_codes(tok.token)) > 0;
-
-  -- Structured aliases, if present
-  INSERT INTO public.clearance_phonetic_name_tokens (
-    person_id,
-    source_table,
-    source_column,
-    source_value,
-    token,
-    token_order,
-    token_len,
-    phonetic_primary,
-    phonetic_alt,
-    phonetic_codes
-  )
-  SELECT
-    pa.person_id,
-    'person_aliases',
-    'alias_name',
-    pa.alias_name,
-    tok.token,
-    tok.token_order::integer,
-    length(tok.token),
-    dmetaphone(tok.token),
-    dmetaphone_alt(tok.token),
-    public.clearance_phonetic_codes(tok.token)
-  FROM public.person_aliases pa
-  JOIN public.persons p ON p.id = pa.person_id
-  CROSS JOIN LATERAL regexp_split_to_table(
-    public.clearance_exact_norm(pa.alias_name),
-    ' '
-  ) WITH ORDINALITY AS tok(token, token_order)
-  WHERE coalesce(pa.is_active, true) = true
-    AND coalesce(p.is_active, true) = true
-    AND length(tok.token) >= 3
-    AND cardinality(public.clearance_phonetic_codes(tok.token)) > 0;
-END;
+  insert into public.clearance_phonetic_name_tokens (person_id, organization_id, source_table, source_column, source_value, token, token_order, token_len, phonetic_primary, phonetic_alt, phonetic_codes)
+  select x.person_id, x.organization_id, x.source_table, x.source_column, x.source_value,
+    tok.token, tok.token_order::integer, length(tok.token), dmetaphone(tok.token), dmetaphone_alt(tok.token), public.clearance_phonetic_codes(tok.token)
+  from (
+    select p.id as person_id, null::integer as organization_id, 'persons' as source_table, 'full_name' as source_column, p.full_name as source_value from public.persons p where coalesce(p.is_active, true) = true
+    union all select pa.person_id, null::integer, 'person_aliases', 'alias_name', pa.alias_name from public.person_aliases pa join public.persons p on p.id = pa.person_id where coalesce(pa.is_active, true) = true and coalesce(p.is_active, true) = true
+    union all select null::integer, o.id, 'organizations', 'organization_name', o.organization_name from public.organizations o where coalesce(o.is_active, true) = true
+    union all select null::integer, oa.organization_id, 'organization_aliases', 'alias_name', oa.alias_name from public.organization_aliases oa join public.organizations o on o.id = oa.organization_id where coalesce(oa.is_active, true) = true and coalesce(o.is_active, true) = true
+  ) x
+  cross join lateral regexp_split_to_table(public.clearance_exact_norm(x.source_value), ' ') with ordinality as tok(token, token_order)
+  where length(tok.token) > 1 and cardinality(public.clearance_phonetic_codes(tok.token)) > 0;
+end;
 $$;
 
 
@@ -6458,101 +6411,63 @@ $$;
 CREATE FUNCTION public.refresh_clearance_possible_name_tokens() RETURNS void
     LANGUAGE plpgsql
     AS $$
-BEGIN
-  TRUNCATE TABLE public.clearance_possible_name_tokens;
+begin
+  truncate table public.clearance_possible_name_tokens;
 
-  INSERT INTO public.clearance_possible_name_tokens (
-    person_id,
-    source_table,
-    source_column,
-    source_value,
-    token,
-    token_order,
-    token_len,
-    first_char,
-    first2,
-    first3,
-    last2,
-    last3,
-    ck_key,
-    bv_key,
-    phf_key,
-    sz_key,
-    skeleton
+  insert into public.clearance_possible_name_tokens (
+    person_id, organization_id, source_table, source_column, source_value,
+    token, token_order, token_len, first_char, first2, first3, last2, last3,
+    ck_key, bv_key, phf_key, sz_key, skeleton
   )
-  SELECT
-    p.id,
-    'persons',
-    'full_name',
-    p.full_name,
-    tok.token,
-    tok.token_order::integer,
-    length(tok.token),
-    left(tok.token, 1),
-    left(tok.token, 2),
-    left(tok.token, 3),
-    right(tok.token, 2),
-    right(tok.token, 3),
-    public.clearance_ck_key(tok.token),
-    public.clearance_bv_key(tok.token),
-    public.clearance_phf_key(tok.token),
-    public.clearance_sz_key(tok.token),
-    public.clearance_token_skeleton(tok.token)
-  FROM public.persons p
-  CROSS JOIN LATERAL regexp_split_to_table(
-    public.clearance_exact_norm(p.full_name),
-    ' '
-  ) WITH ORDINALITY AS tok(token, token_order)
-  WHERE coalesce(p.is_active, true) = true
-    AND length(tok.token) > 1;
+  select p.id, null::integer, 'persons', 'full_name', p.full_name,
+    tok.token, tok.token_order::integer, length(tok.token), left(tok.token,1), left(tok.token,2), left(tok.token,3),
+    right(tok.token,2), right(tok.token,3), public.clearance_ck_key(tok.token), public.clearance_bv_key(tok.token),
+    public.clearance_phf_key(tok.token), public.clearance_sz_key(tok.token), public.clearance_token_skeleton(tok.token)
+  from public.persons p
+  cross join lateral regexp_split_to_table(public.clearance_exact_norm(p.full_name), ' ') with ordinality as tok(token, token_order)
+  where coalesce(p.is_active, true) = true and length(tok.token) > 1;
 
-  INSERT INTO public.clearance_possible_name_tokens (
-    person_id,
-    source_table,
-    source_column,
-    source_value,
-    token,
-    token_order,
-    token_len,
-    first_char,
-    first2,
-    first3,
-    last2,
-    last3,
-    ck_key,
-    bv_key,
-    phf_key,
-    sz_key,
-    skeleton
+  insert into public.clearance_possible_name_tokens (
+    person_id, organization_id, source_table, source_column, source_value,
+    token, token_order, token_len, first_char, first2, first3, last2, last3,
+    ck_key, bv_key, phf_key, sz_key, skeleton
   )
-  SELECT
-    pa.person_id,
-    'person_aliases',
-    'alias_name',
-    pa.alias_name,
-    tok.token,
-    tok.token_order::integer,
-    length(tok.token),
-    left(tok.token, 1),
-    left(tok.token, 2),
-    left(tok.token, 3),
-    right(tok.token, 2),
-    right(tok.token, 3),
-    public.clearance_ck_key(tok.token),
-    public.clearance_bv_key(tok.token),
-    public.clearance_phf_key(tok.token),
-    public.clearance_sz_key(tok.token),
-    public.clearance_token_skeleton(tok.token)
-  FROM public.person_aliases pa
-  JOIN public.persons p ON p.id = pa.person_id
-  CROSS JOIN LATERAL regexp_split_to_table(
-    public.clearance_exact_norm(pa.alias_name),
-    ' '
-  ) WITH ORDINALITY AS tok(token, token_order)
-  WHERE coalesce(pa.is_active, true) = true
-    AND coalesce(p.is_active, true) = true
-    AND length(tok.token) > 1;
-END;
+  select pa.person_id, null::integer, 'person_aliases', 'alias_name', pa.alias_name,
+    tok.token, tok.token_order::integer, length(tok.token), left(tok.token,1), left(tok.token,2), left(tok.token,3),
+    right(tok.token,2), right(tok.token,3), public.clearance_ck_key(tok.token), public.clearance_bv_key(tok.token),
+    public.clearance_phf_key(tok.token), public.clearance_sz_key(tok.token), public.clearance_token_skeleton(tok.token)
+  from public.person_aliases pa
+  join public.persons p on p.id = pa.person_id
+  cross join lateral regexp_split_to_table(public.clearance_exact_norm(pa.alias_name), ' ') with ordinality as tok(token, token_order)
+  where coalesce(pa.is_active, true) = true and coalesce(p.is_active, true) = true and length(tok.token) > 1;
+
+  insert into public.clearance_possible_name_tokens (
+    person_id, organization_id, source_table, source_column, source_value,
+    token, token_order, token_len, first_char, first2, first3, last2, last3,
+    ck_key, bv_key, phf_key, sz_key, skeleton
+  )
+  select null::integer, o.id, 'organizations', 'organization_name', o.organization_name,
+    tok.token, tok.token_order::integer, length(tok.token), left(tok.token,1), left(tok.token,2), left(tok.token,3),
+    right(tok.token,2), right(tok.token,3), public.clearance_ck_key(tok.token), public.clearance_bv_key(tok.token),
+    public.clearance_phf_key(tok.token), public.clearance_sz_key(tok.token), public.clearance_token_skeleton(tok.token)
+  from public.organizations o
+  cross join lateral regexp_split_to_table(public.clearance_exact_norm(o.organization_name), ' ') with ordinality as tok(token, token_order)
+  where coalesce(o.is_active, true) = true and length(tok.token) > 1;
+
+  insert into public.clearance_possible_name_tokens (
+    person_id, organization_id, source_table, source_column, source_value,
+    token, token_order, token_len, first_char, first2, first3, last2, last3,
+    ck_key, bv_key, phf_key, sz_key, skeleton
+  )
+  select null::integer, oa.organization_id, 'organization_aliases', 'alias_name', oa.alias_name,
+    tok.token, tok.token_order::integer, length(tok.token), left(tok.token,1), left(tok.token,2), left(tok.token,3),
+    right(tok.token,2), right(tok.token,3), public.clearance_ck_key(tok.token), public.clearance_bv_key(tok.token),
+    public.clearance_phf_key(tok.token), public.clearance_sz_key(tok.token), public.clearance_token_skeleton(tok.token)
+  from public.organization_aliases oa
+  join public.organizations o on o.id = oa.organization_id
+  cross join lateral regexp_split_to_table(public.clearance_exact_norm(oa.alias_name), ' ') with ordinality as tok(token, token_order)
+  where coalesce(oa.is_active, true) = true and coalesce(o.is_active, true) = true and length(tok.token) > 1;
+end;
 $$;
 
 
@@ -6560,231 +6475,17 @@ $$;
 -- Name: search_clearance_phonetic_matches(text, text, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.search_clearance_phonetic_matches(p_query text, p_search_type text DEFAULT 'all'::text, p_limit integer DEFAULT 50) RETURNS TABLE(person_id integer, case_id integer, docket_number text, case_number text, full_name text, aliases text[], status text, last_updated timestamp with time zone, confidence_score integer, match_details text, match_type text, role_label text, age text, violations text)
+CREATE FUNCTION public.search_clearance_phonetic_matches(p_query text, p_search_type text DEFAULT 'all'::text, p_limit integer DEFAULT 50) RETURNS TABLE(person_id integer, organization_id integer, participant_kind text, case_id integer, docket_number text, case_number text, full_name text, aliases text[], status text, last_updated timestamp with time zone, confidence_score integer, match_details text, match_type text, role_label text, age text, violations text)
     LANGUAGE sql STABLE
     AS $$
-  WITH normalized AS (
-    SELECT
-      nullif(trim(p_query), '') AS q,
-      public.clearance_exact_norm(p_query) AS q_norm,
-      public.clearance_exact_tokens(p_query) AS q_tokens,
-      CASE
-        WHEN p_search_type IN ('name', 'alias', 'all') THEN p_search_type
-        ELSE 'all'
-      END AS search_type,
-      least(greatest(coalesce(p_limit, 50), 1), 100) AS safe_limit
-  ),
-
-  query_tokens AS MATERIALIZED (
-    SELECT DISTINCT
-      u.token,
-      public.clearance_phonetic_codes(u.token) AS phonetic_codes
-    FROM normalized n
-    CROSS JOIN LATERAL unnest(n.q_tokens) AS u(token)
-    WHERE n.q IS NOT NULL
-      AND length(u.token) >= 3
-      AND cardinality(public.clearance_phonetic_codes(u.token)) > 0
-  ),
-
-  query_token_count AS (
-    SELECT count(*)::integer AS query_token_count
-    FROM query_tokens
-  ),
-
-  raw_phonetic_hits AS MATERIALIZED (
-    SELECT
-      t.person_id,
-      q.token AS query_token,
-      t.token AS matched_token,
-      t.source_table,
-
-      CASE
-        WHEN t.token = q.token THEN 'exact_token'
-        ELSE 'phonetic'
-      END AS hit_type
-
-    FROM query_tokens q
-    JOIN public.clearance_phonetic_name_tokens t
-      ON t.phonetic_codes && q.phonetic_codes
-    JOIN normalized n ON true
-    WHERE (
-        n.search_type = 'all'
-        OR (n.search_type = 'name' AND t.source_table = 'persons')
-        OR (n.search_type = 'alias' AND t.source_table = 'person_aliases')
-      )
-  ),
-
-  best_hits AS (
-    SELECT
-      person_id,
-      query_token,
-      (array_agg(matched_token ORDER BY CASE WHEN hit_type = 'exact_token' THEN 1 ELSE 2 END, matched_token))[1] AS best_matched_token,
-      (array_agg(hit_type ORDER BY CASE WHEN hit_type = 'exact_token' THEN 1 ELSE 2 END, hit_type))[1] AS best_hit_type
-    FROM raw_phonetic_hits
-    GROUP BY person_id, query_token
-  ),
-
-  candidate_persons AS (
-    SELECT
-      b.person_id,
-      count(DISTINCT b.query_token)::integer AS matched_query_token_count,
-      string_agg(
-        b.query_token || '≈' || b.best_matched_token || ' (' || b.best_hit_type || ')',
-        ', '
-        ORDER BY b.query_token
-      ) AS match_reason
-    FROM best_hits b
-    CROSS JOIN query_token_count qtc
-    GROUP BY b.person_id, qtc.query_token_count
-    HAVING
-      qtc.query_token_count >= 2
-      AND count(DISTINCT b.query_token) >= 2
-    ORDER BY
-      count(DISTINCT b.query_token) DESC,
-      b.person_id
-    LIMIT 500
-  ),
-
-  base AS (
-    SELECT
-      p.id::integer AS person_id,
-      c.id::integer AS case_id,
-
-      concat_ws(
-        '-',
-        dt.prefix,
-        c.docket_year::text,
-        nullif(c.docket_month_code, ''),
-        lpad(c.docket_number::text, 6, '0')
-      ) AS docket_number,
-
-      concat_ws(
-        '-',
-        dt.prefix,
-        c.docket_year::text,
-        nullif(c.docket_month_code, ''),
-        lpad(c.docket_number::text, 6, '0')
-      ) AS case_number,
-
-      p.full_name,
-      public.clearance_exact_norm(p.full_name) AS full_name_norm,
-      public.clearance_exact_tokens(p.full_name) AS full_name_tokens,
-
-      coalesce(alias_data.aliases, array[]::text[]) AS aliases,
-      coalesce(cs.display_label, cs.code, 'Unknown') AS status,
-      coalesce(c.updated_at, c.created_at, now()) AS last_updated,
-      coalesce(pr.display_label, pr.code, 'Participant') AS role_label,
-
-      age_data.age_text AS age,
-      violation_data.violations AS violations,
-
-      n.q,
-      n.q_norm,
-      n.q_tokens,
-      n.search_type,
-      n.safe_limit,
-
-      cpers.matched_query_token_count,
-      cpers.match_reason
-
-    FROM normalized n
-    JOIN candidate_persons cpers ON true
-
-    JOIN public.persons p
-      ON p.id = cpers.person_id
-     AND coalesce(p.is_active, true) = true
-
-    JOIN public.case_participants cp
-      ON cp.person_id = p.id
-
-    JOIN public.cases c
-      ON c.id = cp.case_id
-     AND coalesce(c.is_archived, false) = false
-
-    JOIN public.docket_types dt
-      ON dt.id = c.docket_type_id
-
-    LEFT JOIN public.participant_roles pr
-      ON pr.id = cp.role_id
-
-    LEFT JOIN public.case_private_details cpd
-      ON cpd.case_id = c.id
-
-    LEFT JOIN public.case_statuses cs
-      ON cs.id = cpd.current_status_id
-
-    LEFT JOIN LATERAL (
-      SELECT array_agg(pa.alias_name ORDER BY pa.alias_name) AS aliases
-      FROM public.person_aliases pa
-      WHERE pa.person_id = p.id
-        AND coalesce(pa.is_active, true) = true
-    ) alias_data ON true
-
-    LEFT JOIN LATERAL (
-      SELECT cpa.age_text
-      FROM public.case_participant_attributes cpa
-      WHERE cpa.case_participant_id = cp.id
-      ORDER BY cpa.id DESC
-      LIMIT 1
-    ) age_data ON true
-
-    LEFT JOIN LATERAL (
-      SELECT string_agg(v.title, ', ' ORDER BY cv.violation_order, v.title) AS violations
-      FROM public.case_violations cv
-      JOIN public.violations v ON v.id = cv.violation_id
-      WHERE cv.case_id = c.id
-    ) violation_data ON true
-  ),
-
-  scored AS (
-    SELECT
-      b.*,
-
-      CASE
-        WHEN b.matched_query_token_count >= 4 THEN 70
-        WHEN b.matched_query_token_count = 3 THEN 65
-        WHEN b.matched_query_token_count = 2 THEN 60
-        ELSE 0
-      END AS score,
-
-      'Sound-alike phonetic token match: ' || b.match_reason AS details
-
-    FROM base b
+  with q as (select public.clearance_phonetic_codes(tok) codes from regexp_split_to_table(public.clearance_exact_norm(p_query),' ') tok where length(tok)>1), hits as (
+    select distinct t.person_id, t.organization_id from public.clearance_phonetic_name_tokens t join q on t.phonetic_codes && q.codes
   )
-
-  SELECT
-    s.person_id,
-    s.case_id,
-    s.docket_number,
-    s.case_number,
-    s.full_name,
-    s.aliases,
-    s.status,
-    s.last_updated,
-    s.score AS confidence_score,
-    s.details AS match_details,
-    'phonetic'::text AS match_type,
-    s.role_label,
-    s.age,
-    s.violations
-  FROM scored s
-  WHERE s.score > 0
-
-    -- Do not duplicate exact all-token matches from Phase 1
-    AND NOT (
-      s.search_type IN ('name', 'all')
-      AND (
-        s.full_name_norm = s.q_norm
-        OR s.q_tokens <@ s.full_name_tokens
-      )
-    )
-
-  ORDER BY
-    s.score DESC,
-    s.full_name,
-    s.case_id
-
-  LIMIT (SELECT safe_limit FROM normalized);
+  select r.person_id, r.organization_id, r.participant_kind, r.case_id, r.docket_number, r.case_number, r.full_name, r.aliases, r.status, r.last_updated,
+    62, 'Sound-alike phonetic token match', 'phonetic', r.role_label, r.age, r.violations
+  from hits h
+  join lateral public.search_clearance_records(coalesce((select full_name from public.persons where id=h.person_id),(select organization_name from public.organizations where id=h.organization_id)), 'name', 100) r on r.person_id is not distinct from h.person_id and r.organization_id is not distinct from h.organization_id
+  limit least(greatest(coalesce(p_limit,50),1),100);
 $$;
 
 
@@ -6792,12 +6493,9 @@ $$;
 -- Name: search_clearance_possible_matches(text, text, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.search_clearance_possible_matches(p_query text, p_search_type text DEFAULT 'all'::text, p_limit integer DEFAULT 50) RETURNS TABLE(person_id integer, case_id integer, docket_number text, case_number text, full_name text, aliases text[], status text, last_updated timestamp with time zone, confidence_score integer, match_details text, match_type text, role_label text, age text, violations text)
+CREATE FUNCTION public.search_clearance_possible_matches(p_query text, p_search_type text DEFAULT 'all'::text, p_limit integer DEFAULT 50) RETURNS TABLE(person_id integer, organization_id integer, participant_kind text, case_id integer, docket_number text, case_number text, full_name text, aliases text[], status text, last_updated timestamp with time zone, confidence_score integer, match_details text, match_type text, role_label text, age text, violations text)
     LANGUAGE sql STABLE
-    AS $$
-  SELECT *
-  FROM public.search_clearance_possible_matches_v31(p_query, p_search_type, p_limit);
-$$;
+    AS $$ select * from public.search_clearance_possible_matches_v31(p_query,p_search_type,p_limit); $$;
 
 
 --
@@ -7176,451 +6874,144 @@ $$;
 -- Name: search_clearance_possible_matches_v31(text, text, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.search_clearance_possible_matches_v31(p_query text, p_search_type text DEFAULT 'all'::text, p_limit integer DEFAULT 50) RETURNS TABLE(person_id integer, case_id integer, docket_number text, case_number text, full_name text, aliases text[], status text, last_updated timestamp with time zone, confidence_score integer, match_details text, match_type text, role_label text, age text, violations text)
+CREATE FUNCTION public.search_clearance_possible_matches_v31(p_query text, p_search_type text DEFAULT 'all'::text, p_limit integer DEFAULT 50) RETURNS TABLE(person_id integer, organization_id integer, participant_kind text, case_id integer, docket_number text, case_number text, full_name text, aliases text[], status text, last_updated timestamp with time zone, confidence_score integer, match_details text, match_type text, role_label text, age text, violations text)
     LANGUAGE sql STABLE
     AS $$
-  WITH normalized AS (
-    SELECT
-      nullif(trim(p_query), '') AS q,
-      public.clearance_exact_norm(p_query) AS q_norm,
-      public.clearance_exact_tokens(p_query) AS q_tokens,
-      cardinality(public.clearance_exact_tokens(p_query)) AS q_token_count,
-      CASE
-        WHEN p_search_type IN ('name', 'alias', 'all') THEN p_search_type
-        ELSE 'all'
-      END AS search_type,
-      least(greatest(coalesce(p_limit, 50), 1), 100) AS safe_limit
+  with normalized as (
+    select
+      nullif(trim(p_query), '') as q,
+      public.clearance_exact_tokens(p_query) as q_tokens,
+      cardinality(public.clearance_exact_tokens(p_query)) as q_token_count,
+      case when p_search_type in ('name', 'alias', 'all') then p_search_type else 'all' end as search_type,
+      least(greatest(coalesce(p_limit, 50), 1), 100) as safe_limit
   ),
-
-  query_tokens AS (
-    SELECT
+  query_tokens as (
+    select
       u.token,
-      u.token_order::integer,
-      length(u.token) AS token_len,
-      left(u.token, 1) AS first_char,
-      left(u.token, 2) AS first2,
-      left(u.token, 3) AS first3,
-      right(u.token, 2) AS last2,
-      right(u.token, 3) AS last3,
-      public.clearance_ck_key(u.token) AS ck_key,
-      public.clearance_bv_key(u.token) AS bv_key,
-      public.clearance_phf_key(u.token) AS phf_key,
-      public.clearance_sz_key(u.token) AS sz_key,
-      public.clearance_token_skeleton(u.token) AS skeleton
-    FROM normalized n
-    CROSS JOIN LATERAL unnest(n.q_tokens) WITH ORDINALITY AS u(token, token_order)
+      length(u.token) as token_len,
+      left(u.token, 1) as first_char,
+      left(u.token, 2) as first2,
+      left(u.token, 3) as first3,
+      right(u.token, 2) as last2,
+      right(u.token, 3) as last3,
+      public.clearance_ck_key(u.token) as ck_key,
+      public.clearance_bv_key(u.token) as bv_key,
+      public.clearance_phf_key(u.token) as phf_key,
+      public.clearance_sz_key(u.token) as sz_key,
+      public.clearance_token_skeleton(u.token) as skeleton
+    from normalized n
+    cross join lateral unnest(n.q_tokens) as u(token)
   ),
-
-  -- Persons with at least one exact or strong variant token match.
-  -- Example: REYES anchors possible REINEL/PORTUGUES search.
-  anchor_persons AS MATERIALIZED (
-    SELECT DISTINCT
-      t.person_id
-    FROM query_tokens q
-    JOIN public.clearance_possible_name_tokens t
-      ON (
+  raw_token_candidates as materialized (
+    select
+      t.person_id,
+      t.organization_id,
+      t.source_value,
+      t.source_table,
+      q.token as query_token,
+      t.token as matched_token,
+      case
+        when t.token = q.token then 'exact'
+        when t.ck_key = q.ck_key then 'c/k variant'
+        when t.bv_key = q.bv_key then 'b/v variant'
+        when t.phf_key = q.phf_key then 'ph/f variant'
+        when t.sz_key = q.sz_key then 's/z variant'
+        when t.skeleton = q.skeleton then 'skeleton variant'
+        else 'fuzzy'
+      end as raw_reason,
+      case
+        when t.token = q.token then 1
+        when t.ck_key = q.ck_key or t.bv_key = q.bv_key or t.phf_key = q.phf_key or t.sz_key = q.sz_key then 2
+        when t.skeleton = q.skeleton then 3
+        else 4
+      end as raw_priority
+    from query_tokens q
+    join public.clearance_possible_name_tokens t
+      on (
         t.token = q.token
-        OR t.ck_key = q.ck_key
-        OR t.bv_key = q.bv_key
-        OR t.phf_key = q.phf_key
-        OR t.sz_key = q.sz_key
+        or t.ck_key = q.ck_key
+        or t.bv_key = q.bv_key
+        or t.phf_key = q.phf_key
+        or t.sz_key = q.sz_key
+        or (q.token_len >= 4 and t.token_len >= 4 and t.skeleton = q.skeleton)
+        or (q.token_len >= 4 and t.token_len >= 4 and t.first2 = q.first2 and t.last2 = q.last2)
+        or (q.token_len >= 5 and t.token_len >= 5 and t.first_char = q.first_char and levenshtein_less_equal(t.token, q.token, 2) <= 2)
       )
-    JOIN normalized n ON true
-    WHERE n.q IS NOT NULL
-      AND (
+    join normalized n on true
+    where n.q is not null
+      and (
         n.search_type = 'all'
-        OR (n.search_type = 'name' AND t.source_table = 'persons')
-        OR (n.search_type = 'alias' AND t.source_table = 'person_aliases')
+        or (n.search_type = 'name' and t.source_table in ('persons', 'organizations'))
+        or (n.search_type = 'alias' and t.source_table in ('person_aliases', 'organization_aliases'))
       )
-    ORDER BY t.person_id
-    LIMIT 2000
   ),
-
-  raw_token_candidates AS MATERIALIZED (
-    -- Exact token candidates
-    SELECT
-      q.token AS query_token,
-      t.person_id,
-      t.token AS matched_token,
-      t.source_table,
-      'exact'::text AS raw_reason,
-      1 AS raw_priority
-    FROM query_tokens q
-    JOIN public.clearance_possible_name_tokens t
-      ON t.token = q.token
-    JOIN normalized n ON true
-    WHERE n.q IS NOT NULL
-      AND (
-        n.search_type = 'all'
-        OR (n.search_type = 'name' AND t.source_table = 'persons')
-        OR (n.search_type = 'alias' AND t.source_table = 'person_aliases')
-      )
-
-    UNION ALL
-
-    -- Exact variant-key candidates
-    SELECT
-      q.token AS query_token,
-      t.person_id,
-      t.token AS matched_token,
-      t.source_table,
-      'variant_key'::text AS raw_reason,
-      2 AS raw_priority
-    FROM query_tokens q
-    JOIN public.clearance_possible_name_tokens t
-      ON (
-        t.ck_key = q.ck_key
-        OR t.bv_key = q.bv_key
-        OR t.phf_key = q.phf_key
-        OR t.sz_key = q.sz_key
-      )
-     AND t.token <> q.token
-    JOIN normalized n ON true
-    WHERE n.q IS NOT NULL
-      AND q.token_len >= 3
-      AND (
-        n.search_type = 'all'
-        OR (n.search_type = 'name' AND t.source_table = 'persons')
-        OR (n.search_type = 'alias' AND t.source_table = 'person_aliases')
-      )
-
-    UNION ALL
-
-    -- NEW: anchored candidates.
-    -- If one token matches exactly, compare the other query tokens only
-    -- against tokens belonging to those anchored persons.
-    SELECT
-      q.token AS query_token,
-      t.person_id,
-      t.token AS matched_token,
-      t.source_table,
-      CASE
-        WHEN t.first3 = q.first3 THEN 'anchor_same_first3'
-        WHEN t.first2 = q.first2 THEN 'anchor_same_first2'
-        WHEN t.skeleton = q.skeleton THEN 'anchor_same_skeleton'
-        WHEN t.last3 = q.last3 THEN 'anchor_same_last3'
-        WHEN t.last2 = q.last2 THEN 'anchor_same_last2'
-        WHEN left(t.token, 1) = q.first_char THEN 'anchor_same_first_char'
-        ELSE 'anchor_candidate'
-      END AS raw_reason,
-      CASE
-        WHEN t.first3 = q.first3 THEN 3
-        WHEN t.first2 = q.first2 THEN 4
-        WHEN t.skeleton = q.skeleton THEN 5
-        WHEN t.last3 = q.last3 THEN 6
-        WHEN t.last2 = q.last2 THEN 7
-        WHEN left(t.token, 1) = q.first_char THEN 8
-        ELSE 9
-      END AS raw_priority
-    FROM query_tokens q
-    JOIN anchor_persons ap ON true
-    JOIN public.clearance_possible_name_tokens t
-      ON t.person_id = ap.person_id
-    JOIN normalized n ON true
-    WHERE n.q IS NOT NULL
-      AND q.token_len >= 3
-      AND t.token_len BETWEEN greatest(q.token_len - 2, 1) AND q.token_len + 2
-      AND (
-        t.first3 = q.first3
-        OR t.first2 = q.first2
-        OR t.skeleton = q.skeleton
-        OR t.last3 = q.last3
-        OR t.last2 = q.last2
-        OR left(t.token, 1) = q.first_char
-        OR t.token % q.token
-        OR t.ck_key % q.ck_key
-        OR t.bv_key % q.bv_key
-        OR t.phf_key % q.phf_key
-        OR t.sz_key % q.sz_key
-      )
-      AND (
-        n.search_type = 'all'
-        OR (n.search_type = 'name' AND t.source_table = 'persons')
-        OR (n.search_type = 'alias' AND t.source_table = 'person_aliases')
-      )
-
-    UNION ALL
-
-    -- Generic cheap blocked candidates, still limited per query token.
-    SELECT
-      q.token AS query_token,
-      blocked.person_id,
-      blocked.token AS matched_token,
-      blocked.source_table,
-      blocked.raw_reason,
-      blocked.raw_priority
-    FROM query_tokens q
-    CROSS JOIN LATERAL (
-      SELECT
-        t.person_id,
-        t.token,
-        t.source_table,
-        CASE
-          WHEN t.first3 = q.first3 THEN 'same_first3'
-          WHEN t.first2 = q.first2 THEN 'same_first2'
-          WHEN t.skeleton = q.skeleton THEN 'same_skeleton'
-          WHEN t.last3 = q.last3 THEN 'same_last3'
-          WHEN t.last2 = q.last2 THEN 'same_last2'
-          WHEN t.token % q.token THEN 'trigram_token'
-          WHEN t.ck_key % q.ck_key THEN 'trigram_ck'
-          WHEN t.bv_key % q.bv_key THEN 'trigram_bv'
-          WHEN t.phf_key % q.phf_key THEN 'trigram_phf'
-          WHEN t.sz_key % q.sz_key THEN 'trigram_sz'
-          ELSE 'blocked'
-        END AS raw_reason,
-        CASE
-          WHEN t.first3 = q.first3 THEN 3
-          WHEN t.first2 = q.first2 THEN 4
-          WHEN t.skeleton = q.skeleton THEN 5
-          WHEN t.last3 = q.last3 THEN 6
-          WHEN t.last2 = q.last2 THEN 7
-          ELSE 8
-        END AS raw_priority
-      FROM public.clearance_possible_name_tokens t
-      JOIN normalized n ON true
-      WHERE n.q IS NOT NULL
-        AND q.token_len >= 3
-        AND t.token_len BETWEEN greatest(q.token_len - 2, 1) AND q.token_len + 2
-        AND (
-          t.first3 = q.first3
-          OR t.first2 = q.first2
-          OR t.skeleton = q.skeleton
-          OR t.last3 = q.last3
-          OR t.last2 = q.last2
-          OR t.token % q.token
-          OR t.ck_key % q.ck_key
-          OR t.bv_key % q.bv_key
-          OR t.phf_key % q.phf_key
-          OR t.sz_key % q.sz_key
-        )
-        AND (
-          n.search_type = 'all'
-          OR (n.search_type = 'name' AND t.source_table = 'persons')
-          OR (n.search_type = 'alias' AND t.source_table = 'person_aliases')
-        )
-      ORDER BY
-        raw_priority,
-        abs(t.token_len - q.token_len),
-        t.token
-      LIMIT 120
-    ) blocked
-  ),
-
-  scored_token_candidates AS MATERIALIZED (
-    SELECT
-      rtc.query_token,
-      rtc.person_id,
-      rtc.matched_token,
-      rtc.raw_reason,
-      round(
-        public.clearance_possible_token_score_v3(
-          rtc.query_token,
-          rtc.matched_token
-        ) * 100
-      )::integer AS token_score
-    FROM raw_token_candidates rtc
-  ),
-
-  best_token_per_person AS (
-    SELECT
+  entity_candidates as (
+    select
       person_id,
-      query_token,
-      max(token_score) AS best_token_score,
-      (array_agg(matched_token ORDER BY token_score DESC, matched_token))[1] AS best_matched_token,
-      (array_agg(raw_reason ORDER BY token_score DESC, raw_reason))[1] AS best_reason
-    FROM scored_token_candidates
-    WHERE token_score >= 60
-    GROUP BY person_id, query_token
+      organization_id,
+      min(raw_priority) as best_priority,
+      count(distinct query_token) as matched_query_tokens,
+      (array_agg(source_value order by raw_priority, source_value))[1] as best_source_value,
+      string_agg(distinct raw_reason, ', ' order by raw_reason) as reasons
+    from raw_token_candidates
+    group by person_id, organization_id
   ),
-
-  candidate_persons AS (
-    SELECT
-      b.person_id,
-      count(*) AS matched_query_token_count,
-      min(b.best_token_score) AS min_token_score,
-      max(b.best_token_score) AS max_token_score,
-      string_agg(
-        b.query_token || '≈' || b.best_matched_token || ' (' || b.best_reason || ' ' || b.best_token_score::text || ')',
-        ', '
-        ORDER BY b.query_token
-      ) AS match_reason
-    FROM best_token_per_person b
-    JOIN normalized n ON true
-    GROUP BY b.person_id, n.q_token_count
-    HAVING
-      (
-        n.q_token_count >= 2
-        AND count(*) = n.q_token_count
-        AND min(b.best_token_score) >= 60
-        AND max(b.best_token_score) >= 85
-      )
-      OR
-      (
-        n.q_token_count = 1
-        AND max(b.best_token_score) >= 75
-      )
-    ORDER BY
-      count(*) DESC,
-      min(b.best_token_score) DESC,
-      max(b.best_token_score) DESC,
-      b.person_id
-    LIMIT 200
+  fuzzy_rows as (
+    select
+      r.person_id,
+      r.organization_id,
+      r.participant_kind,
+      r.case_id,
+      r.docket_number,
+      r.case_number,
+      r.full_name,
+      r.aliases,
+      r.status,
+      r.last_updated,
+      greatest(
+        55,
+        least(
+          89,
+          58
+            + case when ec.matched_query_tokens >= (select q_token_count from normalized) and (select q_token_count from normalized) >= 2 then 18 else 0 end
+            + case ec.best_priority when 1 then 10 when 2 then 8 when 3 then 6 else 3 end
+            + least(8, ec.matched_query_tokens * 2)
+        )
+      )::integer as confidence_score,
+      'Possible fuzzy token match (' || ec.reasons || '): ' || coalesce(ec.best_source_value, r.full_name) as match_details,
+      case when ec.best_priority <= 2 then 'variant' else 'fuzzy' end as match_type,
+      r.role_label,
+      r.age,
+      r.violations
+    from entity_candidates ec
+    join lateral public.search_clearance_records(
+      coalesce(
+        (select p.full_name from public.persons p where p.id = ec.person_id),
+        (select o.organization_name from public.organizations o where o.id = ec.organization_id),
+        ec.best_source_value
+      ),
+      'name',
+      100
+    ) r on r.person_id is not distinct from ec.person_id
+       and r.organization_id is not distinct from ec.organization_id
+    where ec.matched_query_tokens > 0
   ),
-
-  base AS (
-    SELECT
-      p.id::integer AS person_id,
-      c.id::integer AS case_id,
-
-      concat_ws(
-        '-',
-        dt.prefix,
-        c.docket_year::text,
-        nullif(c.docket_month_code, ''),
-        lpad(c.docket_number::text, 6, '0')
-      ) AS docket_number,
-
-      concat_ws(
-        '-',
-        dt.prefix,
-        c.docket_year::text,
-        nullif(c.docket_month_code, ''),
-        lpad(c.docket_number::text, 6, '0')
-      ) AS case_number,
-
-      p.full_name,
-      public.clearance_exact_norm(p.full_name) AS full_name_norm,
-      public.clearance_exact_tokens(p.full_name) AS full_name_tokens,
-
-      coalesce(alias_data.aliases, array[]::text[]) AS aliases,
-      coalesce(cs.display_label, cs.code, 'Unknown') AS status,
-      coalesce(c.updated_at, c.created_at, now()) AS last_updated,
-      coalesce(pr.display_label, pr.code, 'Participant') AS role_label,
-
-      age_data.age_text AS age,
-      violation_data.violations AS violations,
-
-      n.q,
-      n.q_norm,
-      n.q_tokens,
-      n.q_token_count,
-      n.search_type,
-      n.safe_limit,
-
-      cpers.matched_query_token_count,
-      cpers.min_token_score,
-      cpers.max_token_score,
-      cpers.match_reason
-
-    FROM normalized n
-    JOIN candidate_persons cpers ON true
-    JOIN public.persons p
-      ON p.id = cpers.person_id
-     AND coalesce(p.is_active, true) = true
-
-    JOIN public.case_participants cp
-      ON cp.person_id = p.id
-
-    JOIN public.cases c
-      ON c.id = cp.case_id
-     AND coalesce(c.is_archived, false) = false
-
-    JOIN public.docket_types dt
-      ON dt.id = c.docket_type_id
-
-    LEFT JOIN public.participant_roles pr
-      ON pr.id = cp.role_id
-
-    LEFT JOIN public.case_private_details cpd
-      ON cpd.case_id = c.id
-
-    LEFT JOIN public.case_statuses cs
-      ON cs.id = cpd.current_status_id
-
-    LEFT JOIN LATERAL (
-      SELECT array_agg(pa.alias_name ORDER BY pa.alias_name) AS aliases
-      FROM public.person_aliases pa
-      WHERE pa.person_id = p.id
-        AND coalesce(pa.is_active, true) = true
-    ) alias_data ON true
-
-    LEFT JOIN LATERAL (
-      SELECT cpa.age_text
-      FROM public.case_participant_attributes cpa
-      WHERE cpa.case_participant_id = cp.id
-      ORDER BY cpa.id DESC
-      LIMIT 1
-    ) age_data ON true
-
-    LEFT JOIN LATERAL (
-      SELECT string_agg(v.title, ', ' ORDER BY cv.violation_order, v.title) AS violations
-      FROM public.case_violations cv
-      JOIN public.violations v ON v.id = cv.violation_id
-      WHERE cv.case_id = c.id
-    ) violation_data ON true
+  combined as (
+    select *, 1 as result_priority from public.search_clearance_records(p_query, p_search_type, p_limit)
+    union all
+    select *, 2 as result_priority from fuzzy_rows
   ),
-
-  scored AS (
-    SELECT
-      b.*,
-
-      CASE
-        WHEN b.q_token_count >= 2 AND b.min_token_score >= 90 THEN 85
-        WHEN b.q_token_count >= 2 AND b.min_token_score >= 75 THEN 82
-        WHEN b.q_token_count >= 2 AND b.min_token_score >= 60 THEN 78
-        WHEN b.q_token_count = 1 AND b.max_token_score >= 75 THEN 55
-        ELSE 0
-      END AS score,
-
-      CASE
-        WHEN b.q_token_count >= 2 AND b.min_token_score >= 90
-          THEN 'Possible spelling variant match: ' || b.match_reason
-        WHEN b.q_token_count >= 2 AND b.min_token_score >= 75
-          THEN 'Possible edit-distance typo match: ' || b.match_reason
-        WHEN b.q_token_count >= 2 AND b.min_token_score >= 60
-          THEN 'Possible misspelled name-token match: ' || b.match_reason
-        WHEN b.q_token_count = 1 AND b.max_token_score >= 75
-          THEN 'Possible single-token typo match: ' || b.match_reason
-        ELSE 'Possible match'
-      END AS details,
-
-      CASE
-        WHEN b.q_token_count >= 2 AND b.min_token_score >= 90 THEN 'variant'
-        ELSE 'fuzzy'
-      END AS result_match_type
-
-    FROM base b
+  deduped as (
+    select distinct on (person_id, organization_id, case_id)
+      person_id, organization_id, participant_kind, case_id, docket_number, case_number, full_name, aliases,
+      status, last_updated, confidence_score, match_details, match_type, role_label, age, violations
+    from combined
+    order by person_id nulls last, organization_id nulls last, case_id, result_priority, confidence_score desc
   )
-
-  SELECT
-    s.person_id,
-    s.case_id,
-    s.docket_number,
-    s.case_number,
-    s.full_name,
-    s.aliases,
-    s.status,
-    s.last_updated,
-    s.score AS confidence_score,
-    s.details AS match_details,
-    s.result_match_type AS match_type,
-    s.role_label,
-    s.age,
-    s.violations
-  FROM scored s
-  WHERE s.score > 0
-    AND NOT (
-      s.search_type IN ('name', 'all')
-      AND (
-        s.full_name_norm = s.q_norm
-        OR (s.q_token_count >= 2 AND s.q_tokens <@ s.full_name_tokens)
-      )
-    )
-  ORDER BY
-    s.score DESC,
-    s.full_name,
-    s.case_id
-  LIMIT (SELECT safe_limit FROM normalized);
+  select *
+  from deduped
+  order by confidence_score desc, full_name, case_id
+  limit (select safe_limit from normalized);
 $$;
 
 
@@ -7628,239 +7019,47 @@ $$;
 -- Name: search_clearance_records(text, text, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.search_clearance_records(p_query text, p_search_type text DEFAULT 'all'::text, p_limit integer DEFAULT 50) RETURNS TABLE(person_id integer, case_id integer, docket_number text, case_number text, full_name text, aliases text[], status text, last_updated timestamp with time zone, confidence_score integer, match_details text, match_type text, role_label text, age text, violations text)
+CREATE FUNCTION public.search_clearance_records(p_query text, p_search_type text DEFAULT 'all'::text, p_limit integer DEFAULT 50) RETURNS TABLE(person_id integer, organization_id integer, participant_kind text, case_id integer, docket_number text, case_number text, full_name text, aliases text[], status text, last_updated timestamp with time zone, confidence_score integer, match_details text, match_type text, role_label text, age text, violations text)
     LANGUAGE sql STABLE
     AS $$
-  WITH normalized AS (
-    SELECT
-      nullif(trim(p_query), '') AS q,
-      public.clearance_exact_norm(p_query) AS q_norm,
-      public.clearance_exact_tokens(p_query) AS q_tokens,
-      cardinality(public.clearance_exact_tokens(p_query)) AS q_token_count,
-      CASE
-        WHEN p_search_type IN ('name', 'alias', 'all') THEN p_search_type
-        ELSE 'all'
-      END AS search_type,
-      least(greatest(coalesce(p_limit, 50), 1), 100) AS safe_limit
-  ),
-  base AS (
-    SELECT
-      p.id::integer AS person_id,
-      c.id::integer AS case_id,
-
-      concat_ws(
-        '-',
-        dt.prefix,
-        c.docket_year::text,
-        nullif(c.docket_month_code, ''),
-        lpad(c.docket_number::text, 6, '0')
-      ) AS docket_number,
-
-      concat_ws(
-        '-',
-        dt.prefix,
-        c.docket_year::text,
-        nullif(c.docket_month_code, ''),
-        lpad(c.docket_number::text, 6, '0')
-      ) AS case_number,
-
-      p.full_name,
-      public.clearance_exact_norm(p.full_name) AS full_name_norm,
-      public.clearance_exact_tokens(p.full_name) AS full_name_tokens,
-
-      coalesce(alias_data.aliases, array[]::text[]) AS aliases,
-      coalesce(alias_data.alias_full_exact, false) AS alias_full_exact,
-      coalesce(alias_data.alias_tokens_exact, false) AS alias_tokens_exact,
-      coalesce(alias_data.alias_single_token_exact, false) AS alias_single_token_exact,
-      alias_data.best_alias,
-
-      coalesce(cs.display_label, cs.code, 'Pending') AS status,
-      coalesce(c.updated_at, c.created_at, now()) AS last_updated,
-      coalesce(pr.display_label, pr.code, 'Participant') AS role_label,
-
-      age_data.age_text AS age,
-      violation_data.violations AS violations,
-
-      n.q,
-      n.q_norm,
-      n.q_tokens,
-      n.q_token_count,
-      n.search_type,
-      n.safe_limit
-
-    FROM normalized n
-    JOIN public.persons p
-      ON n.q IS NOT NULL
-     AND p.is_active = true
-
-    JOIN public.case_participants cp
-      ON cp.person_id = p.id
-
-    JOIN public.cases c
-      ON c.id = cp.case_id
-     AND coalesce(c.is_archived, false) = false
-
-    JOIN public.docket_types dt
-      ON dt.id = c.docket_type_id
-
-    LEFT JOIN public.participant_roles pr
-      ON pr.id = cp.role_id
-
-    LEFT JOIN public.case_private_details cpd
-      ON cpd.case_id = c.id
-
-    LEFT JOIN public.case_statuses cs
-      ON cs.id = cpd.current_status_id
-
-    LEFT JOIN LATERAL (
-      SELECT
-        array_agg(pa.alias_name ORDER BY pa.alias_name) AS aliases,
-
-        bool_or(public.clearance_exact_norm(pa.alias_name) = n.q_norm) AS alias_full_exact,
-
-        bool_or(
-          n.q_token_count > 0
-          AND n.q_tokens <@ public.clearance_exact_tokens(pa.alias_name)
-        ) AS alias_tokens_exact,
-
-        bool_or(
-          n.q_token_count = 1
-          AND public.clearance_exact_tokens(pa.alias_name) && n.q_tokens
-        ) AS alias_single_token_exact,
-
-        (
-          array_agg(
-            pa.alias_name
-            ORDER BY
-              CASE
-                WHEN public.clearance_exact_norm(pa.alias_name) = n.q_norm THEN 1
-                WHEN n.q_token_count > 0
-                  AND n.q_tokens <@ public.clearance_exact_tokens(pa.alias_name) THEN 2
-                ELSE 3
-              END,
-              pa.alias_name
-          )
-        )[1] AS best_alias
-
-      FROM public.person_aliases pa
-      WHERE pa.person_id = p.id
-        AND coalesce(pa.is_active, true) = true
-    ) alias_data ON true
-
-    LEFT JOIN LATERAL (
-      SELECT cpa.age_text
-      FROM public.case_participant_attributes cpa
-      WHERE cpa.case_participant_id = cp.id
-      ORDER BY cpa.id DESC
-      LIMIT 1
-    ) age_data ON true
-
-    LEFT JOIN LATERAL (
-      SELECT string_agg(v.title, ', ' ORDER BY cv.violation_order, v.title) AS violations
-      FROM public.case_violations cv
-      JOIN public.violations v ON v.id = cv.violation_id
-      WHERE cv.case_id = c.id
-    ) violation_data ON true
-  ),
-  scored AS (
-    SELECT
-      b.*,
-
-      CASE
-        WHEN b.search_type IN ('name', 'all')
-          AND b.full_name_norm = b.q_norm
-          THEN 100
-
-        WHEN b.search_type IN ('name', 'all')
-          AND b.q_token_count >= 2
-          AND b.q_tokens <@ b.full_name_tokens
-          THEN 95
-
-        WHEN b.search_type IN ('alias', 'all')
-          AND b.alias_full_exact
-          THEN 92
-
-        WHEN b.search_type IN ('alias', 'all')
-          AND b.q_token_count >= 2
-          AND b.alias_tokens_exact
-          THEN 88
-
-        WHEN b.search_type IN ('alias', 'all')
-          AND b.q_token_count = 1
-          AND b.alias_single_token_exact
-          THEN 72
-
-        WHEN b.search_type IN ('name', 'all')
-          AND b.q_token_count = 1
-          AND b.full_name_tokens && b.q_tokens
-          THEN 65
-
-        ELSE 0
-      END AS score,
-
-      CASE
-        WHEN b.search_type IN ('name', 'all')
-          AND b.full_name_norm = b.q_norm
-          THEN 'Exact normalized full-name match'
-
-        WHEN b.search_type IN ('name', 'all')
-          AND b.q_token_count >= 2
-          AND b.q_tokens <@ b.full_name_tokens
-          THEN 'Exact name-token match: all searched name tokens exist in full name'
-
-        WHEN b.search_type IN ('alias', 'all')
-          AND b.alias_full_exact
-          THEN 'Exact alias match: ' || coalesce(b.best_alias, '')
-
-        WHEN b.search_type IN ('alias', 'all')
-          AND b.q_token_count >= 2
-          AND b.alias_tokens_exact
-          THEN 'Exact alias-token match: ' || coalesce(b.best_alias, '')
-
-        WHEN b.search_type IN ('alias', 'all')
-          AND b.q_token_count = 1
-          AND b.alias_single_token_exact
-          THEN 'Exact alias single-token match: ' || coalesce(b.best_alias, '')
-
-        WHEN b.search_type IN ('name', 'all')
-          AND b.q_token_count = 1
-          AND b.full_name_tokens && b.q_tokens
-          THEN 'Exact single-token name match'
-
-        ELSE 'No exact match'
-      END AS details,
-
-      CASE
-        WHEN b.search_type IN ('alias', 'all')
-          AND (b.alias_full_exact OR b.alias_tokens_exact OR b.alias_single_token_exact)
-          THEN 'alias'
-        ELSE 'exact'
-      END AS result_match_type
-
-    FROM base b
+  with n as (
+    select nullif(trim(p_query),'') q, public.clearance_exact_norm(p_query) q_norm, public.clearance_exact_tokens(p_query) q_tokens,
+      cardinality(public.clearance_exact_tokens(p_query)) q_count,
+      case when p_search_type in ('name','alias','all') then p_search_type else 'all' end st,
+      least(greatest(coalesce(p_limit,50),1),100) lim
+  ), parties as (
+    select p.id::integer person_id, null::integer organization_id, 'PERSON'::text participant_kind, p.full_name name,
+      public.clearance_exact_norm(p.full_name) name_norm, public.clearance_exact_tokens(p.full_name) name_tokens,
+      coalesce(a.aliases, array[]::text[]) aliases, coalesce(a.alias_full,false) alias_full, coalesce(a.alias_tokens,false) alias_tokens, coalesce(a.alias_single,false) alias_single, a.best_alias
+    from n join public.persons p on n.q is not null and coalesce(p.is_active,true)
+    left join lateral (select array_agg(pa.alias_name order by pa.alias_name) aliases, bool_or(public.clearance_exact_norm(pa.alias_name)=n.q_norm) alias_full, bool_or(n.q_count>0 and n.q_tokens <@ public.clearance_exact_tokens(pa.alias_name)) alias_tokens, bool_or(n.q_count=1 and public.clearance_exact_tokens(pa.alias_name) && n.q_tokens) alias_single, (array_agg(pa.alias_name order by case when public.clearance_exact_norm(pa.alias_name)=n.q_norm then 1 when n.q_count>0 and n.q_tokens <@ public.clearance_exact_tokens(pa.alias_name) then 2 else 3 end, pa.alias_name))[1] best_alias from public.person_aliases pa where pa.person_id=p.id and coalesce(pa.is_active,true)) a on true
+    union all
+    select null::integer, o.id::integer, 'ORGANIZATION'::text, o.organization_name,
+      public.clearance_exact_norm(o.organization_name), public.clearance_exact_tokens(o.organization_name),
+      coalesce(a.aliases, array[]::text[]), coalesce(a.alias_full,false), coalesce(a.alias_tokens,false), coalesce(a.alias_single,false), a.best_alias
+    from n join public.organizations o on n.q is not null and coalesce(o.is_active,true)
+    left join lateral (select array_agg(oa.alias_name order by oa.alias_name) aliases, bool_or(public.clearance_exact_norm(oa.alias_name)=n.q_norm) alias_full, bool_or(n.q_count>0 and n.q_tokens <@ public.clearance_exact_tokens(oa.alias_name)) alias_tokens, bool_or(n.q_count=1 and public.clearance_exact_tokens(oa.alias_name) && n.q_tokens) alias_single, (array_agg(oa.alias_name order by case when public.clearance_exact_norm(oa.alias_name)=n.q_norm then 1 when n.q_count>0 and n.q_tokens <@ public.clearance_exact_tokens(oa.alias_name) then 2 else 3 end, oa.alias_name))[1] best_alias from public.organization_aliases oa where oa.organization_id=o.id and coalesce(oa.is_active,true)) a on true
+  ), joined as (
+    select pt.*, c.id::integer case_id, concat_ws('-',dt.prefix,c.docket_year::text,nullif(c.docket_month_code,''),lpad(c.docket_number::text,6,'0')) docket_number,
+      coalesce(cs.display_label, cs.code, 'Pending') status, coalesce(c.updated_at,c.created_at,now()) last_updated, coalesce(pr.display_label,pr.code,'Participant') role_label,
+      age.age_text, viol.violations, n.*
+    from parties pt join n on true
+    join public.case_participants cp on (cp.person_id=pt.person_id or cp.organization_id=pt.organization_id)
+    join public.cases c on c.id=cp.case_id and not coalesce(c.is_archived,false)
+    join public.docket_types dt on dt.id=c.docket_type_id
+    left join public.participant_roles pr on pr.id=cp.role_id
+    left join public.case_private_details cpd on cpd.case_id=c.id
+    left join public.case_statuses cs on cs.id=cpd.current_status_id
+    left join lateral (select cpa.age_text from public.case_participant_attributes cpa where cpa.case_participant_id=cp.id order by cpa.id desc limit 1) age on true
+    left join lateral (select string_agg(v.title, ', ' order by cv.violation_order, v.title) violations from public.case_violations cv join public.violations v on v.id=cv.violation_id where cv.case_id=c.id) viol on true
+  ), scored as (
+    select *, case when st in ('name','all') and name_norm=q_norm then 100 when st in ('name','all') and q_count>=2 and q_tokens <@ name_tokens then 95 when st in ('alias','all') and alias_full then 92 when st in ('alias','all') and q_count>=2 and alias_tokens then 88 when st in ('alias','all') and q_count=1 and alias_single then 72 when st in ('name','all') and q_count=1 and name_tokens && q_tokens then 65 else 0 end score
+    from joined
   )
-  SELECT
-    s.person_id,
-    s.case_id,
-    s.docket_number,
-    s.case_number,
-    s.full_name,
-    s.aliases,
-    s.status,
-    s.last_updated,
-    s.score AS confidence_score,
-    s.details AS match_details,
-    s.result_match_type AS match_type,
-    s.role_label,
-    s.age,
-    s.violations
-  FROM scored s
-  WHERE s.score > 0
-  ORDER BY
-    s.score DESC,
-    s.full_name,
-    s.case_id
-  LIMIT (SELECT safe_limit FROM normalized);
+  select person_id, organization_id, participant_kind, case_id, docket_number, docket_number, name, aliases, status, last_updated, score,
+    case when st in ('name','all') and name_norm=q_norm then 'Exact normalized name match' when st in ('alias','all') and (alias_full or alias_tokens or alias_single) then 'Exact alias match: '||coalesce(best_alias,'') else 'Exact token match' end,
+    case when st in ('alias','all') and (alias_full or alias_tokens or alias_single) then 'alias' else 'exact' end, role_label, age_text, violations
+  from scored where score>0 order by score desc, name, case_id limit (select lim from n);
 $$;
 
 
@@ -7911,6 +7110,134 @@ BEGIN
 
     RETURN NEW;
 END;
+$$;
+
+
+--
+-- Name: upsert_clearance_phonetic_tokens_for_organization(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.upsert_clearance_phonetic_tokens_for_organization(p_organization_id bigint) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+begin
+  delete from public.clearance_phonetic_name_tokens where organization_id = p_organization_id;
+
+  insert into public.clearance_phonetic_name_tokens (person_id, organization_id, source_table, source_column, source_value, token, token_order, token_len, phonetic_primary, phonetic_alt, phonetic_codes)
+  select null::integer, x.organization_id, x.source_table, x.source_column, x.source_value,
+    tok.token, tok.token_order::integer, length(tok.token), dmetaphone(tok.token), dmetaphone_alt(tok.token), public.clearance_phonetic_codes(tok.token)
+  from (
+    select o.id as organization_id, 'organizations' as source_table, 'organization_name' as source_column, o.organization_name as source_value
+    from public.organizations o
+    where o.id = p_organization_id and coalesce(o.is_active, true) = true
+    union all
+    select oa.organization_id, 'organization_aliases', 'alias_name', oa.alias_name
+    from public.organization_aliases oa
+    join public.organizations o on o.id = oa.organization_id
+    where oa.organization_id = p_organization_id and coalesce(oa.is_active, true) = true and coalesce(o.is_active, true) = true
+  ) x
+  cross join lateral regexp_split_to_table(public.clearance_exact_norm(x.source_value), ' ') with ordinality as tok(token, token_order)
+  where length(tok.token) > 1 and cardinality(public.clearance_phonetic_codes(tok.token)) > 0;
+end;
+$$;
+
+
+--
+-- Name: upsert_clearance_phonetic_tokens_for_person(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.upsert_clearance_phonetic_tokens_for_person(p_person_id bigint) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+begin
+  delete from public.clearance_phonetic_name_tokens where person_id = p_person_id;
+
+  insert into public.clearance_phonetic_name_tokens (person_id, organization_id, source_table, source_column, source_value, token, token_order, token_len, phonetic_primary, phonetic_alt, phonetic_codes)
+  select x.person_id, null::integer, x.source_table, x.source_column, x.source_value,
+    tok.token, tok.token_order::integer, length(tok.token), dmetaphone(tok.token), dmetaphone_alt(tok.token), public.clearance_phonetic_codes(tok.token)
+  from (
+    select p.id as person_id, 'persons' as source_table, 'full_name' as source_column, p.full_name as source_value
+    from public.persons p
+    where p.id = p_person_id and coalesce(p.is_active, true) = true
+    union all
+    select pa.person_id, 'person_aliases', 'alias_name', pa.alias_name
+    from public.person_aliases pa
+    join public.persons p on p.id = pa.person_id
+    where pa.person_id = p_person_id and coalesce(pa.is_active, true) = true and coalesce(p.is_active, true) = true
+  ) x
+  cross join lateral regexp_split_to_table(public.clearance_exact_norm(x.source_value), ' ') with ordinality as tok(token, token_order)
+  where length(tok.token) > 1 and cardinality(public.clearance_phonetic_codes(tok.token)) > 0;
+end;
+$$;
+
+
+--
+-- Name: upsert_clearance_possible_tokens_for_organization(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.upsert_clearance_possible_tokens_for_organization(p_organization_id bigint) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+begin
+  delete from public.clearance_possible_name_tokens where organization_id = p_organization_id;
+
+  insert into public.clearance_possible_name_tokens (
+    person_id, organization_id, source_table, source_column, source_value,
+    token, token_order, token_len, first_char, first2, first3, last2, last3,
+    ck_key, bv_key, phf_key, sz_key, skeleton
+  )
+  select null::integer, x.organization_id, x.source_table, x.source_column, x.source_value,
+    tok.token, tok.token_order::integer, length(tok.token), left(tok.token,1), left(tok.token,2), left(tok.token,3),
+    right(tok.token,2), right(tok.token,3), public.clearance_ck_key(tok.token), public.clearance_bv_key(tok.token),
+    public.clearance_phf_key(tok.token), public.clearance_sz_key(tok.token), public.clearance_token_skeleton(tok.token)
+  from (
+    select o.id as organization_id, 'organizations' as source_table, 'organization_name' as source_column, o.organization_name as source_value
+    from public.organizations o
+    where o.id = p_organization_id and coalesce(o.is_active, true) = true
+    union all
+    select oa.organization_id, 'organization_aliases', 'alias_name', oa.alias_name
+    from public.organization_aliases oa
+    join public.organizations o on o.id = oa.organization_id
+    where oa.organization_id = p_organization_id and coalesce(oa.is_active, true) = true and coalesce(o.is_active, true) = true
+  ) x
+  cross join lateral regexp_split_to_table(public.clearance_exact_norm(x.source_value), ' ') with ordinality as tok(token, token_order)
+  where length(tok.token) > 1;
+end;
+$$;
+
+
+--
+-- Name: upsert_clearance_possible_tokens_for_person(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.upsert_clearance_possible_tokens_for_person(p_person_id bigint) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+begin
+  delete from public.clearance_possible_name_tokens where person_id = p_person_id;
+
+  insert into public.clearance_possible_name_tokens (
+    person_id, organization_id, source_table, source_column, source_value,
+    token, token_order, token_len, first_char, first2, first3, last2, last3,
+    ck_key, bv_key, phf_key, sz_key, skeleton
+  )
+  select x.person_id, null::integer, x.source_table, x.source_column, x.source_value,
+    tok.token, tok.token_order::integer, length(tok.token), left(tok.token,1), left(tok.token,2), left(tok.token,3),
+    right(tok.token,2), right(tok.token,3), public.clearance_ck_key(tok.token), public.clearance_bv_key(tok.token),
+    public.clearance_phf_key(tok.token), public.clearance_sz_key(tok.token), public.clearance_token_skeleton(tok.token)
+  from (
+    select p.id as person_id, 'persons' as source_table, 'full_name' as source_column, p.full_name as source_value
+    from public.persons p
+    where p.id = p_person_id and coalesce(p.is_active, true) = true
+    union all
+    select pa.person_id, 'person_aliases', 'alias_name', pa.alias_name
+    from public.person_aliases pa
+    join public.persons p on p.id = pa.person_id
+    where pa.person_id = p_person_id and coalesce(pa.is_active, true) = true and coalesce(p.is_active, true) = true
+  ) x
+  cross join lateral regexp_split_to_table(public.clearance_exact_norm(x.source_value), ' ') with ordinality as tok(token, token_order)
+  where length(tok.token) > 1;
+end;
 $$;
 
 
@@ -11520,7 +10847,7 @@ ALTER SEQUENCE public.cases_id_seq OWNED BY public.cases.id;
 
 CREATE TABLE public.clearance_phonetic_name_tokens (
     id bigint NOT NULL,
-    person_id integer NOT NULL,
+    person_id integer,
     source_table text NOT NULL,
     source_column text NOT NULL,
     source_value text NOT NULL,
@@ -11530,7 +10857,8 @@ CREATE TABLE public.clearance_phonetic_name_tokens (
     phonetic_primary text,
     phonetic_alt text,
     phonetic_codes text[] NOT NULL,
-    refreshed_at timestamp with time zone DEFAULT now() NOT NULL
+    refreshed_at timestamp with time zone DEFAULT now() NOT NULL,
+    organization_id integer
 );
 
 
@@ -11554,7 +10882,7 @@ ALTER TABLE public.clearance_phonetic_name_tokens ALTER COLUMN id ADD GENERATED 
 
 CREATE TABLE public.clearance_possible_name_tokens (
     id bigint NOT NULL,
-    person_id integer NOT NULL,
+    person_id integer,
     source_table text NOT NULL,
     source_column text NOT NULL,
     source_value text NOT NULL,
@@ -11571,7 +10899,8 @@ CREATE TABLE public.clearance_possible_name_tokens (
     phf_key text NOT NULL,
     sz_key text NOT NULL,
     skeleton text NOT NULL,
-    refreshed_at timestamp with time zone DEFAULT now() NOT NULL
+    refreshed_at timestamp with time zone DEFAULT now() NOT NULL,
+    organization_id integer
 );
 
 
@@ -16813,6 +16142,13 @@ CREATE INDEX idx_clearance_phonetic_tokens_codes ON public.clearance_phonetic_na
 
 
 --
+-- Name: idx_clearance_phonetic_tokens_organization; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_clearance_phonetic_tokens_organization ON public.clearance_phonetic_name_tokens USING btree (organization_id);
+
+
+--
 -- Name: idx_clearance_phonetic_tokens_person; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16894,6 +16230,13 @@ CREATE INDEX idx_clearance_possible_tokens_last3 ON public.clearance_possible_na
 --
 
 CREATE INDEX idx_clearance_possible_tokens_len_first ON public.clearance_possible_name_tokens USING btree (token_len, first_char);
+
+
+--
+-- Name: idx_clearance_possible_tokens_organization; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_clearance_possible_tokens_organization ON public.clearance_possible_name_tokens USING btree (organization_id);
 
 
 --
@@ -22137,6 +21480,42 @@ GRANT ALL ON FUNCTION public.trg_case_participant_relationships_same_case() TO s
 
 
 --
+-- Name: FUNCTION upsert_clearance_phonetic_tokens_for_organization(p_organization_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.upsert_clearance_phonetic_tokens_for_organization(p_organization_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.upsert_clearance_phonetic_tokens_for_organization(p_organization_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.upsert_clearance_phonetic_tokens_for_organization(p_organization_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION upsert_clearance_phonetic_tokens_for_person(p_person_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.upsert_clearance_phonetic_tokens_for_person(p_person_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.upsert_clearance_phonetic_tokens_for_person(p_person_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.upsert_clearance_phonetic_tokens_for_person(p_person_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION upsert_clearance_possible_tokens_for_organization(p_organization_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.upsert_clearance_possible_tokens_for_organization(p_organization_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.upsert_clearance_possible_tokens_for_organization(p_organization_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.upsert_clearance_possible_tokens_for_organization(p_organization_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION upsert_clearance_possible_tokens_for_person(p_person_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.upsert_clearance_possible_tokens_for_person(p_person_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.upsert_clearance_possible_tokens_for_person(p_person_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.upsert_clearance_possible_tokens_for_person(p_person_id bigint) TO service_role;
+
+
+--
 -- Name: FUNCTION void_case_event(p_case_event_id bigint, p_void_reason text, p_voided_by_user_id bigint); Type: ACL; Schema: public; Owner: -
 --
 
@@ -24436,5 +23815,5 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 -- PostgreSQL database dump complete
 --
 
-\unrestrict JXw7vSb0ESJYIvIx9Wkwn4VwO27VUejrlj425f14Mj4wdzXaySGvLdmlpjEMegX
+\unrestrict cqTNGz25bZ9NmiS9PAgtFQxNtuIfGhXwccqcWDPDdWVNZH1aZAscvbUaC0r2MBD
 
