@@ -14,6 +14,11 @@ DECLARE
   v_event_type_id bigint;
   v_event_id bigint;
   v_assignment_id bigint;
+  v_status_history_id bigint;
+  v_old_assignment_id bigint;
+  v_old_prosecutor_id bigint;
+  v_staff_id bigint;
+  v_assignment_action text;
   v_from_status_id bigint;
   v_to_status_id bigint;
   v_status_date date;
@@ -62,17 +67,41 @@ BEGIN
     SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code = 'STATUS_UPDATED' AND is_active IS TRUE LIMIT 1;
     IF v_event_type_id IS NULL THEN SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code = 'CASE_RECEIVED' LIMIT 1; END IF;
     IF v_event_type_id IS NULL THEN RAISE EXCEPTION 'Missing case event type STATUS_UPDATED or CASE_RECEIVED'; END IF;
-    INSERT INTO public.case_events(case_id,event_type_id,event_date,title,description,status_id,source,source_table,created_by_user_id,updated_by_user_id)
-    VALUES (v_case_id,v_event_type_id,v_status_date,'Status updated',v_status_remarks,v_to_status_id,'MANUAL_EDIT','case_status_history',v_user_id,v_user_id) RETURNING id INTO v_event_id;
-    INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id)
-    VALUES (v_case_id,v_from_status_id,v_to_status_id,v_user_id,now(),v_status_date,v_status_remarks,v_event_id);
+    INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks)
+    VALUES (v_case_id,v_from_status_id,v_to_status_id,v_user_id,now(),v_status_date,v_status_remarks)
+    RETURNING id INTO v_status_history_id;
+    INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,details_jsonb,source,source_table,source_id,created_by_user_id,updated_by_user_id)
+    VALUES (
+      v_case_id,
+      v_event_type_id,
+      v_status_date,
+      now()::time,
+      'Status updated',
+      v_status_remarks,
+      v_to_status_id,
+      jsonb_build_object('from_status_id', v_from_status_id, 'to_status_id', v_to_status_id, 'status_date', v_status_date, 'remarks', v_status_remarks, 'reason', v_reason),
+      'MANUAL_EDIT',
+      'case_status_history',
+      v_status_history_id,
+      v_user_id,
+      v_user_id
+    ) RETURNING id INTO v_event_id;
+    UPDATE public.case_status_history SET case_event_id = v_event_id WHERE id = v_status_history_id;
     UPDATE public.cases SET updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_case_id;
-    UPDATE public.case_private_details SET current_status_id = v_to_status_id, current_status_date = v_status_date, current_status_remarks = v_status_remarks WHERE case_id = v_case_id;
+    UPDATE public.case_private_details SET current_status_id = v_to_status_id, current_status_date = v_status_date, current_status_remarks = v_status_remarks, current_status_approved_date_raw = nullif(btrim(p_payload#>>'{data,statusApprovedDateRaw}'),'') WHERE case_id = v_case_id;
   ELSIF v_section = 'assignment' THEN
     v_prosecutor_id := nullif(p_payload#>>'{data,prosecutorId}','')::bigint;
+    v_staff_id := nullif(p_payload#>>'{data,staffId}','')::bigint;
+    v_assignment_action := COALESCE(nullif(btrim(p_payload#>>'{data,assignmentMode}'),''), 'reassign');
     v_assigned_at := COALESCE(nullif(p_payload#>>'{data,assignedAt}','')::timestamptz, now());
     v_assignment_remarks := COALESCE(nullif(btrim(p_payload#>>'{data,remarks}'),''), v_reason);
     IF v_prosecutor_id IS NULL THEN RAISE EXCEPTION 'prosecutorId is required'; END IF;
+    IF v_assignment_action NOT IN ('reassign', 'void_and_assign') THEN RAISE EXCEPTION 'Unsupported assignment mode %', v_assignment_action; END IF;
+    SELECT id, prosecutor_id INTO v_old_assignment_id, v_old_prosecutor_id
+    FROM public.case_assignments
+    WHERE case_id = v_case_id AND unassigned_at IS NULL
+    ORDER BY assigned_at DESC NULLS LAST, id DESC
+    LIMIT 1;
     SELECT id INTO v_event_type_id
     FROM public.case_event_types
     WHERE code = 'CASE_RAFFLED'
@@ -91,10 +120,32 @@ BEGIN
       RAISE EXCEPTION 'Missing case event type CASE_RAFFLED or CASE_ASSIGNED';
     END IF;
 
-    INSERT INTO public.case_assignments(case_id,prosecutor_id,assigned_by_user_id,assigned_at,remarks)
-    VALUES (v_case_id,v_prosecutor_id,v_user_id,v_assigned_at,v_assignment_remarks) RETURNING id INTO v_assignment_id;
-    INSERT INTO public.case_events(case_id,event_type_id,event_date,title,description,prosecutor_id,source,source_table,source_id,created_by_user_id,updated_by_user_id)
-    VALUES (v_case_id,v_event_type_id,v_assigned_at::date,'Case assigned',v_assignment_remarks,v_prosecutor_id,'MANUAL_EDIT','case_assignments',v_assignment_id,v_user_id,v_user_id) RETURNING id INTO v_event_id;
+    UPDATE public.case_assignments
+    SET unassigned_at = COALESCE(v_assigned_at, now()),
+        remarks = concat_ws(E'
+', remarks, CASE WHEN v_assignment_action = 'void_and_assign' THEN 'Void reason: ' || v_reason ELSE 'Reassigned/Void reason: ' || v_reason END)
+    WHERE case_id = v_case_id
+      AND unassigned_at IS NULL;
+
+    INSERT INTO public.case_assignments(case_id,prosecutor_id,staff_id,assigned_by_user_id,assigned_at,remarks)
+    VALUES (v_case_id,v_prosecutor_id,v_staff_id,v_user_id,v_assigned_at,v_assignment_remarks) RETURNING id INTO v_assignment_id;
+    INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,prosecutor_id,staff_id,details_jsonb,source,source_table,source_id,created_by_user_id,updated_by_user_id)
+    VALUES (
+      v_case_id,
+      v_event_type_id,
+      v_assigned_at::date,
+      v_assigned_at::time,
+      CASE WHEN v_old_assignment_id IS NULL THEN 'Case assigned' ELSE 'Case reassigned' END,
+      v_assignment_remarks,
+      v_prosecutor_id,
+      v_staff_id,
+      jsonb_build_object('action', v_assignment_action, 'previous_assignment_id', v_old_assignment_id, 'previous_prosecutor_id', v_old_prosecutor_id, 'new_prosecutor_id', v_prosecutor_id, 'reason', v_reason),
+      'MANUAL_EDIT',
+      'case_assignments',
+      v_assignment_id,
+      v_user_id,
+      v_user_id
+    ) RETURNING id INTO v_event_id;
     UPDATE public.case_assignments SET case_event_id = v_event_id WHERE id = v_assignment_id;
     UPDATE public.cases SET updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_case_id;
   ELSE
@@ -174,13 +225,22 @@ BEGIN
       VALUES (nullif(btrim(v_place->>'line1'),''), nullif(btrim(v_place->>'line2'),''), nullif(btrim(v_place->>'barangay'),''), nullif(btrim(v_place->>'city'),''), nullif(btrim(v_place->>'province'),''), nullif(btrim(v_place->>'region'),''), nullif(btrim(v_place->>'zipCode'),''), coalesce(nullif(btrim(v_place->>'country'),''), 'Philippines'), nullif(v_place->>'latitude','')::numeric, nullif(v_place->>'longitude','')::numeric)
       RETURNING id INTO v_address_id;
       INSERT INTO public.case_addresses(case_id,address_id,address_type_id,is_primary,remarks)
-      VALUES (v_case_id, v_address_id, v_address_type_id, coalesce(nullif(v_place->>'isPrimary','')::boolean,false), nullif(btrim(v_place->>'remarks'),''));
+      VALUES (v_case_id, v_address_id, v_address_type_id, coalesce(nullif(v_place->>'isPrimary','')::boolean,false), nullif(btrim(v_place->>'remarks'),''))
+      RETURNING id INTO v_case_address_id;
     ELSE
       IF v_case_address_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
       SELECT address_id INTO v_address_id FROM public.case_addresses WHERE id = v_case_address_id AND case_id = v_case_id;
       IF v_address_id IS NULL THEN RAISE EXCEPTION 'Place % not found', v_case_address_id; END IF;
+      IF EXISTS (SELECT 1 FROM public.case_addresses WHERE id = v_case_address_id AND case_id = v_case_id AND is_deleted IS TRUE) THEN RAISE EXCEPTION 'Restore place before editing'; END IF;
       UPDATE public.addresses SET line1=nullif(btrim(v_place->>'line1'),''), line2=nullif(btrim(v_place->>'line2'),''), barangay=nullif(btrim(v_place->>'barangay'),''), city=nullif(btrim(v_place->>'city'),''), province=nullif(btrim(v_place->>'province'),''), region=nullif(btrim(v_place->>'region'),''), zip_code=nullif(btrim(v_place->>'zipCode'),''), country=coalesce(nullif(btrim(v_place->>'country'),''), 'Philippines'), latitude=nullif(v_place->>'latitude','')::numeric, longitude=nullif(v_place->>'longitude','')::numeric WHERE id = v_address_id;
       UPDATE public.case_addresses SET address_type_id=v_address_type_id, is_primary=coalesce(nullif(v_place->>'isPrimary','')::boolean,false), remarks=nullif(btrim(v_place->>'remarks'),'') WHERE id = v_case_address_id AND case_id = v_case_id;
+    END IF;
+    IF coalesce(nullif(v_place->>'isPrimary','')::boolean,false) IS TRUE THEN
+      UPDATE public.case_addresses
+      SET is_primary = false
+      WHERE case_id = v_case_id
+        AND id <> v_case_address_id
+        AND coalesce(is_deleted, false) IS FALSE;
     END IF;
   ELSIF v_action = 'remove' THEN
     IF v_case_address_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
@@ -234,6 +294,7 @@ BEGIN
     VALUES (v_case_id, v_user_id, nullif(btrim(v_note->>'noteText'),''), coalesce(nullif(v_note->>'isPrivate','')::boolean,false));
   ELSIF v_action = 'edit' THEN
     IF v_note_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
+    IF EXISTS (SELECT 1 FROM public.notes WHERE id = v_note_id AND case_id = v_case_id AND is_deleted IS TRUE) THEN RAISE EXCEPTION 'Restore note before editing'; END IF;
     IF nullif(btrim(v_note->>'noteText'),'') IS NULL THEN RAISE EXCEPTION 'noteText is required'; END IF;
     UPDATE public.notes SET note_text = nullif(btrim(v_note->>'noteText'),''), is_private = coalesce(nullif(v_note->>'isPrivate','')::boolean,false), updated_at = now() WHERE id = v_note_id AND case_id = v_case_id;
   ELSIF v_action = 'remove' THEN

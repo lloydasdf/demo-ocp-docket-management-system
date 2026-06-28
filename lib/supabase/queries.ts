@@ -1237,6 +1237,15 @@ export async function getProsecutors(limit?: number): Promise<SupabaseQueryResul
   }, []);
 }
 
+
+export async function getStaff(limit?: number): Promise<SupabaseQueryResult<TableRow<"staff">[]>> {
+  const safeLimit = normalizeLimit(limit, 50, 250);
+  return runSupabaseQuery("getStaff", "staff", async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("staff" as never).select("*").eq("is_active" as never, true).order("full_name" as never, { ascending: true }).limit(safeLimit)) as unknown as { data: TableRow<"staff">[] | null; error: unknown };
+  }, []);
+}
+
 export async function getCaseParticipants(
   caseId: number,
 ): Promise<SupabaseQueryResult<CaseParticipantRecord[]>> {

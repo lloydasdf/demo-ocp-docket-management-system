@@ -53,6 +53,7 @@ import {
   getCaseOverviewChangeHistory,
   getCasePlaces,
   getProsecutors,
+  getStaff,
   manageCaseNotes,
   manageCasePlaces,
   type CaseCourtRecord,
@@ -586,12 +587,15 @@ function getOverviewInitialData(
       statusId: details.current_status_id,
       statusDate: details.current_status_date,
       remarks: details.current_status_remarks,
+      statusApprovedDateRaw: details.status_approved_date_raw,
     };
   }
 
   if (section === "assignment") {
     return {
+      assignmentMode: "reassign",
       prosecutorId: details.current_prosecutor_id,
+      staffId: details.current_staff_id,
       assignedAt: details.current_assigned_at,
       remarks: "",
     };
@@ -603,7 +607,7 @@ function getOverviewInitialData(
 type OverviewAction = CaseOverviewEditSection | "history";
 
 type RefOption = { id: number; display_label?: string | null; name?: string | null; prefix?: string | null; code?: string | null; full_name?: string | null; short_name?: string | null };
-type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; prosecutors: RefOption[]; addressTypes: RefOption[] };
+type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; prosecutors: RefOption[]; staff: RefOption[]; addressTypes: RefOption[] };
 
 type OverviewEditorProps = {
   title: string;
@@ -674,9 +678,12 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
                 <FieldSelect label="Status" value={String(formData.statusId ?? "")} onChange={(v) => setValue("statusId", v)} options={refs.statuses} optionLabel={optionLabel} />
                 <FieldInput label="Status date" type="date" value={String(formData.statusDate ?? "")} onChange={(v) => setValue("statusDate", v)} />
                 <FieldTextarea label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} className="sm:col-span-2" />
+                <FieldInput label="Status approved date/raw" value={String(formData.statusApprovedDateRaw ?? "")} onChange={(v) => setValue("statusApprovedDateRaw", v)} className="sm:col-span-2" />
               </>) : null}
               {section === "assignment" ? (<>
+                <FieldSelect label="Assignment mode" value={String(formData.assignmentMode ?? "reassign")} onChange={(v) => setValue("assignmentMode", v)} options={[{ id: 1, display_label: "Reassign case", code: "reassign" }, { id: 2, display_label: "Void current assignment and assign new", code: "void_and_assign" }]} optionLabel={(option) => option.display_label ?? String(option.id)} valueKey="code" />
                 <FieldSelect label="Prosecutor" value={String(formData.prosecutorId ?? "")} onChange={(v) => setValue("prosecutorId", v)} options={refs.prosecutors} optionLabel={optionLabel} />
+                <FieldSelect label="Staff" value={String(formData.staffId ?? "")} onChange={(v) => setValue("staffId", v)} options={refs.staff} optionLabel={optionLabel} allowEmpty />
                 <FieldInput label="Assigned at" type="date" value={String(formData.assignedAt ?? "").slice(0,10)} onChange={(v) => setValue("assignedAt", v)} />
                 <FieldTextarea label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} className="sm:col-span-2" />
               </>) : null}
@@ -699,8 +706,8 @@ function FieldInput({ label, value, onChange, type = "text", className }: { labe
 function FieldTextarea({ label, value, onChange, className }: { label: string; value: string; onChange: (value: string) => void; className?: string }) {
   return <div className={className}><Label>{label}</Label><Textarea value={value} onChange={(e) => onChange(e.target.value)} /></div>;
 }
-function FieldSelect({ label, value, onChange, options, optionLabel, allowEmpty = false }: { label: string; value: string; onChange: (value: string) => void; options: RefOption[]; optionLabel: (option: RefOption) => string; allowEmpty?: boolean }) {
-  return <div><Label>{label}</Label><select className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>{allowEmpty ? <option value="">—</option> : null}{options.map((option) => <option key={option.id} value={option.id}>{optionLabel(option)}</option>)}</select></div>;
+function FieldSelect({ label, value, onChange, options, optionLabel, allowEmpty = false, valueKey = "id" }: { label: string; value: string; onChange: (value: string) => void; options: RefOption[]; optionLabel: (option: RefOption) => string; allowEmpty?: boolean; valueKey?: "id" | "code" }) {
+  return <div><Label>{label}</Label><select className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>{allowEmpty ? <option value="">—</option> : null}{options.map((option) => <option key={option.id} value={valueKey === "code" ? option.code ?? "" : option.id}>{optionLabel(option)}</option>)}</select></div>;
 }
 
 function formatJsonPreview(value: unknown) {
@@ -1031,7 +1038,7 @@ export default function CaseDetailsPage() {
   const [data, setData] = useState<CaseDetailsState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], prosecutors: [], addressTypes: [] });
+  const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], prosecutors: [], staff: [], addressTypes: [] });
   const [activeOverviewEditor, setActiveOverviewEditor] =
     useState<OverviewAction | null>(null);
   const loadCase = useCallback(async () => {
@@ -1056,6 +1063,7 @@ export default function CaseDetailsPage() {
       classifications,
       statuses,
       prosecutors,
+      staff,
       addressTypes,
     ] = await Promise.all([
       getCaseDetailsPageById(caseId),
@@ -1069,6 +1077,7 @@ export default function CaseDetailsPage() {
       getCaseClassifications(),
       getCaseStatuses(),
       getProsecutors(),
+      getStaff(),
       getAddressTypes(),
     ]);
 
@@ -1097,6 +1106,7 @@ export default function CaseDetailsPage() {
       classifications: (classifications.data ?? []) as RefOption[],
       statuses: (statuses.data ?? []) as RefOption[],
       prosecutors: (prosecutors.data ?? []) as RefOption[],
+      staff: (staff.data ?? []) as RefOption[],
       addressTypes: (addressTypes.data ?? []) as RefOption[],
     });
 
