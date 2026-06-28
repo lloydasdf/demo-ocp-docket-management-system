@@ -707,6 +707,16 @@ function formatJsonPreview(value: unknown) {
   return JSON.stringify(value ?? null, null, 2);
 }
 
+function placeOfCommissionAddressTypeId(refs: OverviewRefs) {
+  return String(
+    refs.addressTypes.find((type) =>
+      [type.code, type.display_label, type.name]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes("commission")),
+    )?.id ?? refs.addressTypes[0]?.id ?? "",
+  );
+}
+
 const emptyPlaceForm = {
   id: "",
   addressTypeId: "",
@@ -724,10 +734,10 @@ const emptyPlaceForm = {
   remarks: "",
 };
 
-function placeToForm(place: CasePlaceRecord) {
+function placeToForm(place: CasePlaceRecord, refs: OverviewRefs) {
   return {
     id: String(place.id),
-    addressTypeId: String(place.address_type_id ?? ""),
+    addressTypeId: placeOfCommissionAddressTypeId(refs) || String(place.address_type_id ?? ""),
     line1: place.addresses?.line1 ?? "",
     line2: place.addresses?.line2 ?? "",
     barangay: place.addresses?.barangay ?? "",
@@ -760,17 +770,30 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
   }, [caseId, showRemoved]);
 
   useEffect(() => { if (open) void loadPlaces(); }, [loadPlaces, open]);
+  useEffect(() => {
+    if (open && mode === "add") {
+      setFormData((current) => ({
+        ...current,
+        addressTypeId: placeOfCommissionAddressTypeId(refs),
+      }));
+    }
+  }, [mode, open, refs]);
 
   const setValue = (key: keyof typeof emptyPlaceForm, value: string | boolean) => setFormData((current) => ({ ...current, [key]: value }));
   const resetForm = () => { setMode("add"); setFormData(emptyPlaceForm); setReason(""); setError(null); };
-  const optionLabel = (option: RefOption) => option.display_label ?? option.name ?? option.code ?? String(option.id);
-
   async function save(action: "add" | "edit" | "remove" | "restore", place?: CasePlaceRecord) {
     const actionReason = place ? (placeActionReasons[place.id] ?? "") : reason;
     if (!actionReason.trim()) { setError(action === "remove" || action === "restore" ? "Remove/restore reason is required." : "Reason is required."); return; }
     setIsSaving(true);
     setError(null);
-    const result = await manageCasePlaces({ caseId, action, reason: actionReason.trim(), place: place ? { id: place.id } : formData });
+    const result = await manageCasePlaces({
+      caseId,
+      action,
+      reason: actionReason.trim(),
+      place: place
+        ? { id: place.id }
+        : { ...formData, addressTypeId: formData.addressTypeId || placeOfCommissionAddressTypeId(refs) },
+    });
     setIsSaving(false);
     if (result.error) { setError(result.error.message); return; }
     if (place) {
@@ -818,7 +841,7 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
                     }
                   />
                   <div className="flex gap-2">
-                    {place.is_deleted ? <Button size="sm" variant="outline" onClick={() => save("restore", place)}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setMode("edit"); setFormData(placeToForm(place)); setReason(""); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => save("remove", place)}>Remove</Button></>}
+                    {place.is_deleted ? <Button size="sm" variant="outline" onClick={() => save("restore", place)}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setMode("edit"); setFormData(placeToForm(place, refs)); setReason(""); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => save("remove", place)}>Remove</Button></>}
                   </div>
                 </div>
               </div>
@@ -827,8 +850,10 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
         </div>
         <div className="grid gap-4 rounded-lg border p-4 sm:grid-cols-2">
           <h3 className="sm:col-span-2 font-semibold">{mode === "add" ? "Add Place" : "Edit Place"}</h3>
-          <FieldSelect label="Address type" value={formData.addressTypeId} onChange={(value) => setValue("addressTypeId", value)} options={refs.addressTypes} optionLabel={optionLabel} />
-          <label className="flex items-center gap-2 pt-7 text-sm"><input type="checkbox" checked={formData.isPrimary} onChange={(event) => setValue("isPrimary", event.target.checked)} /> Primary</label>
+          <div className="text-sm text-muted-foreground">
+            Address type is fixed to Place of Commission for case addresses.
+          </div>
+          <label className="flex items-center gap-2 text-sm sm:pt-7"><input type="checkbox" checked={formData.isPrimary} onChange={(event) => setValue("isPrimary", event.target.checked)} /> Primary</label>
           <FieldInput label="Line 1" value={formData.line1} onChange={(value) => setValue("line1", value)} />
           <FieldInput label="Line 2" value={formData.line2} onChange={(value) => setValue("line2", value)} />
           <FieldInput label="Barangay" value={formData.barangay} onChange={(value) => setValue("barangay", value)} />

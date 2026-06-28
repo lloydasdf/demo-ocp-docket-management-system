@@ -139,6 +139,7 @@ DECLARE
   v_place jsonb := coalesce(p_payload->'place', '{}'::jsonb);
   v_case_address_id bigint := nullif(v_place->>'id','')::bigint;
   v_address_id bigint := nullif(v_place->>'addressId','')::bigint;
+  v_address_type_id bigint;
   v_old jsonb;
   v_new jsonb;
 BEGIN
@@ -155,19 +156,31 @@ BEGIN
   WHERE ca.case_id = v_case_id;
 
   IF v_action IN ('add', 'edit') THEN
-    IF nullif(v_place->>'addressTypeId','') IS NULL THEN RAISE EXCEPTION 'addressTypeId is required'; END IF;
+    v_address_type_id := nullif(v_place->>'addressTypeId','')::bigint;
+    IF v_address_type_id IS NULL THEN
+      SELECT id INTO v_address_type_id
+      FROM public.address_types
+      WHERE is_active IS TRUE
+        AND (
+          upper(code) IN ('PLACE_OF_COMMISSION', 'COMMISSION_PLACE', 'POC')
+          OR display_label ILIKE '%commission%'
+        )
+      ORDER BY CASE WHEN upper(code) = 'PLACE_OF_COMMISSION' THEN 0 ELSE 1 END, id
+      LIMIT 1;
+    END IF;
+    IF v_address_type_id IS NULL THEN RAISE EXCEPTION 'Missing address type for Place of Commission'; END IF;
     IF v_action = 'add' THEN
       INSERT INTO public.addresses(line1,line2,barangay,city,province,region,zip_code,country,latitude,longitude)
       VALUES (nullif(btrim(v_place->>'line1'),''), nullif(btrim(v_place->>'line2'),''), nullif(btrim(v_place->>'barangay'),''), nullif(btrim(v_place->>'city'),''), nullif(btrim(v_place->>'province'),''), nullif(btrim(v_place->>'region'),''), nullif(btrim(v_place->>'zipCode'),''), coalesce(nullif(btrim(v_place->>'country'),''), 'Philippines'), nullif(v_place->>'latitude','')::numeric, nullif(v_place->>'longitude','')::numeric)
       RETURNING id INTO v_address_id;
       INSERT INTO public.case_addresses(case_id,address_id,address_type_id,is_primary,remarks)
-      VALUES (v_case_id, v_address_id, (v_place->>'addressTypeId')::bigint, coalesce(nullif(v_place->>'isPrimary','')::boolean,false), nullif(btrim(v_place->>'remarks'),''));
+      VALUES (v_case_id, v_address_id, v_address_type_id, coalesce(nullif(v_place->>'isPrimary','')::boolean,false), nullif(btrim(v_place->>'remarks'),''));
     ELSE
       IF v_case_address_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
       SELECT address_id INTO v_address_id FROM public.case_addresses WHERE id = v_case_address_id AND case_id = v_case_id;
       IF v_address_id IS NULL THEN RAISE EXCEPTION 'Place % not found', v_case_address_id; END IF;
       UPDATE public.addresses SET line1=nullif(btrim(v_place->>'line1'),''), line2=nullif(btrim(v_place->>'line2'),''), barangay=nullif(btrim(v_place->>'barangay'),''), city=nullif(btrim(v_place->>'city'),''), province=nullif(btrim(v_place->>'province'),''), region=nullif(btrim(v_place->>'region'),''), zip_code=nullif(btrim(v_place->>'zipCode'),''), country=coalesce(nullif(btrim(v_place->>'country'),''), 'Philippines'), latitude=nullif(v_place->>'latitude','')::numeric, longitude=nullif(v_place->>'longitude','')::numeric WHERE id = v_address_id;
-      UPDATE public.case_addresses SET address_type_id=(v_place->>'addressTypeId')::bigint, is_primary=coalesce(nullif(v_place->>'isPrimary','')::boolean,false), remarks=nullif(btrim(v_place->>'remarks'),'') WHERE id = v_case_address_id AND case_id = v_case_id;
+      UPDATE public.case_addresses SET address_type_id=v_address_type_id, is_primary=coalesce(nullif(v_place->>'isPrimary','')::boolean,false), remarks=nullif(btrim(v_place->>'remarks'),'') WHERE id = v_case_address_id AND case_id = v_case_id;
     END IF;
   ELSIF v_action = 'remove' THEN
     IF v_case_address_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
