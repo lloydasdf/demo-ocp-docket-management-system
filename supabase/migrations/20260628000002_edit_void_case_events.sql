@@ -155,12 +155,12 @@ SELECT
   ce.needs_review,
   ce.review_reason,
   ce.is_voided,
+  ce.created_at,
+  ce.updated_at,
   ce.void_reason,
   ce.voided_at,
   ce.voided_by_user_id,
-  vu.email AS voided_by_email,
-  ce.created_at,
-  ce.updated_at
+  vu.email AS voided_by_email
 FROM public.case_events ce
 JOIN public.cases c ON c.id = ce.case_id
 JOIN public.docket_types dt ON dt.id = c.docket_type_id
