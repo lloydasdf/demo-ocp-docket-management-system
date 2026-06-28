@@ -758,10 +758,15 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
   const [showRemoved, setShowRemoved] = useState(false);
   const [formData, setFormData] = useState(emptyPlaceForm);
   const [reason, setReason] = useState("");
-  const [mode, setMode] = useState<"add" | "edit">("add");
+  const [mode, setMode] = useState<"add" | "edit" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [placeActionReasons, setPlaceActionReasons] = useState<Record<number, string>>({});
+  const [pendingPlaceAction, setPendingPlaceAction] = useState<{
+    id: number;
+    action: "remove" | "restore";
+  } | null>(null);
+  const [showEditReason, setShowEditReason] = useState(false);
 
   const loadPlaces = useCallback(async () => {
     const result = await getCasePlaces(caseId, showRemoved);
@@ -780,8 +785,14 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
   }, [mode, open, refs]);
 
   const setValue = (key: keyof typeof emptyPlaceForm, value: string | boolean) => setFormData((current) => ({ ...current, [key]: value }));
-  const resetForm = () => { setMode("add"); setFormData(emptyPlaceForm); setReason(""); setError(null); };
+  const resetForm = () => { setMode(null); setFormData(emptyPlaceForm); setReason(""); setError(null); setShowEditReason(false); };
   async function save(action: "add" | "edit" | "remove" | "restore", place?: CasePlaceRecord) {
+    if (action === "edit" && !showEditReason) {
+      setShowEditReason(true);
+      setError("Reason is required.");
+      return;
+    }
+
     const actionReason = place ? (placeActionReasons[place.id] ?? "") : reason;
     if (!actionReason.trim()) { setError(action === "remove" || action === "restore" ? "Remove/restore reason is required." : "Reason is required."); return; }
     setIsSaving(true);
@@ -802,6 +813,7 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
         delete next[place.id];
         return next;
       });
+      setPendingPlaceAction(null);
     }
     resetForm();
     await loadPlaces();
@@ -815,63 +827,94 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
           <DialogTitle>Manage Places of Commission</DialogTitle>
           <DialogDescription>Add, update, remove, or restore places of commission. Changes create audit logs only.</DialogDescription>
         </DialogHeader>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showRemoved} onChange={(event) => setShowRemoved(event.target.checked)} /> Show removed places</label>
-        <div className="space-y-3">
-          {places.length === 0 ? <SectionEmpty>No places recorded.</SectionEmpty> : places.map((place) => (
-            <div key={place.id} className="rounded-lg border p-3 text-sm">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="font-medium">{formatCaseAddress({ addresses: place.addresses, remarks: place.remarks }) ?? "Unnamed address"}</p>
-                  <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                    <span>{place.address_types?.display_label ?? "Address"}</span>
-                    {place.is_primary ? <Badge variant="secondary">Primary</Badge> : null}
-                    {place.is_deleted ? <Badge variant="destructive">REMOVED</Badge> : null}
+        {mode === "edit" ? null : (
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showRemoved} onChange={(event) => setShowRemoved(event.target.checked)} /> Show removed places</label>
+        )}
+        {mode === "edit" ? null : (
+          <div className="space-y-3">
+            {places.length === 0 ? <SectionEmpty>No places recorded.</SectionEmpty> : places.map((place) => {
+              const isPendingAction = pendingPlaceAction?.id === place.id;
+              const pendingAction = isPendingAction ? pendingPlaceAction.action : null;
+
+              return (
+                <div key={place.id} className="rounded-lg border p-3 text-sm">
+                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                    <div className="min-w-0">
+                      <p className="font-medium">{formatCaseAddress({ addresses: place.addresses, remarks: place.remarks }) ?? "Unnamed address"}</p>
+                      <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                        <span>{place.address_types?.display_label ?? "Place of Commission"}</span>
+                        {place.is_primary ? <Badge variant="secondary">Primary</Badge> : null}
+                        {place.is_deleted ? <Badge variant="destructive">REMOVED</Badge> : null}
+                      </div>
+                      {place.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Removed {formatDate(place.deleted_at)}{place.deleted_by_user_id ? ` by user #${place.deleted_by_user_id}` : ""} — {place.delete_reason ?? "No reason recorded"}</p> : null}
+                    </div>
+                    <div className="flex min-w-56 flex-col items-stretch gap-2 sm:items-end">
+                      <div className="flex justify-end gap-2">
+                        {place.is_deleted ? (
+                          <Button size="sm" variant="outline" onClick={() => setPendingPlaceAction({ id: place.id, action: "restore" })}>Restore</Button>
+                        ) : (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => { setMode("edit"); setFormData(placeToForm(place, refs)); setReason(""); setError(null); setShowEditReason(false); }}>Edit</Button>
+                            <Button size="sm" variant="outline" onClick={() => setPendingPlaceAction({ id: place.id, action: "remove" })}>Remove</Button>
+                          </>
+                        )}
+                      </div>
+                      {pendingAction ? (
+                        <div className="w-full space-y-2">
+                          <Input
+                            placeholder={pendingAction === "restore" ? "Restore reason" : "Remove reason"}
+                            value={placeActionReasons[place.id] ?? ""}
+                            onChange={(event) =>
+                              setPlaceActionReasons((current) => ({
+                                ...current,
+                                [place.id]: event.target.value,
+                              }))
+                            }
+                          />
+                          <div className="flex justify-end gap-2">
+                            <Button size="sm" variant="outline" onClick={() => setPendingPlaceAction(null)}>Cancel</Button>
+                            <Button size="sm" onClick={() => save(pendingAction, place)}>{pendingAction === "restore" ? "Restore" : "Remove"}</Button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                  {place.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Removed {formatDate(place.deleted_at)}{place.deleted_by_user_id ? ` by user #${place.deleted_by_user_id}` : ""} — {place.delete_reason ?? "No reason recorded"}</p> : null}
                 </div>
-                <div className="flex min-w-56 flex-col gap-2">
-                  <Input
-                    placeholder={place.is_deleted ? "Restore reason" : "Remove reason"}
-                    value={placeActionReasons[place.id] ?? ""}
-                    onChange={(event) =>
-                      setPlaceActionReasons((current) => ({
-                        ...current,
-                        [place.id]: event.target.value,
-                      }))
-                    }
-                  />
-                  <div className="flex gap-2">
-                    {place.is_deleted ? <Button size="sm" variant="outline" onClick={() => save("restore", place)}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setMode("edit"); setFormData(placeToForm(place, refs)); setReason(""); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => save("remove", place)}>Remove</Button></>}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="grid gap-4 rounded-lg border p-4 sm:grid-cols-2">
-          <h3 className="sm:col-span-2 font-semibold">{mode === "add" ? "Add Place" : "Edit Place"}</h3>
-          <div className="text-sm text-muted-foreground">
-            Address type is fixed to Place of Commission for case addresses.
+              );
+            })}
           </div>
-          <label className="flex items-center gap-2 text-sm sm:pt-7"><input type="checkbox" checked={formData.isPrimary} onChange={(event) => setValue("isPrimary", event.target.checked)} /> Primary</label>
-          <FieldInput label="Line 1" value={formData.line1} onChange={(value) => setValue("line1", value)} />
-          <FieldInput label="Line 2" value={formData.line2} onChange={(value) => setValue("line2", value)} />
-          <FieldInput label="Barangay" value={formData.barangay} onChange={(value) => setValue("barangay", value)} />
-          <FieldInput label="City" value={formData.city} onChange={(value) => setValue("city", value)} />
-          <FieldInput label="Province" value={formData.province} onChange={(value) => setValue("province", value)} />
-          <FieldInput label="Region" value={formData.region} onChange={(value) => setValue("region", value)} />
-          <FieldInput label="ZIP code" value={formData.zipCode} onChange={(value) => setValue("zipCode", value)} />
-          <FieldInput label="Country" value={formData.country} onChange={(value) => setValue("country", value)} />
-          <FieldInput label="Latitude" value={formData.latitude} onChange={(value) => setValue("latitude", value)} />
-          <FieldInput label="Longitude" value={formData.longitude} onChange={(value) => setValue("longitude", value)} />
-          <FieldTextarea label="Remarks" value={formData.remarks} onChange={(value) => setValue("remarks", value)} className="sm:col-span-2" />
-          <FieldTextarea label="Reason for edit" value={reason} onChange={setReason} className="sm:col-span-2" />
-        </div>
+        )}
+        {mode === null ? (
+          <Button variant="outline" onClick={() => { setMode("add"); setFormData({ ...emptyPlaceForm, addressTypeId: placeOfCommissionAddressTypeId(refs) }); setReason(""); setError(null); }}>
+            Add Place
+          </Button>
+        ) : null}
+        {mode ? (
+          <div className="grid gap-4 rounded-lg border p-4 sm:grid-cols-2">
+            <h3 className="sm:col-span-2 font-semibold">{mode === "add" ? "Add Place" : "Edit Place"}</h3>
+            <div className="text-sm text-muted-foreground">
+              Address type is fixed to Place of Commission for case addresses.
+            </div>
+            <label className="flex items-center gap-2 text-sm sm:pt-7"><input type="checkbox" checked={formData.isPrimary} onChange={(event) => setValue("isPrimary", event.target.checked)} /> Primary</label>
+            <FieldInput label="Line 1" value={formData.line1} onChange={(value) => setValue("line1", value)} />
+            <FieldInput label="Line 2" value={formData.line2} onChange={(value) => setValue("line2", value)} />
+            <FieldInput label="Barangay" value={formData.barangay} onChange={(value) => setValue("barangay", value)} />
+            <FieldInput label="City" value={formData.city} onChange={(value) => setValue("city", value)} />
+            <FieldInput label="Province" value={formData.province} onChange={(value) => setValue("province", value)} />
+            <FieldInput label="Region" value={formData.region} onChange={(value) => setValue("region", value)} />
+            <FieldInput label="ZIP code" value={formData.zipCode} onChange={(value) => setValue("zipCode", value)} />
+            <FieldInput label="Country" value={formData.country} onChange={(value) => setValue("country", value)} />
+            <FieldInput label="Latitude" value={formData.latitude} onChange={(value) => setValue("latitude", value)} />
+            <FieldInput label="Longitude" value={formData.longitude} onChange={(value) => setValue("longitude", value)} />
+            <FieldTextarea label="Remarks" value={formData.remarks} onChange={(value) => setValue("remarks", value)} className="sm:col-span-2" />
+            {mode === "add" || showEditReason ? <FieldTextarea label="Reason for edit" value={reason} onChange={setReason} className="sm:col-span-2" /> : null}
+          </div>
+        ) : null}
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
-          {mode === "edit" ? <Button variant="outline" onClick={resetForm}>Cancel edit</Button> : null}
-          <Button disabled={isSaving} onClick={() => save(mode)}>{isSaving ? "Saving..." : mode === "add" ? "Add place" : "Save place"}</Button>
+          {mode ? <Button variant="outline" onClick={resetForm}>Cancel {mode}</Button> : null}
+          {mode ? <Button disabled={isSaving} onClick={() => save(mode)}>{isSaving ? "Saving..." : mode === "add" ? "Add place" : "Save"}</Button> : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>
