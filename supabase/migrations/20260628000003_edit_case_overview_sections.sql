@@ -210,7 +210,7 @@ BEGIN
       END IF;
 
       UPDATE public.case_assignments
-      SET unassigned_at = COALESCE(assigned_at, now()),
+      SET unassigned_at = COALESCE(v_assigned_at, now()),
           remarks = concat_ws(E'\n', remarks, 'Reassigned reason: ' || v_reason)
       WHERE id = v_old_assignment_id;
     ELSE
