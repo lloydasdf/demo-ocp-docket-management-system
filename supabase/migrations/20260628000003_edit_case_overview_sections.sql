@@ -39,6 +39,9 @@ DECLARE
   v_prosecutor_id bigint;
   v_assigned_at timestamptz;
   v_assignment_remarks text;
+  v_old_date_received date;
+  v_new_date_received date;
+  v_case_received_sync text;
 BEGIN
   IF v_case_id IS NULL THEN RAISE EXCEPTION 'caseId is required'; END IF;
   IF v_section IS NULL THEN RAISE EXCEPTION 'section is required'; END IF;
@@ -49,6 +52,7 @@ BEGIN
   FROM public.cases c LEFT JOIN public.case_private_details cpd ON cpd.case_id = c.id WHERE c.id = v_case_id;
 
   IF v_section = 'docket_info' THEN
+    SELECT date_received INTO v_old_date_received FROM public.cases WHERE id = v_case_id;
     UPDATE public.cases SET
       docket_type_id = COALESCE(nullif(p_payload#>>'{data,docketTypeId}','')::bigint, docket_type_id),
       docket_year = COALESCE(nullif(p_payload#>>'{data,docketYear}','')::int, docket_year),
@@ -58,6 +62,61 @@ BEGIN
       updated_by_user_id = v_user_id,
       updated_at = now()
     WHERE id = v_case_id;
+
+    SELECT date_received INTO v_new_date_received FROM public.cases WHERE id = v_case_id;
+    IF v_new_date_received IS DISTINCT FROM v_old_date_received THEN
+      SELECT id INTO v_event_type_id
+      FROM public.case_event_types
+      WHERE code = 'CASE_RECEIVED' AND is_active IS TRUE
+      LIMIT 1;
+
+      IF v_event_type_id IS NULL THEN
+        v_case_received_sync := 'skipped_missing_event_type';
+      ELSE
+        SELECT id INTO v_event_id
+        FROM public.case_events
+        WHERE case_id = v_case_id
+          AND event_type_id = v_event_type_id
+          AND COALESCE(is_voided, false) IS FALSE
+        ORDER BY event_date DESC NULLS LAST, id DESC
+        LIMIT 1;
+
+        IF v_event_id IS NOT NULL THEN
+          UPDATE public.case_events
+          SET event_date = v_new_date_received,
+              title = COALESCE(NULLIF(title, ''), 'Case received'),
+              description = COALESCE(NULLIF(description, ''), 'Case received date updated from overview edit'),
+              details_jsonb = COALESCE(details_jsonb, '{}'::jsonb) || jsonb_build_object(
+                'action', 'sync_case_received_from_overview',
+                'old_date_received', v_old_date_received,
+                'new_date_received', v_new_date_received,
+                'reason', v_reason
+              ),
+              updated_by_user_id = v_user_id,
+              updated_at = now()
+          WHERE id = v_event_id;
+          v_case_received_sync := 'updated_existing_event';
+        ELSIF v_new_date_received IS NOT NULL THEN
+          INSERT INTO public.case_events(case_id,event_type_id,event_date,title,description,details_jsonb,source,source_table,source_id,created_by_user_id,updated_by_user_id)
+          VALUES (
+            v_case_id,
+            v_event_type_id,
+            v_new_date_received,
+            'Case received',
+            'Case received date updated from overview edit',
+            jsonb_build_object('action', 'sync_case_received_from_overview', 'old_date_received', v_old_date_received, 'new_date_received', v_new_date_received, 'reason', v_reason),
+            'MANUAL_EDIT',
+            'cases',
+            v_case_id,
+            v_user_id,
+            v_user_id
+          );
+          v_case_received_sync := 'created_missing_event';
+        ELSE
+          v_case_received_sync := 'skipped_null_date_received';
+        END IF;
+      END IF;
+    END IF;
   ELSIF v_section = 'case_details' THEN
     UPDATE public.cases SET
       case_classification_id = nullif(p_payload#>>'{data,caseClassificationId}','')::bigint,
@@ -194,13 +253,19 @@ BEGIN
   FROM public.cases c LEFT JOIN public.case_private_details cpd ON cpd.case_id = c.id WHERE c.id = v_case_id;
 
   INSERT INTO public.audit_logs(actor_user_id, action, entity_name, entity_id, case_id, summary, metadata, old_data, new_data)
-  VALUES (v_user_id, 'EDIT_CASE_OVERVIEW_' || upper(v_section), 'cases', v_case_id, v_case_id, 'Edited case overview ' || replace(v_section, '_', ' '), jsonb_build_object('reason', v_reason, 'section', v_section), v_old, v_new);
+  VALUES (v_user_id, 'EDIT_CASE_OVERVIEW_' || upper(v_section), 'cases', v_case_id, v_case_id, 'Edited case overview ' || replace(v_section, '_', ' '), jsonb_strip_nulls(jsonb_build_object('reason', v_reason, 'section', v_section, 'case_received_event_sync', v_case_received_sync)), v_old, v_new);
   RETURN v_case_id;
 END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.edit_case_overview_section(jsonb) TO anon, authenticated, service_role;
 
+
+ALTER TABLE public.case_violations
+  ADD COLUMN IF NOT EXISTS is_deleted boolean DEFAULT false NOT NULL,
+  ADD COLUMN IF NOT EXISTS deleted_at timestamp with time zone,
+  ADD COLUMN IF NOT EXISTS deleted_by_user_id bigint REFERENCES public.users(id),
+  ADD COLUMN IF NOT EXISTS delete_reason text;
 
 ALTER TABLE public.case_addresses
   ADD COLUMN IF NOT EXISTS is_deleted boolean DEFAULT false NOT NULL,
@@ -213,6 +278,87 @@ ALTER TABLE public.notes
   ADD COLUMN IF NOT EXISTS deleted_at timestamp with time zone,
   ADD COLUMN IF NOT EXISTS deleted_by_user_id bigint REFERENCES public.users(id),
   ADD COLUMN IF NOT EXISTS delete_reason text;
+
+
+CREATE OR REPLACE FUNCTION public.manage_case_violations(p_payload jsonb)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_case_id bigint := (p_payload->>'caseId')::bigint;
+  v_action text := lower(btrim(p_payload->>'action'));
+  v_reason text := nullif(btrim(p_payload->>'reason'), '');
+  v_user_id bigint := nullif(p_payload->>'userId','')::bigint;
+  v_violation jsonb := coalesce(p_payload->'violation', '{}'::jsonb);
+  v_case_violation_id bigint := nullif(v_violation->>'id','')::bigint;
+  v_violation_id bigint := nullif(v_violation->>'violationId','')::bigint;
+  v_violation_order integer := nullif(v_violation->>'violationOrder','')::integer;
+  v_raw_violation_text text := nullif(btrim(v_violation->>'rawViolationText'), '');
+  v_old jsonb;
+  v_new jsonb;
+BEGIN
+  IF v_case_id IS NULL THEN RAISE EXCEPTION 'caseId is required'; END IF;
+  IF v_action IS NULL THEN RAISE EXCEPTION 'action is required'; END IF;
+  IF v_reason IS NULL THEN RAISE EXCEPTION 'reason is required'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = v_case_id) THEN RAISE EXCEPTION 'Case % not found', v_case_id; END IF;
+
+  SELECT coalesce(jsonb_agg(to_jsonb(cv) || jsonb_build_object('violation', to_jsonb(v)) ORDER BY cv.violation_order NULLS LAST, cv.id), '[]'::jsonb)
+  INTO v_old
+  FROM public.case_violations cv
+  LEFT JOIN public.violations v ON v.id = cv.violation_id
+  WHERE cv.case_id = v_case_id;
+
+  IF v_action IN ('add', 'edit') THEN
+    IF v_violation_id IS NULL THEN RAISE EXCEPTION 'violationId is required'; END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.violations WHERE id = v_violation_id) THEN RAISE EXCEPTION 'Violation % not found', v_violation_id; END IF;
+    IF v_action = 'add' THEN
+      INSERT INTO public.case_violations(case_id,violation_id,violation_order,raw_violation_text)
+      VALUES (v_case_id, v_violation_id, COALESCE(v_violation_order, (SELECT COALESCE(max(cv.violation_order), 0) + 1 FROM public.case_violations cv WHERE cv.case_id = v_case_id)), v_raw_violation_text);
+    ELSE
+      IF v_case_violation_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
+      IF EXISTS (SELECT 1 FROM public.case_violations WHERE id = v_case_violation_id AND case_id = v_case_id AND is_deleted IS TRUE) THEN RAISE EXCEPTION 'Restore violation before editing'; END IF;
+      UPDATE public.case_violations
+      SET violation_id = v_violation_id,
+          violation_order = v_violation_order,
+          raw_violation_text = v_raw_violation_text
+      WHERE id = v_case_violation_id AND case_id = v_case_id;
+      IF NOT FOUND THEN RAISE EXCEPTION 'Case violation % not found', v_case_violation_id; END IF;
+    END IF;
+  ELSIF v_action = 'remove' THEN
+    IF v_case_violation_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
+    UPDATE public.case_violations
+    SET is_deleted = true,
+        deleted_at = now(),
+        deleted_by_user_id = v_user_id,
+        delete_reason = v_reason
+    WHERE id = v_case_violation_id AND case_id = v_case_id;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Case violation % not found', v_case_violation_id; END IF;
+  ELSIF v_action = 'restore' THEN
+    IF v_case_violation_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
+    UPDATE public.case_violations
+    SET is_deleted = false,
+        deleted_at = NULL,
+        deleted_by_user_id = NULL,
+        delete_reason = NULL
+    WHERE id = v_case_violation_id AND case_id = v_case_id;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Case violation % not found', v_case_violation_id; END IF;
+  ELSE
+    RAISE EXCEPTION 'Unsupported violations action %', v_action;
+  END IF;
+
+  SELECT coalesce(jsonb_agg(to_jsonb(cv) || jsonb_build_object('violation', to_jsonb(v)) ORDER BY cv.violation_order NULLS LAST, cv.id), '[]'::jsonb)
+  INTO v_new
+  FROM public.case_violations cv
+  LEFT JOIN public.violations v ON v.id = cv.violation_id
+  WHERE cv.case_id = v_case_id;
+
+  INSERT INTO public.audit_logs(actor_user_id, action, entity_name, entity_id, case_id, summary, metadata, old_data, new_data)
+  VALUES (v_user_id, 'MANAGE_CASE_VIOLATIONS_' || upper(v_action), 'cases', v_case_id, v_case_id, 'Managed case violations', jsonb_build_object('reason', v_reason, 'action', v_action), v_old, v_new);
+  RETURN v_case_id;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION public.manage_case_places(p_payload jsonb)
 RETURNS bigint
@@ -353,6 +499,7 @@ BEGIN
 END;
 $$;
 
+GRANT EXECUTE ON FUNCTION public.manage_case_violations(jsonb) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.manage_case_places(jsonb) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.manage_case_notes(jsonb) TO anon, authenticated, service_role;
 
@@ -373,6 +520,7 @@ CREATE OR REPLACE VIEW public.v_case_details_page AS
             string_agg(COALESCE(NULLIF(btrim(cv.raw_violation_text), ''::text), v.title), ', '::text ORDER BY cv.violation_order, cv.id) AS violations
            FROM (public.case_violations cv
              LEFT JOIN public.violations v ON ((v.id = cv.violation_id)))
+          WHERE COALESCE(cv.is_deleted, false) IS FALSE
           GROUP BY cv.case_id
         ), note_summary AS (
          SELECT n.case_id,

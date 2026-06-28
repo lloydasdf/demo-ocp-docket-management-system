@@ -1277,7 +1277,8 @@ export type CaseOverviewEditSection =
   | "status"
   | "assignment"
   | "places"
-  | "notes";
+  | "notes"
+  | "violations";
 
 export interface EditCaseOverviewSectionInput {
   caseId: number;
@@ -1372,6 +1373,24 @@ export interface ManageCasePlacesInput {
   place: Record<string, unknown>;
 }
 
+
+export type CaseViolationManagementRecord = TableRow<"case_violations"> & {
+  is_deleted?: boolean | null;
+  deleted_at?: string | null;
+  deleted_by_user_id?: number | null;
+  delete_reason?: string | null;
+  violations: Pick<TableRow<"violations">, "id" | "title" | "short_label" | "reference_code" | "law_reference" | "description"> | null;
+};
+
+export type ManageCaseViolationAction = "add" | "edit" | "remove" | "restore";
+
+export interface ManageCaseViolationsInput {
+  caseId: number;
+  action: ManageCaseViolationAction;
+  reason: string;
+  violation: Record<string, unknown>;
+}
+
 export type CaseNoteManagementRecord = {
   id: number;
   case_id: number;
@@ -1404,6 +1423,63 @@ export type CaseOverviewChangeHistoryRecord = {
   new_data: Json | null;
   created_at: string;
 };
+
+
+export async function getCaseManagedViolations(
+  caseId: number,
+  includeDeleted = false,
+): Promise<SupabaseQueryResult<CaseViolationManagementRecord[]>> {
+  return runSupabaseQuery(
+    "getCaseManagedViolations",
+    "case_violations",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      let query = supabase
+        .from("case_violations" as never)
+        .select("*, violations(id,title,short_label,reference_code,law_reference,description)" as never)
+        .eq("case_id" as never, caseId)
+        .order("violation_order" as never, { ascending: true })
+        .order("id" as never, { ascending: true });
+
+      if (!includeDeleted) {
+        query = query.eq("is_deleted" as never, false);
+      }
+
+      return (await query) as unknown as {
+        data: CaseViolationManagementRecord[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
+export async function manageCaseViolations(
+  input: ManageCaseViolationsInput,
+): Promise<SupabaseQueryResult<number>> {
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "manageCaseViolations", "users"));
+    }
+
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("manage_case_violations" as never, {
+      p_payload: {
+        caseId: input.caseId,
+        action: input.action,
+        reason: input.reason,
+        userId: currentUserQuery.data.id,
+        violation: input.violation,
+      },
+    } as never);
+
+    if (error) return fail(toQueryError(error, "manageCaseViolations", "cases"));
+    return ok(Number(data ?? input.caseId));
+  } catch (error) {
+    return fail(toQueryError(error, "manageCaseViolations", "cases"));
+  }
+}
 
 export async function getCasePlaces(
   caseId: number,

@@ -50,12 +50,15 @@ import {
   getCasePetitionsForReview,
   getCaseTimelineEvents,
   getCaseManagedNotes,
+  getCaseManagedViolations,
   getCaseOverviewChangeHistory,
   getCasePlaces,
+  getViolations,
   getProsecutors,
   getStaff,
   manageCaseNotes,
   manageCasePlaces,
+  manageCaseViolations,
   type CaseCourtRecord,
   type CaseDetailsPageViewRecord,
   type CaseMotionRecord,
@@ -66,6 +69,7 @@ import {
   type CaseOverviewEditSection,
   type CaseNoteManagementRecord,
   type CasePlaceRecord,
+  type CaseViolationManagementRecord,
 } from "@/lib/supabase/queries";
 import type { TableRow as SupabaseTableRow } from "@/lib/supabase/types";
 
@@ -559,6 +563,10 @@ const overviewEditorCopy: Record<
     title: "Notes",
     description: "Placeholder for the Notes correction slice. Will use RPC and audit logs only.",
   },
+  violations: {
+    title: "Violations",
+    description: "Manage case violations with RPC-backed audit logs only.",
+  },
 };
 
 function getOverviewInitialData(
@@ -932,6 +940,83 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
   );
 }
 
+
+function violationLabel(violation: CaseViolationManagementRecord) {
+  return violation.raw_violation_text || violation.violations?.short_label || violation.violations?.title || `Violation #${violation.violation_id}`;
+}
+
+function ManageViolationsDialog({ caseId, open, onOpenChange, onSaved }: { caseId: number; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => Promise<void> }) {
+  const [caseViolations, setCaseViolations] = useState<CaseViolationManagementRecord[]>([]);
+  const [violationOptions, setViolationOptions] = useState<SupabaseTableRow<"violations">[]>([]);
+  const [showRemoved, setShowRemoved] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [violationId, setViolationId] = useState("");
+  const [violationOrder, setViolationOrder] = useState("");
+  const [rawViolationText, setRawViolationText] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [actionReasons, setActionReasons] = useState<Record<number, string>>({});
+  const [pendingAction, setPendingAction] = useState<{ id: number; action: "remove" | "restore" } | null>(null);
+
+  const loadViolations = useCallback(async () => {
+    const [caseResult, optionsResult] = await Promise.all([getCaseManagedViolations(caseId, showRemoved), getViolations(250)]);
+    if (caseResult.error) setError(caseResult.error.message);
+    if (optionsResult.error) setError(optionsResult.error.message);
+    setCaseViolations(caseResult.data ?? []);
+    setViolationOptions(optionsResult.data ?? []);
+  }, [caseId, showRemoved]);
+
+  useEffect(() => { if (open) void loadViolations(); }, [loadViolations, open]);
+  const resetForm = () => { setEditingId(null); setViolationId(""); setViolationOrder(""); setRawViolationText(""); setReason(""); setError(null); };
+  async function save(action: "add" | "edit" | "remove" | "restore", violation?: CaseViolationManagementRecord) {
+    const actionReason = violation ? (actionReasons[violation.id] ?? "") : reason;
+    if (!actionReason.trim()) { setError(action === "remove" || action === "restore" ? "Remove/restore reason is required." : "Reason is required."); return; }
+    if ((action === "add" || action === "edit") && !violationId) { setError("Violation is required."); return; }
+    setIsSaving(true); setError(null);
+    const result = await manageCaseViolations({
+      caseId,
+      action,
+      reason: actionReason.trim(),
+      violation: violation ? { id: violation.id } : { id: editingId, violationId, violationOrder, rawViolationText },
+    });
+    setIsSaving(false);
+    if (result.error) { setError(result.error.message); return; }
+    if (violation) {
+      setActionReasons((current) => { const next = { ...current }; delete next[violation.id]; return next; });
+      setPendingAction(null);
+    }
+    resetForm(); await loadViolations(); await onSaved();
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader><DialogTitle>Manage Violations</DialogTitle><DialogDescription>Add, update, remove, or restore case violation links. Changes create audit logs only.</DialogDescription></DialogHeader>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showRemoved} onChange={(event) => setShowRemoved(event.target.checked)} /> Show removed violations</label>
+        <div className="space-y-3">
+          {caseViolations.length === 0 ? <SectionEmpty>No violations recorded.</SectionEmpty> : caseViolations.map((violation) => {
+            const isPendingAction = pendingAction?.id === violation.id;
+            const currentAction = isPendingAction ? pendingAction.action : null;
+            return <div key={violation.id} className="rounded-lg border p-3 text-sm">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                <div className="min-w-0"><p className="font-medium">{violationLabel(violation)}</p><div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground"><span>Order {violation.violation_order ?? "—"}</span>{violation.violations?.law_reference ? <span>{violation.violations.law_reference}</span> : null}{violation.is_deleted ? <Badge variant="destructive">REMOVED</Badge> : null}</div>{violation.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Removed {formatDate(violation.deleted_at)} — {violation.delete_reason ?? "No reason recorded"}</p> : null}</div>
+                <div className="flex min-w-56 flex-col items-stretch gap-2 sm:items-end">
+                  {currentAction ? null : <div className="flex justify-end gap-2">{violation.is_deleted ? <Button size="sm" variant="outline" onClick={() => setPendingAction({ id: violation.id, action: "restore" })}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setEditingId(violation.id); setViolationId(String(violation.violation_id)); setViolationOrder(violation.violation_order == null ? "" : String(violation.violation_order)); setRawViolationText(violation.raw_violation_text ?? ""); setReason(""); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => setPendingAction({ id: violation.id, action: "remove" })}>Remove</Button></>}</div>}
+                  {currentAction ? <div className="w-full space-y-2"><Input placeholder={currentAction === "restore" ? "Restore reason" : "Remove reason"} value={actionReasons[violation.id] ?? ""} onChange={(event) => setActionReasons((current) => ({ ...current, [violation.id]: event.target.value }))} /><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => setPendingAction(null)}>Cancel</Button><Button size="sm" onClick={() => save(currentAction, violation)}>{currentAction === "restore" ? "Restore" : "Remove"}</Button></div></div> : null}
+                </div>
+              </div>
+            </div>;
+          })}
+        </div>
+        <div className="grid gap-4 rounded-lg border p-4 sm:grid-cols-2"><h3 className="font-semibold sm:col-span-2">{editingId ? "Edit Violation" : "Add Violation"}</h3><FieldSelect label="Violation" value={violationId} onChange={setViolationId} options={violationOptions} optionLabel={(option) => (option as SupabaseTableRow<"violations">).short_label ?? (option as SupabaseTableRow<"violations">).title ?? String(option.id)} allowEmpty /><FieldInput label="Order" value={violationOrder} onChange={setViolationOrder} /><FieldTextarea label="Raw/display text" value={rawViolationText} onChange={setRawViolationText} className="sm:col-span-2" /><FieldTextarea label="Reason for edit" value={reason} onChange={setReason} className="sm:col-span-2" /></div>
+        {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>{editingId ? <Button variant="outline" onClick={resetForm}>Cancel edit</Button> : null}<Button disabled={isSaving} onClick={() => save(editingId ? "edit" : "add")}>{isSaving ? "Saving..." : editingId ? "Save violation" : "Add violation"}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ManageNotesDialog({ caseId, open, onOpenChange, onSaved }: { caseId: number; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => Promise<void> }) {
   const [notes, setNotes] = useState<CaseNoteManagementRecord[]>([]);
   const [showDeleted, setShowDeleted] = useState(false);
@@ -1226,6 +1311,7 @@ export default function CaseDetailsPage() {
                         <DropdownMenuItem onSelect={() => openOverviewEditor("status")}>Update Status</DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => openOverviewEditor("assignment")}>Assign / Reassign</DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => openOverviewEditor("places")}>Manage Places of Commission</DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => openOverviewEditor("violations")}>Manage Violations</DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => openOverviewEditor("notes")}>Manage Notes</DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => openOverviewEditor("history")}>View Overview Change History</DropdownMenuItem>
                       </DropdownMenuContent>
@@ -1304,7 +1390,8 @@ export default function CaseDetailsPage() {
 
               {activeSectionEditor && activeEditorCopy &&
               activeSectionEditor !== "places" &&
-              activeSectionEditor !== "notes" ? (
+              activeSectionEditor !== "notes" &&
+              activeSectionEditor !== "violations" ? (
                 <OverviewSectionEditor
                   caseId={caseId}
                   description={activeEditorCopy.description}
@@ -1330,6 +1417,14 @@ export default function CaseDetailsPage() {
                 onSaved={loadCase}
                 open={activeOverviewEditor === "places"}
                 refs={refs}
+              />
+              <ManageViolationsDialog
+                caseId={caseId}
+                onOpenChange={(open) =>
+                  setActiveOverviewEditor(open ? "violations" : null)
+                }
+                onSaved={loadCase}
+                open={activeOverviewEditor === "violations"}
               />
               <ManageNotesDialog
                 caseId={caseId}
