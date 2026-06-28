@@ -4,7 +4,7 @@ import type React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Edit, ExternalLink } from "lucide-react";
+import { ChevronDown, ExternalLink } from "lucide-react";
 
 import { CaseTimeline } from "@/components/case-timeline";
 import { Sidebar } from "@/components/sidebar";
@@ -26,6 +26,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -513,6 +519,78 @@ function DetailItem({
   );
 }
 
+const overviewEditorCopy: Record<
+  CaseOverviewEditSection,
+  { title: string; description: string }
+> = {
+  docket_info: {
+    title: "Docket Info",
+    description: "Correct docket identifiers and receipt date. Creates audit logs only.",
+  },
+  case_details: {
+    title: "Case Details",
+    description: "Correct classification, summary flags, summary text, and remarks. Creates audit logs only.",
+  },
+  status: {
+    title: "Status",
+    description: "Update current status. Creates case events and audit logs.",
+  },
+  assignment: {
+    title: "Assignment",
+    description: "Assign or reassign the case. Creates case events and audit logs.",
+  },
+  places: {
+    title: "Places of Commission",
+    description: "Placeholder for the Places correction slice. Will use RPC and audit logs only.",
+  },
+  notes: {
+    title: "Notes",
+    description: "Placeholder for the Notes correction slice. Will use RPC and audit logs only.",
+  },
+};
+
+function getOverviewInitialData(
+  section: CaseOverviewEditSection,
+  details: CaseDetailsPageViewRecord,
+): Record<string, string | number | boolean | null | undefined> {
+  if (section === "docket_info") {
+    return {
+      docketTypeId: details.docket_type_id,
+      docketYear: details.docket_year,
+      docketNumber: details.docket_number,
+      docketMonthCode: details.docket_month_code,
+      dateReceived: details.date_received,
+    };
+  }
+
+  if (section === "case_details") {
+    return {
+      caseClassificationId: details.case_classification_id,
+      isSummaryProcedure: details.is_summary_procedure,
+      summaryText: details.summary_text,
+      remarks: details.remarks,
+    };
+  }
+
+  if (section === "status") {
+    return {
+      statusId: details.current_status_id,
+      statusDate: details.current_status_date,
+      remarks: details.current_status_remarks,
+    };
+  }
+
+  if (section === "assignment") {
+    return {
+      prosecutorId: details.current_prosecutor_id,
+      assignedAt: details.current_assigned_at,
+      remarks: "",
+    };
+  }
+
+  return {};
+}
+
 type RefOption = { id: number; display_label?: string | null; name?: string | null; prefix?: string | null; code?: string | null; full_name?: string | null; short_name?: string | null };
 type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; prosecutors: RefOption[] };
 
@@ -524,11 +602,11 @@ type OverviewEditorProps = {
   initialData: Record<string, string | number | boolean | null | undefined>;
   refs: OverviewRefs;
   onSaved: () => Promise<void>;
-  disabled?: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 };
 
-function OverviewSectionEditor({ title, description, section, caseId, initialData, refs, onSaved, disabled }: OverviewEditorProps) {
-  const [open, setOpen] = useState(false);
+function OverviewSectionEditor({ title, description, section, caseId, initialData, refs, onSaved, open, onOpenChange }: OverviewEditorProps) {
   const [formData, setFormData] = useState<Record<string, string | boolean>>({});
   const [reason, setReason] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -551,18 +629,14 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
     const result = await editCaseOverviewSection({ caseId, section, reason: reason.trim(), data: formData });
     setIsSaving(false);
     if (result.error) { setError(result.error.message); return; }
-    setOpen(false);
+    onOpenChange(false);
     await onSaved();
   }
 
   const notReady = section === "places" || section === "notes";
 
   return (
-    <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)} disabled={disabled}>
-        <Edit className="mr-2 h-4 w-4" /> Edit
-      </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Edit {title}</DialogTitle>
@@ -600,12 +674,11 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
           )}
           {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             {!notReady ? <Button onClick={save} disabled={isSaving}>{isSaving ? "Saving..." : "Save changes"}</Button> : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
   );
 }
 
@@ -619,17 +692,6 @@ function FieldSelect({ label, value, onChange, options, optionLabel, allowEmpty 
   return <div><Label>{label}</Label><select className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>{allowEmpty ? <option value="">—</option> : null}{options.map((option) => <option key={option.id} value={option.id}>{optionLabel(option)}</option>)}</select></div>;
 }
 
-function OverviewCard({ title, editor, children }: { title: string; editor: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-4 p-4 sm:p-6">
-        <CardTitle className="text-base">{title}</CardTitle>
-        {editor}
-      </CardHeader>
-      <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">{children}</CardContent>
-    </Card>
-  );
-}
 
 export default function CaseDetailsPage() {
   const params = useParams<{ caseId: string }>();
@@ -638,6 +700,8 @@ export default function CaseDetailsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], prosecutors: [] });
+  const [activeOverviewEditor, setActiveOverviewEditor] =
+    useState<CaseOverviewEditSection | null>(null);
   const loadCase = useCallback(async () => {
     if (!Number.isFinite(caseId)) {
       setErrorMessage("Invalid case id.");
@@ -719,6 +783,11 @@ export default function CaseDetailsPage() {
     loadCase();
   }, [loadCase]);
 
+  const openOverviewEditor = useCallback(
+    (section: CaseOverviewEditSection) => setActiveOverviewEditor(section),
+    [],
+  );
+
   const partiesByRole = useMemo(() => {
     const grouped = new Map<string, CaseParticipantRecord[]>();
 
@@ -729,6 +798,10 @@ export default function CaseDetailsPage() {
 
     return Array.from(grouped.entries());
   }, [data?.participants]);
+
+  const activeEditorCopy = activeOverviewEditor
+    ? overviewEditorCopy[activeOverviewEditor]
+    : null;
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -765,35 +838,50 @@ export default function CaseDetailsPage() {
 
               <Card>
                 <CardHeader className="gap-5 p-4 sm:p-6">
-                  <div className="min-w-0">
-                    <CardTitle className="text-2xl sm:text-3xl">
-                      {data.compact.docket_display_number ??
-                        displayValue(data.details.docket_number)}
-                    </CardTitle>
-                    <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
-                      {data.compact.violations ?? "No violation recorded"}
-                    </CardDescription>
-                    {classificationLabel(data.details) ||
-                    data.details.is_summary_procedure ? (
-                      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
-                        {classificationLabel(data.details) ? (
-                          <Badge variant="outline">
-                            {classificationLabel(data.details)}
-                          </Badge>
-                        ) : null}
-                        {data.details.is_summary_procedure ? (
-                          <Badge variant="secondary">Summary Procedure</Badge>
-                        ) : null}
-                      </div>
-                    ) : null}
+                  <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <CardTitle className="text-2xl sm:text-3xl">
+                        {data.compact.docket_display_number ??
+                          displayValue(data.details.docket_number)}
+                      </CardTitle>
+                      <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
+                        {data.compact.violations ?? "No violation recorded"}
+                      </CardDescription>
+                      {classificationLabel(data.details) ||
+                      data.details.is_summary_procedure ? (
+                        <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
+                          {classificationLabel(data.details) ? (
+                            <Badge variant="outline">
+                              {classificationLabel(data.details)}
+                            </Badge>
+                          ) : null}
+                          {data.details.is_summary_procedure ? (
+                            <Badge variant="secondary">Summary Procedure</Badge>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" className="shrink-0 self-start">
+                          Actions
+                          <ChevronDown className="ml-2 h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-56">
+                        <DropdownMenuItem onSelect={() => openOverviewEditor("docket_info")}>Edit Docket Info</DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => openOverviewEditor("case_details")}>Edit Case Details</DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => openOverviewEditor("status")}>Update Status</DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => openOverviewEditor("assignment")}>Assign / Reassign</DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => openOverviewEditor("places")}>Manage Places of Commission</DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => openOverviewEditor("notes")}>Manage Notes</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
 
                   <div className="grid gap-6 border-t pt-4 md:grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)] md:gap-x-12">
                     <div className="space-y-4">
-                      <OptionalDetailItem
-                        label="Places of commission"
-                        value={placeOfCommission(data.details)}
-                      />
                       <DetailItem
                         label="Date received"
                         value={formatDate(
@@ -808,10 +896,6 @@ export default function CaseDetailsPage() {
                           data.compact.prosecutor_short_name ??
                           "—"
                         }
-                      />
-                      <OptionalDetailItem
-                        label="Case notes"
-                        value={caseNotesDetails(data.details)}
                       />
                     </div>
 
@@ -834,18 +918,6 @@ export default function CaseDetailsPage() {
                             data.compact.current_status_date,
                         )}
                       />
-                      {data.details.is_summary_procedure ? (
-                        <>
-                          <OptionalDetailItem
-                            label="Summary"
-                            value={data.details.summary_text}
-                          />
-                          <OptionalDetailItem
-                            label="Summary remarks"
-                            value={data.details.remarks}
-                          />
-                        </>
-                      ) : null}
                       <OptionalDetailItem
                         label="Status approved date"
                         value={firstDisplayValue(
@@ -862,35 +934,26 @@ export default function CaseDetailsPage() {
                 </CardHeader>
               </Card>
 
-              <div className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <OverviewCard title="Docket Info" editor={<OverviewSectionEditor title="Docket Info" description="Correct docket identifiers and receipt date. Creates audit logs only." section="docket_info" caseId={caseId} refs={refs} onSaved={loadCase} initialData={{ docketTypeId: data.details.docket_type_id, docketYear: data.details.docket_year, docketNumber: data.details.docket_number, docketMonthCode: data.details.docket_month_code, dateReceived: data.details.date_received }} />}>
-                    <DetailItem label="Docket type" value={data.details.docket_type_name ?? data.details.docket_type_prefix ?? "—"} />
-                    <DetailItem label="Docket number" value={data.compact.docket_display_number ?? data.details.docket_number} />
-                    <DetailItem label="Date received" value={formatDate(data.details.date_received)} />
-                  </OverviewCard>
-                  <OverviewCard title="Case Details" editor={<OverviewSectionEditor title="Case Details" description="Correct classification, summary flags, summary text, and remarks. Creates audit logs only." section="case_details" caseId={caseId} refs={refs} onSaved={loadCase} initialData={{ caseClassificationId: data.details.case_classification_id, isSummaryProcedure: data.details.is_summary_procedure, summaryText: data.details.summary_text, remarks: data.details.remarks }} />}>
-                    <DetailItem label="Classification" value={classificationLabel(data.details) ?? "—"} />
-                    <DetailItem label="Summary procedure" value={data.details.is_summary_procedure ? "Yes" : "No"} />
-                    <OptionalDetailItem label="Summary" value={data.details.summary_text} />
-                    <OptionalDetailItem label="Remarks" value={data.details.remarks} />
-                  </OverviewCard>
-                  <OverviewCard title="Status" editor={<OverviewSectionEditor title="Status" description="Update current status. Creates case events and audit logs." section="status" caseId={caseId} refs={refs} onSaved={loadCase} initialData={{ statusId: data.details.current_status_id, statusDate: data.details.current_status_date, remarks: data.details.current_status_remarks }} />}>
-                    <DetailItem label="Current status" value={data.details.current_status?.display_label ?? data.details.current_status?.code ?? "—"} />
-                    <DetailItem label="Status date" value={formatDate(data.details.current_status_date)} />
-                  </OverviewCard>
-                  <OverviewCard title="Assignment" editor={<OverviewSectionEditor title="Assignment" description="Assign or reassign the case. Creates case events and audit logs." section="assignment" caseId={caseId} refs={refs} onSaved={loadCase} initialData={{ prosecutorId: data.details.current_prosecutor_id, assignedAt: data.details.current_assigned_at, remarks: "" }} />}>
-                    <DetailItem label="Assigned prosecutor" value={data.details.prosecutor_full_name ?? data.details.prosecutor_short_name ?? "—"} />
-                    <DetailItem label="Assigned at" value={formatDate(data.details.current_assigned_at)} />
-                  </OverviewCard>
-                  <OverviewCard title="Places of Commission" editor={<OverviewSectionEditor title="Places of Commission" description="Placeholder for the Places correction slice. Will use RPC and audit logs only." section="places" caseId={caseId} refs={refs} onSaved={loadCase} initialData={{}} />}>
-                    {placeOfCommission(data.details) ?? <SectionEmpty>No places recorded.</SectionEmpty>}
-                  </OverviewCard>
-                  <OverviewCard title="Notes" editor={<OverviewSectionEditor title="Notes" description="Placeholder for the Notes correction slice. Will use RPC and audit logs only." section="notes" caseId={caseId} refs={refs} onSaved={loadCase} initialData={{}} />}>
-                    {caseNotesDetails(data.details) ?? <SectionEmpty>No notes recorded.</SectionEmpty>}
-                  </OverviewCard>
-                </div>
+              {activeOverviewEditor && activeEditorCopy ? (
+                <OverviewSectionEditor
+                  caseId={caseId}
+                  description={activeEditorCopy.description}
+                  initialData={getOverviewInitialData(
+                    activeOverviewEditor,
+                    data.details,
+                  )}
+                  onOpenChange={(open) =>
+                    setActiveOverviewEditor(open ? activeOverviewEditor : null)
+                  }
+                  onSaved={loadCase}
+                  open
+                  refs={refs}
+                  section={activeOverviewEditor}
+                  title={activeEditorCopy.title}
+                />
+              ) : null}
 
+              <div className="space-y-6">
                 <Card>
                   <CardHeader className="p-4 sm:p-6">
                     <CardTitle>Parties</CardTitle>

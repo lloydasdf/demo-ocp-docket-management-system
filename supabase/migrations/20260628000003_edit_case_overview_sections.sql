@@ -72,7 +72,24 @@ BEGIN
     v_assigned_at := COALESCE(nullif(p_payload#>>'{data,assignedAt}','')::timestamptz, now());
     v_assignment_remarks := COALESCE(nullif(btrim(p_payload#>>'{data,remarks}'),''), v_reason);
     IF v_prosecutor_id IS NULL THEN RAISE EXCEPTION 'prosecutorId is required'; END IF;
-    SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code = 'CASE_RAFFLED' AND is_active IS TRUE LIMIT 1;
+    SELECT id INTO v_event_type_id
+    FROM public.case_event_types
+    WHERE code = 'CASE_RAFFLED'
+      AND is_active IS TRUE
+    LIMIT 1;
+
+    IF v_event_type_id IS NULL THEN
+      SELECT id INTO v_event_type_id
+      FROM public.case_event_types
+      WHERE code = 'CASE_ASSIGNED'
+        AND is_active IS TRUE
+      LIMIT 1;
+    END IF;
+
+    IF v_event_type_id IS NULL THEN
+      RAISE EXCEPTION 'Missing case event type CASE_RAFFLED or CASE_ASSIGNED';
+    END IF;
+
     INSERT INTO public.case_assignments(case_id,prosecutor_id,assigned_by_user_id,assigned_at,remarks)
     VALUES (v_case_id,v_prosecutor_id,v_user_id,v_assigned_at,v_assignment_remarks) RETURNING id INTO v_assignment_id;
     INSERT INTO public.case_events(case_id,event_type_id,event_date,title,description,prosecutor_id,source,source_table,source_id,created_by_user_id,updated_by_user_id)
