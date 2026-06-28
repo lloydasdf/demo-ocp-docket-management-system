@@ -217,7 +217,9 @@ export interface ClearanceSearchParams {
 
 export interface ClearanceSearchResult {
   id: string;
-  personId: number;
+  personId: number | null;
+  organizationId: number | null;
+  participantKind: "PERSON" | "ORGANIZATION";
   caseId: number;
   docketNumber: string;
   caseNumber: string;
@@ -234,7 +236,9 @@ export interface ClearanceSearchResult {
 }
 
 type ClearanceRpcRow = {
-  person_id: number;
+  person_id: number | null;
+  organization_id?: number | null;
+  participant_kind?: "PERSON" | "ORGANIZATION" | null;
   case_id: number;
   docket_number: string | null;
   case_number: string | null;
@@ -258,8 +262,10 @@ function normalizeClearanceSearchRow(
   const caseNumber = row.case_number ?? docketNumber;
 
   return {
-    id: `${row.case_id}-${row.person_id}`,
+    id: `${row.case_id}-${row.participant_kind ?? "PERSON"}-${row.person_id ?? row.organization_id}`,
     personId: row.person_id,
+    organizationId: row.organization_id ?? null,
+    participantKind: row.participant_kind ?? (row.organization_id ? "ORGANIZATION" : "PERSON"),
     caseId: row.case_id,
     docketNumber,
     caseNumber,
@@ -1165,6 +1171,59 @@ export async function searchOrganizations(query: string, limit?: number): Promis
   }, []);
 }
 
+
+export type OrganizationDetailsRecord = TableRow<"organizations"> & {
+  organization_aliases?: { id: number; alias_name: string; is_active: boolean | null }[] | Json | null;
+};
+
+export async function getOrganizationDetailsById(
+  organizationId: number,
+): Promise<SupabaseQueryResult<OrganizationDetailsRecord | null>> {
+  return runSupabaseQuery(
+    "getOrganizationDetailsById",
+    "v_organization_details" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      const query = supabase
+        .from("v_organization_details" as never)
+        .select("*")
+        .eq("id" as never, organizationId)
+        .maybeSingle();
+
+      return query as unknown as Promise<{
+        data: OrganizationDetailsRecord | null;
+        error: unknown;
+      }>;
+    },
+    null,
+  );
+}
+
+export async function getCaseParticipantsForOrganization(
+  organizationId: number,
+): Promise<SupabaseQueryResult<CaseParticipantRecord[]>> {
+  return runSupabaseQuery(
+    "getCaseParticipantsForOrganization",
+    "v_case_participants_detail" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      const query = supabase
+        .from("v_case_participants_detail" as never)
+        .select("*")
+        .eq("organization_id" as never, organizationId)
+        .order("case_id", { ascending: false })
+        .order("participant_order", { ascending: true, nullsFirst: false })
+        .order("id", { ascending: true });
+
+      return query as unknown as Promise<{
+        data: CaseParticipantRecord[] | null;
+        error: unknown;
+      }>;
+    },
+    [],
+  );
+}
+
 export async function getProsecutors(limit?: number): Promise<SupabaseQueryResult<TableRow<"prosecutors">[]>> {
   const safeLimit = normalizeLimit(limit, 50, 250);
   return runSupabaseQuery("getProsecutors", "v_ref_prosecutors" as RelationName, async () => {
@@ -1646,7 +1705,7 @@ async function searchClearanceRpc(
       return {
         data: results.map((result) => ({
           ...result,
-          age: ageByCasePersonKey.get(`${result.caseId}-${result.personId}`) ?? result.age,
+          age: result.personId ? ageByCasePersonKey.get(`${result.caseId}-${result.personId}`) ?? result.age : result.age,
           violations: violationsByCaseId.get(result.caseId) ?? result.violations,
         })),
         error: null,

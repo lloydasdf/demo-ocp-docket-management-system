@@ -238,7 +238,7 @@ function ResultGroup({
           return (
             <Link
               key={result.id}
-              href={`/persons/${result.personId}`}
+              href={result.participantKind === "ORGANIZATION" && result.organizationId ? `/organizations/${result.organizationId}` : `/persons/${result.personId}`}
               className={`block p-4 bg-white border rounded-lg transition-colors ${config.itemClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
             >
               <div className="flex items-start justify-between gap-4 mb-2">
@@ -246,7 +246,7 @@ function ResultGroup({
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-semibold text-lg">
                       {result.respondentName}
-                      {result.age ? (
+                      {result.participantKind === "PERSON" && result.age ? (
                         <span className="ml-2 text-base font-medium text-muted-foreground">
                           {result.age}
                         </span>
@@ -295,7 +295,7 @@ function ResultGroup({
                   )}
                 </div>
                 <span className="text-sm font-medium text-primary">
-                  View person details
+                  View {result.participantKind === "ORGANIZATION" ? "organization" : "person"} details
                 </span>
               </div>
             </Link>
