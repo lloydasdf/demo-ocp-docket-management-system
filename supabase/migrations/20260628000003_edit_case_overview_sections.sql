@@ -259,7 +259,7 @@ BEGIN
         v_event_type_id,
         v_assigned_at::date,
         v_assigned_at::time,
-        CASE WHEN v_assignment_action = 'void_replace' THEN 'Assignment replacement' ELSE 'Case reassigned' END,
+        CASE WHEN v_assignment_action = 'void_replace' THEN 'Case Assignment' ELSE 'Case Reassignment' END,
         v_assignment_remarks,
         v_prosecutor_id,
         v_staff_id,
