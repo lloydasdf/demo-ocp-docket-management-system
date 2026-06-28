@@ -1190,6 +1190,22 @@ export default function CaseDetailsPage() {
                           "—"
                         }
                       />
+                      <DetailItem
+                        label="Summary procedure"
+                        value={data.details.is_summary_procedure ? "Yes" : "No"}
+                      />
+                      <OptionalDetailItem
+                        label="Summary"
+                        value={data.details.summary_text}
+                      />
+                      <OptionalDetailItem
+                        label="Case notes"
+                        value={caseNotesDetails(data.details)}
+                      />
+                      <OptionalDetailItem
+                        label="Places of commission"
+                        value={placeOfCommission(data.details)}
+                      />
                     </div>
 
                     <div className="space-y-4">
@@ -1217,6 +1233,10 @@ export default function CaseDetailsPage() {
                           data.details.status_approved_date_raw,
                           formatDate(data.details.status_approved_date),
                         )}
+                      />
+                      <OptionalDetailItem
+                        label="Remarks"
+                        value={data.details.remarks}
                       />
                       <OptionalDetailItem
                         label="Status remarks"
