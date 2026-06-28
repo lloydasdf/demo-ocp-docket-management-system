@@ -1,6 +1,6 @@
 -- Add targeted clearance token upserts for docket participants and invoke them from docket creation.
 
-create or replace function public.upsert_clearance_possible_tokens_for_person(p_person_id integer) returns void
+create or replace function public.upsert_clearance_possible_tokens_for_person(p_person_id bigint) returns void
 language plpgsql
 as $$
 begin
@@ -30,7 +30,7 @@ begin
 end;
 $$;
 
-create or replace function public.upsert_clearance_phonetic_tokens_for_person(p_person_id integer) returns void
+create or replace function public.upsert_clearance_phonetic_tokens_for_person(p_person_id bigint) returns void
 language plpgsql
 as $$
 begin
@@ -54,7 +54,7 @@ begin
 end;
 $$;
 
-create or replace function public.upsert_clearance_possible_tokens_for_organization(p_organization_id integer) returns void
+create or replace function public.upsert_clearance_possible_tokens_for_organization(p_organization_id bigint) returns void
 language plpgsql
 as $$
 begin
@@ -84,7 +84,7 @@ begin
 end;
 $$;
 
-create or replace function public.upsert_clearance_phonetic_tokens_for_organization(p_organization_id integer) returns void
+create or replace function public.upsert_clearance_phonetic_tokens_for_organization(p_organization_id bigint) returns void
 language plpgsql
 as $$
 begin
@@ -108,18 +108,18 @@ begin
 end;
 $$;
 
-grant all on function public.upsert_clearance_possible_tokens_for_person(integer) to anon;
-grant all on function public.upsert_clearance_possible_tokens_for_person(integer) to authenticated;
-grant all on function public.upsert_clearance_possible_tokens_for_person(integer) to service_role;
-grant all on function public.upsert_clearance_phonetic_tokens_for_person(integer) to anon;
-grant all on function public.upsert_clearance_phonetic_tokens_for_person(integer) to authenticated;
-grant all on function public.upsert_clearance_phonetic_tokens_for_person(integer) to service_role;
-grant all on function public.upsert_clearance_possible_tokens_for_organization(integer) to anon;
-grant all on function public.upsert_clearance_possible_tokens_for_organization(integer) to authenticated;
-grant all on function public.upsert_clearance_possible_tokens_for_organization(integer) to service_role;
-grant all on function public.upsert_clearance_phonetic_tokens_for_organization(integer) to anon;
-grant all on function public.upsert_clearance_phonetic_tokens_for_organization(integer) to authenticated;
-grant all on function public.upsert_clearance_phonetic_tokens_for_organization(integer) to service_role;
+grant all on function public.upsert_clearance_possible_tokens_for_person(bigint) to anon;
+grant all on function public.upsert_clearance_possible_tokens_for_person(bigint) to authenticated;
+grant all on function public.upsert_clearance_possible_tokens_for_person(bigint) to service_role;
+grant all on function public.upsert_clearance_phonetic_tokens_for_person(bigint) to anon;
+grant all on function public.upsert_clearance_phonetic_tokens_for_person(bigint) to authenticated;
+grant all on function public.upsert_clearance_phonetic_tokens_for_person(bigint) to service_role;
+grant all on function public.upsert_clearance_possible_tokens_for_organization(bigint) to anon;
+grant all on function public.upsert_clearance_possible_tokens_for_organization(bigint) to authenticated;
+grant all on function public.upsert_clearance_possible_tokens_for_organization(bigint) to service_role;
+grant all on function public.upsert_clearance_phonetic_tokens_for_organization(bigint) to anon;
+grant all on function public.upsert_clearance_phonetic_tokens_for_organization(bigint) to authenticated;
+grant all on function public.upsert_clearance_phonetic_tokens_for_organization(bigint) to service_role;
 
 -- Support multiple places of commission while preserving the legacy single placeOfCommission payload.
 CREATE OR REPLACE FUNCTION public.create_new_docket_entry(p_payload jsonb) RETURNS jsonb
@@ -166,12 +166,12 @@ BEGIN
       IF nullif(v_item->>'existingOrganizationId','') IS NOT NULL THEN SELECT id, organization_name INTO v_org_id, v_name FROM public.organizations WHERE id=(v_item->>'existingOrganizationId')::bigint; IF v_org_id IS NULL THEN RAISE EXCEPTION 'Existing organization not found'; END IF;
       ELSE v_name := nullif(btrim(v_item#>>'{newOrganization,organizationName}'),''); IF v_name IS NULL THEN RAISE EXCEPTION 'Organization name is required'; END IF; INSERT INTO public.organizations(organization_name,contact_person,contact_number,email,details_jsonb,created_by_user_id,updated_by_user_id) VALUES (v_name,nullif(btrim(v_item#>>'{newOrganization,contactPerson}'),''),nullif(btrim(v_item#>>'{newOrganization,contactNumber}'),''),nullif(btrim(v_item#>>'{newOrganization,email}'),''),COALESCE(NULLIF(v_item#>'{newOrganization,detailsJsonb}', 'null'::jsonb), '{}'::jsonb),v_user_id,v_user_id) RETURNING id INTO v_org_id; END IF;
       FOR v_sub IN SELECT * FROM jsonb_array_elements(COALESCE(v_item->'aliases','[]'::jsonb)) LOOP IF nullif(btrim(v_sub->>'aliasName'),'') IS NOT NULL THEN UPDATE public.organization_aliases oa SET is_active = TRUE, updated_at = now() WHERE oa.organization_id = v_org_id AND lower(btrim(oa.alias_name)) = lower(btrim(v_sub->>'aliasName')) AND oa.is_active IS FALSE; INSERT INTO public.organization_aliases(organization_id,alias_name,source) SELECT v_org_id,btrim(v_sub->>'aliasName'),'MANUAL_ENTRY' WHERE NOT EXISTS (SELECT 1 FROM public.organization_aliases oa WHERE oa.organization_id = v_org_id AND lower(btrim(oa.alias_name)) = lower(btrim(v_sub->>'aliasName'))); END IF; END LOOP;
-      PERFORM public.upsert_clearance_possible_tokens_for_organization(v_org_id::integer); PERFORM public.upsert_clearance_phonetic_tokens_for_organization(v_org_id::integer);
+      PERFORM public.upsert_clearance_possible_tokens_for_organization(v_org_id); PERFORM public.upsert_clearance_phonetic_tokens_for_organization(v_org_id);
     ELSE
       IF nullif(v_item->>'existingPersonId','') IS NOT NULL THEN SELECT id, full_name INTO v_person_id, v_name FROM public.persons WHERE id=(v_item->>'existingPersonId')::bigint; IF v_person_id IS NULL THEN RAISE EXCEPTION 'Existing person not found'; END IF; v_reused_persons := v_reused_persons+1;
       ELSE v_name := regexp_replace(concat_ws(' ', nullif(btrim(v_item#>>'{newPerson,firstName}'),''), CASE WHEN COALESCE((v_item#>>'{newPerson,noMiddleName}')::boolean,false) THEN 'NMN' ELSE nullif(btrim(v_item#>>'{newPerson,middleName}'),'') END, nullif(btrim(v_item#>>'{newPerson,lastName}'),''), nullif(btrim(v_item#>>'{newPerson,suffix}'),'')), '\s+', ' ', 'g'); IF v_name = '' THEN RAISE EXCEPTION 'New participant full-name preview cannot be empty'; END IF; INSERT INTO public.persons(first_name,middle_name,last_name,suffix,full_name,gender,birth_date,notes,person_descriptor) VALUES (nullif(btrim(v_item#>>'{newPerson,firstName}'),''),CASE WHEN COALESCE((v_item#>>'{newPerson,noMiddleName}')::boolean,false) THEN 'NMN' ELSE nullif(btrim(v_item#>>'{newPerson,middleName}'),'') END,nullif(btrim(v_item#>>'{newPerson,lastName}'),''),nullif(btrim(v_item#>>'{newPerson,suffix}'),''),v_name,nullif(btrim(v_item#>>'{newPerson,gender}'),''),nullif(v_item#>>'{newPerson,birthDate}','')::date,nullif(btrim(v_item#>>'{newPerson,notes}'),''),nullif(btrim(v_item#>>'{newPerson,personDescriptor}'),'')) RETURNING id INTO v_person_id; v_created_persons := v_created_persons+1; END IF;
       FOR v_sub IN SELECT * FROM jsonb_array_elements(COALESCE(v_item->'aliases','[]'::jsonb)) LOOP IF nullif(btrim(v_sub->>'aliasName'),'') IS NOT NULL THEN UPDATE public.person_aliases pa SET is_active = TRUE, updated_at = now() WHERE pa.person_id = v_person_id AND lower(btrim(pa.alias_name)) = lower(btrim(v_sub->>'aliasName')) AND pa.is_active IS FALSE; INSERT INTO public.person_aliases(person_id,alias_name,alias_type,source) SELECT v_person_id,btrim(v_sub->>'aliasName'),'AKA','MANUAL_ENTRY' WHERE NOT EXISTS (SELECT 1 FROM public.person_aliases pa WHERE pa.person_id = v_person_id AND lower(btrim(pa.alias_name)) = lower(btrim(v_sub->>'aliasName'))); END IF; END LOOP;
-      PERFORM public.upsert_clearance_possible_tokens_for_person(v_person_id::integer); PERFORM public.upsert_clearance_phonetic_tokens_for_person(v_person_id::integer);
+      PERFORM public.upsert_clearance_possible_tokens_for_person(v_person_id); PERFORM public.upsert_clearance_phonetic_tokens_for_person(v_person_id);
     END IF;
     FOR v_sub IN SELECT * FROM jsonb_array_elements(COALESCE(v_item->'addresses','[]'::jsonb)) LOOP
       IF nullif(v_sub->>'existingAddressId','') IS NOT NULL THEN SELECT id INTO v_address_id FROM public.addresses WHERE id=(v_sub->>'existingAddressId')::bigint; IF v_address_id IS NULL THEN RAISE EXCEPTION 'Existing address not found'; END IF; v_reused_addresses:=v_reused_addresses+1; ELSE INSERT INTO public.addresses(line1,line2,barangay,city,province,region,zip_code,country) VALUES (nullif(btrim(v_sub#>>'{newAddress,line1}'),''),nullif(btrim(v_sub#>>'{newAddress,line2}'),''),nullif(btrim(v_sub#>>'{newAddress,barangay}'),''),nullif(btrim(v_sub#>>'{newAddress,city}'),''),nullif(btrim(v_sub#>>'{newAddress,province}'),''),nullif(btrim(v_sub#>>'{newAddress,region}'),''),nullif(btrim(v_sub#>>'{newAddress,zipCode}'),''),COALESCE(nullif(btrim(v_sub#>>'{newAddress,country}'),''),'Philippines')) RETURNING id INTO v_address_id; v_created_addresses:=v_created_addresses+1; END IF;
