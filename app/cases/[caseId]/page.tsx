@@ -1190,18 +1190,6 @@ export default function CaseDetailsPage() {
                           "—"
                         }
                       />
-                      <DetailItem
-                        label="Summary procedure"
-                        value={data.details.is_summary_procedure ? "Yes" : "No"}
-                      />
-                      <OptionalDetailItem
-                        label="Summary"
-                        value={data.details.summary_text}
-                      />
-                      <OptionalDetailItem
-                        label="Case notes"
-                        value={caseNotesDetails(data.details)}
-                      />
                       <OptionalDetailItem
                         label="Places of commission"
                         value={placeOfCommission(data.details)}
@@ -1236,11 +1224,19 @@ export default function CaseDetailsPage() {
                       />
                       <OptionalDetailItem
                         label="Remarks"
+                        value={data.details.current_status_remarks}
+                      />
+                      <OptionalDetailItem
+                        label="Summary"
+                        value={data.details.summary_text}
+                      />
+                      <OptionalDetailItem
+                        label="Summary remarks"
                         value={data.details.remarks}
                       />
                       <OptionalDetailItem
-                        label="Status remarks"
-                        value={data.details.current_status_remarks}
+                        label="Case notes"
+                        value={caseNotesDetails(data.details)}
                       />
                     </div>
                   </div>
