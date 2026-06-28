@@ -1173,6 +1173,7 @@ export async function searchOrganizations(query: string, limit?: number): Promis
 
 
 export type OrganizationDetailsRecord = TableRow<"organizations"> & {
+  details_jsonb?: Json | null;
   organization_aliases?: { id: number; alias_name: string; is_active: boolean | null }[] | Json | null;
 };
 

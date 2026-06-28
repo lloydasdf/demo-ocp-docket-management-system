@@ -30,6 +30,10 @@ function displayValue(value: string | number | null | undefined) {
   return value === null || value === undefined || value === "" ? "—" : String(value);
 }
 
+function hasDisplayValue(value: string | number | boolean | null | undefined) {
+  return value !== null && value !== undefined && value !== "";
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) return "—";
   const parsedDate = new Date(value);
@@ -47,6 +51,41 @@ function aliasesFor(organization: OrganizationDetailsRecord | null) {
 
 function roleLabel(participant: CaseParticipantRecord) {
   return participant.participant_roles?.display_label ?? participant.participant_roles?.code ?? "Party";
+}
+
+function formatOrganizationDetails(details: unknown) {
+  if (
+    !details ||
+    typeof details !== "object" ||
+    Array.isArray(details) ||
+    Object.keys(details as Record<string, unknown>).length === 0
+  ) {
+    return null;
+  }
+
+  return Object.entries(details as Record<string, unknown>)
+    .map(
+      ([key, value]) =>
+        `${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`,
+    )
+    .join("; ");
+}
+
+function DetailItem({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <div className="text-sm font-medium text-foreground">{value}</div>
+    </div>
+  );
 }
 
 function SectionEmpty({ children = "No records yet." }: { children?: string }) {
@@ -108,8 +147,25 @@ export default function OrganizationDetailsPage() {
     return () => { isMounted = false; };
   }, [organizationId]);
 
-  const casesById = useMemo(() => new Map(state.cases.map((caseRow) => [caseRow.id, caseRow])), [state.cases]);
+  const rolesByCaseId = useMemo(() => {
+    const grouped = new Map<number, string[]>();
+
+    for (const participant of state.participants) {
+      grouped.set(participant.case_id, [
+        ...(grouped.get(participant.case_id) ?? []),
+        roleLabel(participant),
+      ]);
+    }
+
+    return grouped;
+  }, [state.participants]);
   const aliases = aliasesFor(state.organization);
+  const organizationDetails = [
+    { label: "Contact person", value: state.organization?.contact_person },
+    { label: "Phone", value: state.organization?.contact_number },
+    { label: "Email", value: state.organization?.email },
+    { label: "Organization details", value: formatOrganizationDetails(state.organization?.details_jsonb) },
+  ].filter((detail) => hasDisplayValue(detail.value));
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -135,11 +191,6 @@ export default function OrganizationDetailsPage() {
             </Card>
           ) : (
             <>
-              <div>
-                <Link href="/clearance-search" className="text-sm font-medium text-primary hover:underline">← Back to clearance search</Link>
-                <h1 className="mt-2 text-3xl font-bold">Organization Profile</h1>
-              </div>
-
               {state.warnings.length > 0 ? (
                 <Alert>
                   <AlertTitle>Some related sections could not be loaded</AlertTitle>
@@ -148,22 +199,40 @@ export default function OrganizationDetailsPage() {
               ) : null}
 
               <Card>
-                <CardHeader>
-                  <CardTitle>{displayValue(state.organization.organization_name)}</CardTitle>
-                  <CardDescription>Organization identity, contact details, aliases, and linked case participation.</CardDescription>
+                <CardHeader className="gap-4 p-4 sm:p-6">
+                  <div className="min-w-0">
+                    <CardTitle className="text-2xl font-bold sm:text-3xl">
+                      {state.organization.organization_name}
+                    </CardTitle>
+                  </div>
+
+                  {organizationDetails.length > 0 ? (
+                    <div className="grid gap-3 border-t pt-4 sm:grid-cols-2 lg:grid-cols-3">
+                      {organizationDetails.map((detail) => (
+                        <DetailItem
+                          key={detail.label}
+                          label={detail.label}
+                          value={displayValue(detail.value as string | number)}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {aliases.length > 0 ? (
+                    <div className="border-t pt-4">
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Aliases
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {aliases.map((alias) => (
+                          <Badge key={alias} variant="outline">
+                            {alias}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <div><p className="text-xs uppercase text-muted-foreground">Contact person</p><p className="font-medium">{displayValue(state.organization.contact_person)}</p></div>
-                    <div><p className="text-xs uppercase text-muted-foreground">Phone</p><p className="font-medium">{displayValue(state.organization.contact_number)}</p></div>
-                    <div><p className="text-xs uppercase text-muted-foreground">Email</p><p className="font-medium">{displayValue(state.organization.email)}</p></div>
-                  </div>
-                  <Separator />
-                  <div className="flex flex-wrap gap-2">
-                    {aliases.length > 0 ? aliases.map((alias) => <Badge key={alias} variant="outline">{alias}</Badge>) : <span className="text-sm text-muted-foreground">No active aliases recorded.</span>}
-                  </div>
-                  <p className="text-xs text-muted-foreground">Created {formatDate(state.organization.created_at)} · Updated {formatDate(state.organization.updated_at)}</p>
-                </CardContent>
               </Card>
 
               <Card>
@@ -174,21 +243,55 @@ export default function OrganizationDetailsPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {state.participants.length === 0 ? (
+                  {state.cases.length === 0 ? (
                     <SectionEmpty>No associated cases found.</SectionEmpty>
                   ) : (
-                    state.participants.map((participant) => {
-                      const caseRow = casesById.get(participant.case_id);
-                      return (
-                        <Link key={participant.id} href={`/cases/${participant.case_id}`} className="flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-                          <div>
-                            <p className="font-semibold">{caseRow?.docket_display_number ?? `Case #${participant.case_id}`}</p>
-                            <p className="text-sm text-muted-foreground">Role: {roleLabel(participant)}</p>
+                    state.cases.map((caseRecord) => (
+                      <Link
+                        key={caseRecord.id}
+                        href={`/cases/${caseRecord.id}`}
+                        className="block rounded-lg border p-4 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <p className="font-semibold">
+                              {caseRecord.docket_display_number ??
+                                `Case #${caseRecord.id}`}
+                            </p>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                              Violations: {caseRecord.violations ?? "—"} |
+                              Status:{" "}
+                              {caseRecord.current_status_label ??
+                                caseRecord.current_status_code ??
+                                "—"}
+                            </p>
                           </div>
-                          <ExternalLink className="h-4 w-4 text-muted-foreground" />
-                        </Link>
-                      );
-                    })
+                          <ExternalLink className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
+                        </div>
+                        <Separator className="my-3" />
+                        <div className="grid gap-3 text-sm sm:grid-cols-3">
+                          <DetailItem
+                            label="Role"
+                            value={
+                              (rolesByCaseId.get(caseRecord.id ?? 0) ?? []).join(", ") ||
+                              "—"
+                            }
+                          />
+                          <DetailItem
+                            label="Date received"
+                            value={formatDate(caseRecord.date_received)}
+                          />
+                          <DetailItem
+                            label="Assigned prosecutor"
+                            value={
+                              caseRecord.prosecutor_full_name ??
+                              caseRecord.prosecutor_short_name ??
+                              "—"
+                            }
+                          />
+                        </div>
+                      </Link>
+                    ))
                   )}
                 </CardContent>
               </Card>
