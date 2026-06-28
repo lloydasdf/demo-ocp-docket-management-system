@@ -3,7 +3,7 @@
 import type React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ExternalLink } from "lucide-react";
 
 import { CaseTimeline } from "@/components/case-timeline";
@@ -502,81 +502,71 @@ export default function CaseDetailsPage() {
   const [data, setData] = useState<CaseDetailsState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadCase() {
-      if (!Number.isFinite(caseId)) {
-        setErrorMessage("Invalid case id.");
-        setIsLoading(false);
-        return;
-      }
-
-      setIsLoading(true);
-      setErrorMessage(null);
-
-      const [
-        caseDetailsPage,
-        participants,
-        attachments,
-        timeline,
-        courts,
-        motions,
-        petitionsForReview,
-      ] = await Promise.all([
-        getCaseDetailsPageById(caseId),
-        getCaseParticipants(caseId),
-        getCaseAttachmentsIndex(caseId),
-        getCaseTimelineEvents(caseId),
-        getCaseCourtDetails(caseId),
-        getCaseMotions(caseId),
-        getCasePetitionsForReview(caseId),
-      ]);
-
-      if (!isMounted) {
-        return;
-      }
-
-      const criticalError = caseDetailsPage.error;
-
-      if (criticalError) {
-        setErrorMessage(criticalError.message);
-        setData(null);
-        setIsLoading(false);
-        return;
-      }
-
-      const warnings = [
-        participants,
-        attachments,
-        timeline,
-        courts,
-        motions,
-        petitionsForReview,
-      ]
-        .map((result) => result.error?.message)
-        .filter((message): message is string => Boolean(message));
-
-      setData({
-        compact: caseDetailsPage.data,
-        details: caseDetailsPage.data,
-        participants: participants.data ?? [],
-        attachments: attachments.data ?? [],
-        timeline: timeline.data ?? [],
-        courts: courts.data ?? [],
-        motions: motions.data ?? [],
-        petitionsForReview: petitionsForReview.data ?? [],
-        warnings,
-      });
+  const loadCase = useCallback(async () => {
+    if (!Number.isFinite(caseId)) {
+      setErrorMessage("Invalid case id.");
       setIsLoading(false);
+      return;
     }
 
-    loadCase();
+    setIsLoading(true);
+    setErrorMessage(null);
 
-    return () => {
-      isMounted = false;
-    };
+    const [
+      caseDetailsPage,
+      participants,
+      attachments,
+      timeline,
+      courts,
+      motions,
+      petitionsForReview,
+    ] = await Promise.all([
+      getCaseDetailsPageById(caseId),
+      getCaseParticipants(caseId),
+      getCaseAttachmentsIndex(caseId),
+      getCaseTimelineEvents(caseId),
+      getCaseCourtDetails(caseId),
+      getCaseMotions(caseId),
+      getCasePetitionsForReview(caseId),
+    ]);
+
+    const criticalError = caseDetailsPage.error;
+
+    if (criticalError) {
+      setErrorMessage(criticalError.message);
+      setData(null);
+      setIsLoading(false);
+      return;
+    }
+
+    const warnings = [
+      participants,
+      attachments,
+      timeline,
+      courts,
+      motions,
+      petitionsForReview,
+    ]
+      .map((result) => result.error?.message)
+      .filter((message): message is string => Boolean(message));
+
+    setData({
+      compact: caseDetailsPage.data,
+      details: caseDetailsPage.data,
+      participants: participants.data ?? [],
+      attachments: attachments.data ?? [],
+      timeline: timeline.data ?? [],
+      courts: courts.data ?? [],
+      motions: motions.data ?? [],
+      petitionsForReview: petitionsForReview.data ?? [],
+      warnings,
+    });
+    setIsLoading(false);
   }, [caseId]);
+
+  useEffect(() => {
+    loadCase();
+  }, [loadCase]);
 
   const partiesByRole = useMemo(() => {
     const grouped = new Map<string, CaseParticipantRecord[]>();
@@ -807,6 +797,7 @@ export default function CaseDetailsPage() {
                   courts={data.courts}
                   events={data.timeline}
                   motions={data.motions}
+                  onChanged={loadCase}
                   petitionsForReview={data.petitionsForReview}
                 />
 

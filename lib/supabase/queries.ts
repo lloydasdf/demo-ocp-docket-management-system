@@ -978,6 +978,10 @@ export type CaseTimelineEventRecord = {
   needs_review: boolean | null;
   review_reason: string | null;
   is_voided: boolean | null;
+  void_reason: string | null;
+  voided_at: string | null;
+  voided_by_user_id: number | null;
+  voided_by_email: string | null;
 };
 
 export type PersonDetailsRecord = TableRow<"persons"> & {
@@ -1531,6 +1535,51 @@ export async function createCaseEvent(
   }
 }
 
+export interface EditCaseEventInput {
+  caseEventId: number;
+  eventDate: string;
+  title: string;
+  description?: string | null;
+  detailsJsonb?: Json | null;
+  editReason: string;
+}
+
+export async function editCaseEvent(
+  input: EditCaseEventInput,
+): Promise<SupabaseQueryResult<number>> {
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(
+        toQueryError(
+          currentUserQuery.error ?? new Error("No active user."),
+          "editCaseEvent",
+          "users",
+        ),
+      );
+    }
+
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("edit_case_event" as never, {
+      p_case_event_id: input.caseEventId,
+      p_event_date: input.eventDate,
+      p_title: input.title,
+      p_description: input.description ?? null,
+      p_details_jsonb: input.detailsJsonb ?? null,
+      p_edit_reason: input.editReason,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+
+    if (error) {
+      return fail(toQueryError(error, "editCaseEvent", "cases"));
+    }
+
+    return ok(Number(data));
+  } catch (error) {
+    return fail(toQueryError(error, "editCaseEvent", "cases"));
+  }
+}
+
 export async function voidCaseEvent(
   caseEventId: number,
   reason: string,
@@ -1550,8 +1599,8 @@ export async function voidCaseEvent(
     const supabase = await getSupabaseBrowserClient();
     const { error } = await supabase.rpc("void_case_event" as never, {
       p_case_event_id: caseEventId,
-      p_reason: reason,
-      p_user_id: currentUserQuery.data.id,
+      p_void_reason: reason,
+      p_voided_by_user_id: currentUserQuery.data.id,
     } as never);
     if (error) {
       return fail(toQueryError(error, "voidCaseEvent", "cases"));

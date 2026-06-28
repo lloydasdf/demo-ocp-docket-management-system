@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import {
   Accordion,
@@ -10,6 +10,19 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Card,
   CardContent,
@@ -21,6 +34,8 @@ import {
   type CaseMotionRecord,
   type CasePetitionForReviewRecord,
   type CaseTimelineEventRecord,
+  editCaseEvent,
+  voidCaseEvent,
 } from "@/lib/supabase/queries";
 
 export type CaseTimelineProps = {
@@ -28,7 +43,12 @@ export type CaseTimelineProps = {
   courts?: CaseCourtRecord[];
   motions?: CaseMotionRecord[];
   petitionsForReview?: CasePetitionForReviewRecord[];
+  onChanged?: () => void | Promise<void>;
 };
+
+function toDateInputValue(value: string | null | undefined) {
+  return value?.slice(0, 10) ?? "";
+}
 
 function formatDate(value: string | null | undefined) {
   if (!value) {
@@ -399,23 +419,95 @@ export function CaseTimeline({
   courts = [],
   events,
   motions = [],
+  onChanged,
   petitionsForReview = [],
 }: CaseTimelineProps) {
+  const [showVoided, setShowVoided] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<CaseTimelineEventRecord | null>(null);
+  const [voidingEvent, setVoidingEvent] = useState<CaseTimelineEventRecord | null>(null);
+  const [editForm, setEditForm] = useState({ eventDate: "", title: "", description: "", editReason: "" });
+  const [voidReason, setVoidReason] = useState("");
+  const [voidConfirmed, setVoidConfirmed] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const openEditDialog = (event: CaseTimelineEventRecord) => {
+    if (event.is_voided) return;
+    setActionError(null);
+    setEditingEvent(event);
+    setEditForm({
+      eventDate: toDateInputValue(event.event_date),
+      title: event.title ?? "",
+      description: event.description ?? "",
+      editReason: "",
+    });
+  };
+
+  const openVoidDialog = (event: CaseTimelineEventRecord) => {
+    if (event.is_voided) return;
+    setActionError(null);
+    setVoidReason("");
+    setVoidConfirmed(false);
+    setVoidingEvent(event);
+  };
+
+  const handleEditSave = async () => {
+    if (!editingEvent || !editForm.eventDate || !editForm.title.trim() || !editForm.editReason.trim()) return;
+    setIsSaving(true);
+    setActionError(null);
+    const result = await editCaseEvent({
+      caseEventId: editingEvent.case_event_id,
+      eventDate: editForm.eventDate,
+      title: editForm.title,
+      description: editForm.description,
+      detailsJsonb: editingEvent.details_jsonb,
+      editReason: editForm.editReason,
+    });
+    setIsSaving(false);
+    if (result.error) {
+      setActionError(result.error.message);
+      return;
+    }
+    setEditingEvent(null);
+    await onChanged?.();
+  };
+
+  const handleVoidSave = async () => {
+    if (!voidingEvent || !voidReason.trim() || !voidConfirmed) return;
+    setIsSaving(true);
+    setActionError(null);
+    const result = await voidCaseEvent(voidingEvent.case_event_id, voidReason);
+    setIsSaving(false);
+    if (result.error) {
+      setActionError(result.error.message);
+      return;
+    }
+    setVoidingEvent(null);
+    await onChanged?.();
+  };
+
+  const visibleEvents = useMemo(() => events.filter((event) => showVoided || !event.is_voided), [events, showVoided]);
   const timelineGroupedByDate = useMemo(() => {
     const grouped = new Map<string, CaseTimelineEventRecord[]>();
 
-    for (const event of events) {
+    for (const event of visibleEvents) {
       const dateLabel = event.event_date ? formatDate(event.event_date) : "No date";
       grouped.set(dateLabel, [...(grouped.get(dateLabel) ?? []), event]);
     }
 
     return Array.from(grouped.entries());
-  }, [events]);
+  }, [visibleEvents]);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Timeline</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle>Timeline</CardTitle>
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Checkbox checked={showVoided} onCheckedChange={(checked) => setShowVoided(checked === true)} />
+            Show voided activities
+          </label>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {timelineGroupedByDate.length === 0 ? (
@@ -458,6 +550,7 @@ export function CaseTimeline({
                               <div className="min-w-0">
                                 <p className="truncate font-medium">
                                   {timelineTitle(event, petitionDetails)}
+                                  {event.is_voided ? <Badge variant="destructive" className="ml-2">VOIDED</Badge> : null}
                                 </p>
                                 <p className="line-clamp-2 text-xs text-muted-foreground">
                                   {timelineSubtitle(event, petitionDetails)}
@@ -466,6 +559,18 @@ export function CaseTimeline({
                             </div>
                           </AccordionTrigger>
                           <AccordionContent className="space-y-3 pb-3">
+                            {!event.is_voided ? (
+                              <div className="flex gap-2">
+                                <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button>
+                                <Button type="button" variant="destructive" size="sm" onClick={() => openVoidDialog(event)}>Void</Button>
+                              </div>
+                            ) : (
+                              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
+                                <p className="font-medium text-destructive">VOIDED</p>
+                                <p className="text-muted-foreground">Reason: {event.void_reason ?? "—"}</p>
+                                <p className="text-muted-foreground">Voided: {formatDate(event.voided_at)} by {event.voided_by_email ?? "—"}</p>
+                              </div>
+                            )}
                             {detailItems.length > 0 ? (
                               <div className="grid gap-3 sm:grid-cols-2">
                                 {detailItems.map((detail) => (
@@ -509,6 +614,42 @@ export function CaseTimeline({
           </div>
         )}
       </CardContent>
+      <Dialog open={Boolean(editingEvent)} onOpenChange={(open) => !open && setEditingEvent(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit activity</DialogTitle>
+            <DialogDescription>Update this case timeline activity and record an audit reason.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
+            <div className="space-y-2"><Label htmlFor="event-date">Event Date</Label><Input id="event-date" type="date" value={editForm.eventDate} onChange={(e) => setEditForm((form) => ({ ...form, eventDate: e.target.value }))} /></div>
+            <div className="space-y-2"><Label htmlFor="event-title">Title</Label><Input id="event-title" value={editForm.title} onChange={(e) => setEditForm((form) => ({ ...form, title: e.target.value }))} /></div>
+            <div className="space-y-2"><Label htmlFor="event-description">Description / Remarks</Label><Textarea id="event-description" value={editForm.description} onChange={(e) => setEditForm((form) => ({ ...form, description: e.target.value }))} /></div>
+            <div className="space-y-2"><Label htmlFor="edit-reason">Reason for Edit</Label><Textarea id="edit-reason" required value={editForm.editReason} onChange={(e) => setEditForm((form) => ({ ...form, editReason: e.target.value }))} /></div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEditingEvent(null)}>Cancel</Button>
+            <Button type="button" onClick={handleEditSave} disabled={isSaving || !editForm.eventDate || !editForm.title.trim() || !editForm.editReason.trim()}>{isSaving ? "Saving..." : "Save"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={Boolean(voidingEvent)} onOpenChange={(open) => !open && setVoidingEvent(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Void activity</DialogTitle>
+            <DialogDescription>{voidingEvent ? `${timelineTitle(voidingEvent, null)} • ${formatDate(voidingEvent.event_date)}` : "Confirm this activity should be voided."}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
+            <div className="space-y-2"><Label htmlFor="void-reason">Void Reason</Label><Textarea id="void-reason" required value={voidReason} onChange={(e) => setVoidReason(e.target.value)} /></div>
+            <label className="flex items-center gap-2 text-sm"><Checkbox checked={voidConfirmed} onCheckedChange={(checked) => setVoidConfirmed(checked === true)} />I understand this activity will be voided.</label>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setVoidingEvent(null)}>Cancel</Button>
+            <Button type="button" variant="destructive" onClick={handleVoidSave} disabled={isSaving || !voidReason.trim() || !voidConfirmed}>{isSaving ? "Voiding..." : "Void activity"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
