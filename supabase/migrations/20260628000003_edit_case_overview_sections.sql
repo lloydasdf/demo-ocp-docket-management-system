@@ -171,7 +171,7 @@ BEGIN
     v_assigned_at := COALESCE(nullif(p_payload#>>'{data,assignedAt}','')::timestamptz, now());
     v_assignment_remarks := COALESCE(nullif(btrim(p_payload#>>'{data,remarks}'),''), v_reason);
     IF v_assignment_action IN ('reassign', 'void_replace') AND v_prosecutor_id IS NULL THEN RAISE EXCEPTION 'prosecutorId is required'; END IF;
-    IF v_assignment_action NOT IN ('reassign', 'void_only', 'void_replace') THEN RAISE EXCEPTION 'Unsupported assignment mode %', v_assignment_action; END IF;
+    IF v_assignment_action NOT IN ('reassign', 'void_replace') THEN RAISE EXCEPTION 'Unsupported assignment mode %', v_assignment_action; END IF;
     SELECT ca.id, ca.prosecutor_id, ca.case_event_id, COALESCE(p.full_name, p.short_name)
     INTO v_old_assignment_id, v_old_prosecutor_id, v_old_case_event_id, v_old_prosecutor_name
     FROM public.case_assignments ca
@@ -205,12 +205,14 @@ BEGIN
     END IF;
 
     IF v_assignment_action = 'reassign' THEN
+      IF v_old_assignment_id IS NULL THEN
+        RAISE EXCEPTION 'No active assignment found for case %', v_case_id;
+      END IF;
+
       UPDATE public.case_assignments
-      SET unassigned_at = COALESCE(v_assigned_at, now()),
+      SET unassigned_at = COALESCE(assigned_at, now()),
           remarks = concat_ws(E'\n', remarks, 'Reassigned reason: ' || v_reason)
-      WHERE case_id = v_case_id
-        AND unassigned_at IS NULL
-        AND is_voided IS FALSE;
+      WHERE id = v_old_assignment_id;
     ELSE
       IF v_old_assignment_id IS NULL THEN
         RAISE EXCEPTION 'No active assignment found for case %', v_case_id;
@@ -249,10 +251,7 @@ BEGIN
       END IF;
     END IF;
 
-    IF v_assignment_action = 'void_only' THEN
-      UPDATE public.cases SET updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_case_id;
-    ELSE
-      INSERT INTO public.case_assignments(case_id,prosecutor_id,staff_id,assigned_by_user_id,assigned_at,remarks)
+    INSERT INTO public.case_assignments(case_id,prosecutor_id,staff_id,assigned_by_user_id,assigned_at,remarks)
       VALUES (v_case_id,v_prosecutor_id,v_staff_id,v_user_id,v_assigned_at,v_assignment_remarks) RETURNING id INTO v_assignment_id;
       INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,prosecutor_id,staff_id,details_jsonb,source,source_table,source_id,created_by_user_id,updated_by_user_id)
       VALUES (
@@ -260,7 +259,7 @@ BEGIN
         v_event_type_id,
         v_assigned_at::date,
         v_assigned_at::time,
-        CASE WHEN v_old_assignment_id IS NULL THEN 'Case assigned' ELSE 'Case reassigned' END,
+        CASE WHEN v_assignment_action = 'void_replace' THEN 'Assignment replacement' ELSE 'Case reassigned' END,
         v_assignment_remarks,
         v_prosecutor_id,
         v_staff_id,
@@ -277,7 +276,6 @@ BEGIN
       ) RETURNING id INTO v_event_id;
       UPDATE public.case_assignments SET case_event_id = v_event_id WHERE id = v_assignment_id;
       UPDATE public.cases SET updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_case_id;
-    END IF;
   ELSE
     RAISE EXCEPTION 'Editing section % is not implemented yet', v_section;
   END IF;
