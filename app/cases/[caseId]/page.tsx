@@ -165,6 +165,18 @@ function participantName(participant: CaseParticipantRecord) {
   );
 }
 
+function participantProfileHref(participant: CaseParticipantRecord) {
+  if (participant.person_id) {
+    return `/persons/${participant.person_id}`;
+  }
+
+  if (participant.organization_id) {
+    return `/organizations/${participant.organization_id}`;
+  }
+
+  return null;
+}
+
 function formatOrganizationDetails(details: unknown) {
   if (
     !details ||
@@ -658,9 +670,9 @@ export default function CaseDetailsPage() {
                               >
                                 <div className="flex items-start justify-between gap-3">
                                   <div>
-                                    {participant.persons?.id ? (
+                                    {participantProfileHref(participant) ? (
                                       <Link
-                                        href={`/persons/${participant.persons.id}`}
+                                        href={participantProfileHref(participant) ?? "#"}
                                         className="font-medium text-primary hover:underline"
                                       >
                                         {participantName(participant)}

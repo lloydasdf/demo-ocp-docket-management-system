@@ -49,9 +49,17 @@ function roleLabel(participant: CaseParticipantRecord) {
   return participant.participant_roles?.display_label ?? participant.participant_roles?.code ?? "Party";
 }
 
+function SectionEmpty({ children = "No records yet." }: { children?: string }) {
+  return (
+    <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+      {children}
+    </p>
+  );
+}
+
 export default function OrganizationDetailsPage() {
   const params = useParams<{ organizationId: string }>();
-  const organizationId = Number(params.organizationId);
+  const organizationId = Number.parseInt(params.organizationId, 10);
   const [state, setState] = useState<OrganizationDetailsState>({ organization: null, participants: [], cases: [], warnings: [] });
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -104,55 +112,88 @@ export default function OrganizationDetailsPage() {
   const aliases = aliasesFor(state.organization);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
-      <main className="p-6 lg:pl-72">
-        <div className="mx-auto max-w-5xl space-y-6">
-          <div>
-            <Link href="/clearance-search" className="text-sm font-medium text-primary hover:underline">← Back to clearance search</Link>
-            <h1 className="mt-2 text-3xl font-bold">Organization Profile</h1>
-          </div>
-
-          {errorMessage ? <Alert variant="destructive"><AlertTitle>Unable to load organization</AlertTitle><AlertDescription>{errorMessage}</AlertDescription></Alert> : null}
-          {state.warnings.map((warning) => <Alert key={warning}><AlertTitle>Partial data warning</AlertTitle><AlertDescription>{warning}</AlertDescription></Alert>)}
-
-          <Card>
-            <CardHeader>
-              <CardTitle>{isLoading ? "Loading…" : displayValue(state.organization?.organization_name)}</CardTitle>
-              <CardDescription>Organization identity, contact details, aliases, and linked case participation.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-3">
-                <div><p className="text-xs uppercase text-muted-foreground">Contact person</p><p className="font-medium">{displayValue(state.organization?.contact_person)}</p></div>
-                <div><p className="text-xs uppercase text-muted-foreground">Phone</p><p className="font-medium">{displayValue(state.organization?.contact_number)}</p></div>
-                <div><p className="text-xs uppercase text-muted-foreground">Email</p><p className="font-medium">{displayValue(state.organization?.email)}</p></div>
+      <main className="min-w-0 flex-1 overflow-y-auto p-3 pt-16 md:p-8">
+        <div className="flex w-full max-w-[960px] flex-col gap-4 md:gap-6">
+          {isLoading ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                Loading organization details...
+              </CardContent>
+            </Card>
+          ) : errorMessage ? (
+            <Alert variant="destructive">
+              <AlertTitle>Unable to load organization details</AlertTitle>
+              <AlertDescription>{errorMessage}</AlertDescription>
+            </Alert>
+          ) : !state.organization ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+                Organization not found.
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <div>
+                <Link href="/clearance-search" className="text-sm font-medium text-primary hover:underline">← Back to clearance search</Link>
+                <h1 className="mt-2 text-3xl font-bold">Organization Profile</h1>
               </div>
-              <Separator />
-              <div className="flex flex-wrap gap-2">
-                {aliases.length > 0 ? aliases.map((alias) => <Badge key={alias} variant="outline">{alias}</Badge>) : <span className="text-sm text-muted-foreground">No active aliases recorded.</span>}
-              </div>
-              <p className="text-xs text-muted-foreground">Created {formatDate(state.organization?.created_at)} · Updated {formatDate(state.organization?.updated_at)}</p>
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader><CardTitle>Linked Cases</CardTitle><CardDescription>{state.participants.length} case participant record{state.participants.length === 1 ? "" : "s"}</CardDescription></CardHeader>
-            <CardContent className="space-y-3">
-              {state.participants.length === 0 && !isLoading ? <p className="text-sm text-muted-foreground">No linked cases found.</p> : null}
-              {state.participants.map((participant) => {
-                const caseRow = casesById.get(participant.case_id);
-                return (
-                  <Link key={participant.id} href={`/cases/${participant.case_id}`} className="flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-muted/40">
-                    <div>
-                      <p className="font-semibold">{caseRow?.docket_display_number ?? `Case #${participant.case_id}`}</p>
-                      <p className="text-sm text-muted-foreground">Role: {roleLabel(participant)}</p>
-                    </div>
-                    <ExternalLink className="h-4 w-4 text-muted-foreground" />
-                  </Link>
-                );
-              })}
-            </CardContent>
-          </Card>
+              {state.warnings.length > 0 ? (
+                <Alert>
+                  <AlertTitle>Some related sections could not be loaded</AlertTitle>
+                  <AlertDescription>{state.warnings.join(" ")}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>{displayValue(state.organization.organization_name)}</CardTitle>
+                  <CardDescription>Organization identity, contact details, aliases, and linked case participation.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <div><p className="text-xs uppercase text-muted-foreground">Contact person</p><p className="font-medium">{displayValue(state.organization.contact_person)}</p></div>
+                    <div><p className="text-xs uppercase text-muted-foreground">Phone</p><p className="font-medium">{displayValue(state.organization.contact_number)}</p></div>
+                    <div><p className="text-xs uppercase text-muted-foreground">Email</p><p className="font-medium">{displayValue(state.organization.email)}</p></div>
+                  </div>
+                  <Separator />
+                  <div className="flex flex-wrap gap-2">
+                    {aliases.length > 0 ? aliases.map((alias) => <Badge key={alias} variant="outline">{alias}</Badge>) : <span className="text-sm text-muted-foreground">No active aliases recorded.</span>}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Created {formatDate(state.organization.created_at)} · Updated {formatDate(state.organization.updated_at)}</p>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Associated cases</CardTitle>
+                  <CardDescription>
+                    Cases connected to this organization. Select a case to open the case details page.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {state.participants.length === 0 ? (
+                    <SectionEmpty>No associated cases found.</SectionEmpty>
+                  ) : (
+                    state.participants.map((participant) => {
+                      const caseRow = casesById.get(participant.case_id);
+                      return (
+                        <Link key={participant.id} href={`/cases/${participant.case_id}`} className="flex items-center justify-between rounded-lg border p-4 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                          <div>
+                            <p className="font-semibold">{caseRow?.docket_display_number ?? `Case #${participant.case_id}`}</p>
+                            <p className="text-sm text-muted-foreground">Role: {roleLabel(participant)}</p>
+                          </div>
+                          <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                        </Link>
+                      );
+                    })
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
         </div>
       </main>
     </div>
