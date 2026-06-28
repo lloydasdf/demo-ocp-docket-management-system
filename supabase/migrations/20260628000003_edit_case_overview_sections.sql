@@ -28,6 +28,8 @@ DECLARE
   v_status_history_id bigint;
   v_old_assignment_id bigint;
   v_old_prosecutor_id bigint;
+  v_old_prosecutor_name text;
+  v_new_prosecutor_name text;
   v_staff_id bigint;
   v_assignment_action text;
   v_from_status_id bigint;
@@ -106,29 +108,38 @@ BEGIN
     v_assignment_action := COALESCE(nullif(btrim(p_payload#>>'{data,assignmentMode}'),''), 'reassign');
     v_assigned_at := COALESCE(nullif(p_payload#>>'{data,assignedAt}','')::timestamptz, now());
     v_assignment_remarks := COALESCE(nullif(btrim(p_payload#>>'{data,remarks}'),''), v_reason);
-    IF v_assignment_action <> 'void_only' AND v_prosecutor_id IS NULL THEN RAISE EXCEPTION 'prosecutorId is required'; END IF;
-    IF v_assignment_action NOT IN ('reassign', 'void_only', 'void_and_assign') THEN RAISE EXCEPTION 'Unsupported assignment mode %', v_assignment_action; END IF;
-    SELECT id, prosecutor_id INTO v_old_assignment_id, v_old_prosecutor_id
-    FROM public.case_assignments
-    WHERE case_id = v_case_id AND unassigned_at IS NULL AND is_voided IS FALSE
-    ORDER BY assigned_at DESC NULLS LAST, id DESC
-    LIMIT 1;
-    SELECT id INTO v_event_type_id
-    FROM public.case_event_types
-    WHERE code = 'CASE_RAFFLED'
-      AND is_active IS TRUE
+    IF v_assignment_action = 'reassign' AND v_prosecutor_id IS NULL THEN RAISE EXCEPTION 'prosecutorId is required'; END IF;
+    IF v_assignment_action NOT IN ('reassign', 'void_only') THEN RAISE EXCEPTION 'Unsupported assignment mode %', v_assignment_action; END IF;
+    SELECT ca.id, ca.prosecutor_id, COALESCE(p.full_name, p.short_name)
+    INTO v_old_assignment_id, v_old_prosecutor_id, v_old_prosecutor_name
+    FROM public.case_assignments ca
+    LEFT JOIN public.prosecutors p ON p.id = ca.prosecutor_id
+    WHERE ca.case_id = v_case_id AND ca.unassigned_at IS NULL AND ca.is_voided IS FALSE
+    ORDER BY ca.assigned_at DESC NULLS LAST, ca.id DESC
     LIMIT 1;
 
-    IF v_event_type_id IS NULL THEN
+    IF v_assignment_action = 'reassign' THEN
+      SELECT COALESCE(p.full_name, p.short_name) INTO v_new_prosecutor_name
+      FROM public.prosecutors p
+      WHERE p.id = v_prosecutor_id;
+
       SELECT id INTO v_event_type_id
       FROM public.case_event_types
-      WHERE code = 'CASE_ASSIGNED'
+      WHERE code = 'CASE_RAFFLED'
         AND is_active IS TRUE
       LIMIT 1;
-    END IF;
 
-    IF v_event_type_id IS NULL THEN
-      RAISE EXCEPTION 'Missing case event type CASE_RAFFLED or CASE_ASSIGNED';
+      IF v_event_type_id IS NULL THEN
+        SELECT id INTO v_event_type_id
+        FROM public.case_event_types
+        WHERE code = 'CASE_ASSIGNED'
+          AND is_active IS TRUE
+        LIMIT 1;
+      END IF;
+
+      IF v_event_type_id IS NULL THEN
+        RAISE EXCEPTION 'Missing case event type CASE_RAFFLED or CASE_ASSIGNED';
+      END IF;
     END IF;
 
     IF v_assignment_action = 'reassign' THEN
@@ -138,7 +149,7 @@ BEGIN
       WHERE case_id = v_case_id
         AND unassigned_at IS NULL
         AND is_voided IS FALSE;
-    ELSIF v_assignment_action IN ('void_only', 'void_and_assign') THEN
+    ELSIF v_assignment_action = 'void_only' THEN
       UPDATE public.case_assignments
       SET is_voided = true,
           voided_at = now(),
@@ -165,7 +176,7 @@ BEGIN
         v_assignment_remarks,
         v_prosecutor_id,
         v_staff_id,
-        jsonb_build_object('action', v_assignment_action, 'previous_assignment_id', v_old_assignment_id, 'previous_prosecutor_id', v_old_prosecutor_id, 'new_assignment_id', v_assignment_id, 'new_prosecutor_id', v_prosecutor_id, 'reason', v_reason),
+        jsonb_build_object('action', 'reassign', 'previous_prosecutor_name', v_old_prosecutor_name, 'new_prosecutor_name', v_new_prosecutor_name, 'reason', v_reason, 'remarks', v_assignment_remarks),
         'MANUAL_EDIT',
         'case_assignments',
         v_assignment_id,
@@ -367,6 +378,7 @@ CREATE OR REPLACE VIEW public.v_case_details_page AS
          SELECT n.case_id,
             jsonb_agg(jsonb_build_object('id', n.id, 'note_text', n.note_text, 'is_private', n.is_private, 'created_by_user_id', n.created_by_user_id, 'created_at', n.created_at, 'updated_at', n.updated_at) ORDER BY n.created_at DESC, n.id DESC) AS notes
            FROM public.notes n
+          WHERE COALESCE(n.is_deleted, false) IS FALSE
           GROUP BY n.case_id
         ), case_address_summary AS (
          SELECT ca.case_id,
@@ -374,6 +386,7 @@ CREATE OR REPLACE VIEW public.v_case_details_page AS
            FROM ((public.case_addresses ca
              JOIN public.addresses a ON ((a.id = ca.address_id)))
              LEFT JOIN public.address_types at ON ((at.id = ca.address_type_id)))
+          WHERE COALESCE(ca.is_deleted, false) IS FALSE
           GROUP BY ca.case_id
         )
  SELECT c.id,
@@ -444,3 +457,32 @@ CREATE OR REPLACE VIEW public.v_case_details_page AS
      LEFT JOIN case_address_summary cas ON ((cas.case_id = c.id)))
   WHERE (NOT c.is_archived);
 
+
+-- Keep docket quick details assignment read model aligned with soft-voided assignments.
+CREATE OR REPLACE VIEW public.v_docket_quickdetails AS
+WITH latest_assignment AS (
+  SELECT DISTINCT ON (ca.case_id)
+    ca.case_id,
+    ca.prosecutor_id,
+    ca.assigned_at,
+    ca.id
+  FROM public.case_assignments ca
+  WHERE ca.unassigned_at IS NULL
+    AND ca.is_voided IS FALSE
+  ORDER BY ca.case_id, ca.assigned_at DESC NULLS LAST, ca.id DESC
+)
+SELECT
+  c.id,
+  c.date_received,
+  cs.code AS current_status_code,
+  cs.display_label AS current_status_label,
+  p.full_name AS prosecutor_full_name,
+  p.short_name AS prosecutor_short_name
+FROM public.cases c
+LEFT JOIN public.case_private_details cpd ON cpd.case_id = c.id
+LEFT JOIN public.case_statuses cs ON cs.id = cpd.current_status_id
+LEFT JOIN latest_assignment la ON la.case_id = c.id
+LEFT JOIN public.prosecutors p ON p.id = la.prosecutor_id
+WHERE NOT c.is_archived;
+
+COMMENT ON VIEW public.v_docket_quickdetails IS 'Cases page quick details read model for prosecutor, status, and received date. Intentionally policy-free for development debugging.';

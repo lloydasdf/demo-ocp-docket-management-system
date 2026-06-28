@@ -119,6 +119,32 @@ function eventRemarks(event: CaseTimelineEventRecord) {
   return event.description;
 }
 
+
+function stringDetail(value: unknown) {
+  if (value === null || value === undefined || !String(value).trim()) {
+    return null;
+  }
+
+  return String(value);
+}
+
+function assignmentEventDetails(event: CaseTimelineEventRecord) {
+  if (eventSourceTable(event) !== "case_assignments") {
+    return null;
+  }
+
+  const details = event.details_jsonb && typeof event.details_jsonb === "object"
+    ? event.details_jsonb as Record<string, unknown>
+    : {};
+
+  return [
+    { label: "Previous Prosecutor", value: stringDetail(details.previous_prosecutor_name) },
+    { label: "New Prosecutor", value: stringDetail(details.new_prosecutor_name) ?? event.prosecutor_short_name },
+    { label: "Reason", value: stringDetail(details.reason) },
+    { label: "Remarks", value: stringDetail(details.remarks) ?? event.description },
+  ];
+}
+
 function isCourtSourceEvent(event: CaseTimelineEventRecord) {
   return eventSourceTable(event).includes("case_courts");
 }
@@ -143,11 +169,11 @@ function timelineDetailItems(event: CaseTimelineEventRecord) {
     return [{ label: "Date", value: formatDate(event.event_date) }];
   }
 
-  if (event.event_type_code === "CASE_RAFFLED") {
+  const assignmentDetails = assignmentEventDetails(event);
+  if (assignmentDetails) {
     return [
-      { label: "Prosecutor", value: event.prosecutor_short_name },
       { label: "Date", value: formatDate(event.event_date) },
-      { label: "Remarks", value: eventRemarks(event) },
+      ...assignmentDetails,
     ];
   }
 
@@ -175,9 +201,11 @@ function visibleEventDetails(event: CaseTimelineEventRecord) {
 
   const hiddenKeys = event.event_type_code === "CASE_RECEIVED"
     ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
-    : isMotionForReconsideration(event)
-      ? new Set(["status", "status_label", "prosecutor", "prosecutor_short_name", "court", "court_name"])
-      : new Set<string>();
+    : eventSourceTable(event) === "case_assignments"
+      ? new Set(["action", "previous_assignment_id", "new_assignment_id", "previous_prosecutor_id", "new_prosecutor_id", "previous_prosecutor_name", "new_prosecutor_name", "reason", "remarks"])
+      : isMotionForReconsideration(event)
+        ? new Set(["status", "status_label", "prosecutor", "prosecutor_short_name", "court", "court_name"])
+        : new Set<string>();
 
   return Object.entries(event.details_jsonb as Record<string, unknown>).filter(
     ([key, value]) => !hiddenKeys.has(key) && hasDetailValue(value === null || value === undefined ? null : String(value)),

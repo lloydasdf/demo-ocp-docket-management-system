@@ -77,6 +77,7 @@ type CaseNoteRecord = {
   created_by_user_id?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
+  is_deleted?: boolean | null;
 };
 
 type CaseAddressRecord = {
@@ -119,7 +120,8 @@ function caseNotes(details: CaseDetailsPageViewRecord | null): CaseNoteRecord[] 
       typeof note === "object" &&
       !Array.isArray(note) &&
       typeof (note as CaseNoteRecord).note_text === "string" &&
-      (note as CaseNoteRecord).note_text?.trim() !== "",
+      (note as CaseNoteRecord).note_text?.trim() !== "" &&
+      (note as CaseNoteRecord).is_deleted !== true,
   );
 }
 
@@ -681,7 +683,7 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
                 <FieldInput label="Status approved date/raw" value={String(formData.statusApprovedDateRaw ?? "")} onChange={(v) => setValue("statusApprovedDateRaw", v)} className="sm:col-span-2" />
               </>) : null}
               {section === "assignment" ? (<>
-                <FieldSelect label="Assignment mode" value={String(formData.assignmentMode ?? "reassign")} onChange={(v) => setValue("assignmentMode", v)} options={[{ id: 1, display_label: "Reassign case", code: "reassign" }, { id: 2, display_label: "Void current assignment only", code: "void_only" }, { id: 3, display_label: "Void current assignment and assign replacement", code: "void_and_assign" }]} optionLabel={(option) => option.display_label ?? String(option.id)} valueKey="code" />
+                <FieldSelect label="Assignment mode" value={String(formData.assignmentMode ?? "reassign")} onChange={(v) => setValue("assignmentMode", v)} options={[{ id: 1, display_label: "Reassign case", code: "reassign" }, { id: 2, display_label: "Void current assignment only", code: "void_only" }]} optionLabel={(option) => option.display_label ?? String(option.id)} valueKey="code" />
                 <FieldSelect label="Prosecutor" value={String(formData.prosecutorId ?? "")} onChange={(v) => setValue("prosecutorId", v)} options={refs.prosecutors} optionLabel={optionLabel} />
                 <FieldSelect label="Staff" value={String(formData.staffId ?? "")} onChange={(v) => setValue("staffId", v)} options={refs.staff} optionLabel={optionLabel} allowEmpty />
                 <FieldInput label="Assigned at" type="date" value={String(formData.assignedAt ?? "").slice(0,10)} onChange={(v) => setValue("assignedAt", v)} />
