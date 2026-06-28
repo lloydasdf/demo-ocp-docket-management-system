@@ -4,7 +4,7 @@ import type React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ExternalLink } from "lucide-react";
+import { Edit, ExternalLink } from "lucide-react";
 
 import { CaseTimeline } from "@/components/case-timeline";
 import { Sidebar } from "@/components/sidebar";
@@ -18,21 +18,38 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import {
   getCaseAttachmentsIndex,
   getCaseCourtDetails,
+  editCaseOverviewSection,
+  getCaseClassifications,
   getCaseDetailsPageById,
+  getCaseStatuses,
+  getDocketTypes,
   getCaseMotions,
   getCaseParticipants,
   getCasePetitionsForReview,
   getCaseTimelineEvents,
+  getProsecutors,
   type CaseCourtRecord,
   type CaseDetailsPageViewRecord,
   type CaseMotionRecord,
   type CaseParticipantRecord,
   type CasePetitionForReviewRecord,
   type CaseTimelineEventRecord,
+  type CaseOverviewEditSection,
 } from "@/lib/supabase/queries";
 import type { TableRow as SupabaseTableRow } from "@/lib/supabase/types";
 
@@ -496,12 +513,131 @@ function DetailItem({
   );
 }
 
+type RefOption = { id: number; display_label?: string | null; name?: string | null; prefix?: string | null; code?: string | null; full_name?: string | null; short_name?: string | null };
+type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; prosecutors: RefOption[] };
+
+type OverviewEditorProps = {
+  title: string;
+  description: string;
+  section: CaseOverviewEditSection;
+  caseId: number;
+  initialData: Record<string, string | number | boolean | null | undefined>;
+  refs: OverviewRefs;
+  onSaved: () => Promise<void>;
+  disabled?: boolean;
+};
+
+function OverviewSectionEditor({ title, description, section, caseId, initialData, refs, onSaved, disabled }: OverviewEditorProps) {
+  const [open, setOpen] = useState(false);
+  const [formData, setFormData] = useState<Record<string, string | boolean>>({});
+  const [reason, setReason] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setFormData(Object.fromEntries(Object.entries(initialData).map(([key, value]) => [key, typeof value === "boolean" ? value : value == null ? "" : String(value)])));
+    setReason("");
+    setError(null);
+  }, [initialData, open]);
+
+  const setValue = (key: string, value: string | boolean) => setFormData((current) => ({ ...current, [key]: value }));
+  const optionLabel = (option: RefOption) => option.display_label ?? option.full_name ?? option.name ?? option.short_name ?? option.prefix ?? option.code ?? String(option.id);
+
+  async function save() {
+    if (!reason.trim()) { setError("Reason is required."); return; }
+    setIsSaving(true);
+    setError(null);
+    const result = await editCaseOverviewSection({ caseId, section, reason: reason.trim(), data: formData });
+    setIsSaving(false);
+    if (result.error) { setError(result.error.message); return; }
+    setOpen(false);
+    await onSaved();
+  }
+
+  const notReady = section === "places" || section === "notes";
+
+  return (
+    <>
+      <Button variant="outline" size="sm" onClick={() => setOpen(true)} disabled={disabled}>
+        <Edit className="mr-2 h-4 w-4" /> Edit
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Edit {title}</DialogTitle>
+            <DialogDescription>{description}</DialogDescription>
+          </DialogHeader>
+          {notReady ? (
+            <SectionEmpty>This section has an edit placeholder. The RPC-backed form is scheduled after the current vertical slices.</SectionEmpty>
+          ) : (
+            <div className="grid gap-4 py-2 sm:grid-cols-2">
+              {section === "docket_info" ? (<>
+                <FieldSelect label="Docket type" value={String(formData.docketTypeId ?? "")} onChange={(v) => setValue("docketTypeId", v)} options={refs.docketTypes} optionLabel={optionLabel} />
+                <FieldInput label="Docket year" value={String(formData.docketYear ?? "")} onChange={(v) => setValue("docketYear", v)} />
+                <FieldInput label="Docket number" value={String(formData.docketNumber ?? "")} onChange={(v) => setValue("docketNumber", v)} />
+                <FieldInput label="Docket month code" value={String(formData.docketMonthCode ?? "")} onChange={(v) => setValue("docketMonthCode", v.toUpperCase())} />
+                <FieldInput label="Date received" type="date" value={String(formData.dateReceived ?? "")} onChange={(v) => setValue("dateReceived", v)} />
+              </>) : null}
+              {section === "case_details" ? (<>
+                <FieldSelect label="Classification" value={String(formData.caseClassificationId ?? "")} onChange={(v) => setValue("caseClassificationId", v)} options={refs.classifications} optionLabel={optionLabel} allowEmpty />
+                <label className="flex items-center gap-2 pt-7 text-sm"><input type="checkbox" checked={Boolean(formData.isSummaryProcedure)} onChange={(e) => setValue("isSummaryProcedure", e.target.checked)} /> Summary procedure</label>
+                <FieldTextarea label="Summary" value={String(formData.summaryText ?? "")} onChange={(v) => setValue("summaryText", v)} className="sm:col-span-2" />
+                <FieldTextarea label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} className="sm:col-span-2" />
+              </>) : null}
+              {section === "status" ? (<>
+                <FieldSelect label="Status" value={String(formData.statusId ?? "")} onChange={(v) => setValue("statusId", v)} options={refs.statuses} optionLabel={optionLabel} />
+                <FieldInput label="Status date" type="date" value={String(formData.statusDate ?? "")} onChange={(v) => setValue("statusDate", v)} />
+                <FieldTextarea label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} className="sm:col-span-2" />
+              </>) : null}
+              {section === "assignment" ? (<>
+                <FieldSelect label="Prosecutor" value={String(formData.prosecutorId ?? "")} onChange={(v) => setValue("prosecutorId", v)} options={refs.prosecutors} optionLabel={optionLabel} />
+                <FieldInput label="Assigned at" type="date" value={String(formData.assignedAt ?? "").slice(0,10)} onChange={(v) => setValue("assignedAt", v)} />
+                <FieldTextarea label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} className="sm:col-span-2" />
+              </>) : null}
+              <FieldTextarea label="Reason for edit" value={reason} onChange={setReason} className="sm:col-span-2" />
+            </div>
+          )}
+          {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            {!notReady ? <Button onClick={save} disabled={isSaving}>{isSaving ? "Saving..." : "Save changes"}</Button> : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function FieldInput({ label, value, onChange, type = "text", className }: { label: string; value: string; onChange: (value: string) => void; type?: string; className?: string }) {
+  return <div className={className}><Label>{label}</Label><Input type={type} value={value} onChange={(e) => onChange(e.target.value)} /></div>;
+}
+function FieldTextarea({ label, value, onChange, className }: { label: string; value: string; onChange: (value: string) => void; className?: string }) {
+  return <div className={className}><Label>{label}</Label><Textarea value={value} onChange={(e) => onChange(e.target.value)} /></div>;
+}
+function FieldSelect({ label, value, onChange, options, optionLabel, allowEmpty = false }: { label: string; value: string; onChange: (value: string) => void; options: RefOption[]; optionLabel: (option: RefOption) => string; allowEmpty?: boolean }) {
+  return <div><Label>{label}</Label><select className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>{allowEmpty ? <option value="">—</option> : null}{options.map((option) => <option key={option.id} value={option.id}>{optionLabel(option)}</option>)}</select></div>;
+}
+
+function OverviewCard({ title, editor, children }: { title: string; editor: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-4 p-4 sm:p-6">
+        <CardTitle className="text-base">{title}</CardTitle>
+        {editor}
+      </CardHeader>
+      <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">{children}</CardContent>
+    </Card>
+  );
+}
+
 export default function CaseDetailsPage() {
   const params = useParams<{ caseId: string }>();
   const caseId = Number.parseInt(params.caseId, 10);
   const [data, setData] = useState<CaseDetailsState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], prosecutors: [] });
   const loadCase = useCallback(async () => {
     if (!Number.isFinite(caseId)) {
       setErrorMessage("Invalid case id.");
@@ -520,6 +656,10 @@ export default function CaseDetailsPage() {
       courts,
       motions,
       petitionsForReview,
+      docketTypes,
+      classifications,
+      statuses,
+      prosecutors,
     ] = await Promise.all([
       getCaseDetailsPageById(caseId),
       getCaseParticipants(caseId),
@@ -528,6 +668,10 @@ export default function CaseDetailsPage() {
       getCaseCourtDetails(caseId),
       getCaseMotions(caseId),
       getCasePetitionsForReview(caseId),
+      getDocketTypes(),
+      getCaseClassifications(),
+      getCaseStatuses(),
+      getProsecutors(),
     ]);
 
     const criticalError = caseDetailsPage.error;
@@ -549,6 +693,13 @@ export default function CaseDetailsPage() {
     ]
       .map((result) => result.error?.message)
       .filter((message): message is string => Boolean(message));
+
+    setRefs({
+      docketTypes: (docketTypes.data ?? []) as RefOption[],
+      classifications: (classifications.data ?? []) as RefOption[],
+      statuses: (statuses.data ?? []) as RefOption[],
+      prosecutors: (prosecutors.data ?? []) as RefOption[],
+    });
 
     setData({
       compact: caseDetailsPage.data,
@@ -712,6 +863,34 @@ export default function CaseDetailsPage() {
               </Card>
 
               <div className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <OverviewCard title="Docket Info" editor={<OverviewSectionEditor title="Docket Info" description="Correct docket identifiers and receipt date. Creates audit logs only." section="docket_info" caseId={caseId} refs={refs} onSaved={loadCase} initialData={{ docketTypeId: data.details.docket_type_id, docketYear: data.details.docket_year, docketNumber: data.details.docket_number, docketMonthCode: data.details.docket_month_code, dateReceived: data.details.date_received }} />}>
+                    <DetailItem label="Docket type" value={data.details.docket_type_name ?? data.details.docket_type_prefix ?? "—"} />
+                    <DetailItem label="Docket number" value={data.compact.docket_display_number ?? data.details.docket_number} />
+                    <DetailItem label="Date received" value={formatDate(data.details.date_received)} />
+                  </OverviewCard>
+                  <OverviewCard title="Case Details" editor={<OverviewSectionEditor title="Case Details" description="Correct classification, summary flags, summary text, and remarks. Creates audit logs only." section="case_details" caseId={caseId} refs={refs} onSaved={loadCase} initialData={{ caseClassificationId: data.details.case_classification_id, isSummaryProcedure: data.details.is_summary_procedure, summaryText: data.details.summary_text, remarks: data.details.remarks }} />}>
+                    <DetailItem label="Classification" value={classificationLabel(data.details) ?? "—"} />
+                    <DetailItem label="Summary procedure" value={data.details.is_summary_procedure ? "Yes" : "No"} />
+                    <OptionalDetailItem label="Summary" value={data.details.summary_text} />
+                    <OptionalDetailItem label="Remarks" value={data.details.remarks} />
+                  </OverviewCard>
+                  <OverviewCard title="Status" editor={<OverviewSectionEditor title="Status" description="Update current status. Creates case events and audit logs." section="status" caseId={caseId} refs={refs} onSaved={loadCase} initialData={{ statusId: data.details.current_status_id, statusDate: data.details.current_status_date, remarks: data.details.current_status_remarks }} />}>
+                    <DetailItem label="Current status" value={data.details.current_status?.display_label ?? data.details.current_status?.code ?? "—"} />
+                    <DetailItem label="Status date" value={formatDate(data.details.current_status_date)} />
+                  </OverviewCard>
+                  <OverviewCard title="Assignment" editor={<OverviewSectionEditor title="Assignment" description="Assign or reassign the case. Creates case events and audit logs." section="assignment" caseId={caseId} refs={refs} onSaved={loadCase} initialData={{ prosecutorId: data.details.current_prosecutor_id, assignedAt: data.details.current_assigned_at, remarks: "" }} />}>
+                    <DetailItem label="Assigned prosecutor" value={data.details.prosecutor_full_name ?? data.details.prosecutor_short_name ?? "—"} />
+                    <DetailItem label="Assigned at" value={formatDate(data.details.current_assigned_at)} />
+                  </OverviewCard>
+                  <OverviewCard title="Places of Commission" editor={<OverviewSectionEditor title="Places of Commission" description="Placeholder for the Places correction slice. Will use RPC and audit logs only." section="places" caseId={caseId} refs={refs} onSaved={loadCase} initialData={{}} />}>
+                    {placeOfCommission(data.details) ?? <SectionEmpty>No places recorded.</SectionEmpty>}
+                  </OverviewCard>
+                  <OverviewCard title="Notes" editor={<OverviewSectionEditor title="Notes" description="Placeholder for the Notes correction slice. Will use RPC and audit logs only." section="notes" caseId={caseId} refs={refs} onSaved={loadCase} initialData={{}} />}>
+                    {caseNotesDetails(data.details) ?? <SectionEmpty>No notes recorded.</SectionEmpty>}
+                  </OverviewCard>
+                </div>
+
                 <Card>
                   <CardHeader className="p-4 sm:p-6">
                     <CardTitle>Parties</CardTitle>

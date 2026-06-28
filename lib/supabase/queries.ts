@@ -1261,6 +1261,70 @@ export async function getCaseParticipants(
   );
 }
 
+
+export type CaseOverviewEditSection =
+  | "docket_info"
+  | "case_details"
+  | "status"
+  | "assignment"
+  | "places"
+  | "notes";
+
+export interface EditCaseOverviewSectionInput {
+  caseId: number;
+  section: CaseOverviewEditSection;
+  reason: string;
+  data: Record<string, unknown>;
+}
+
+export async function editCaseOverviewSection(
+  input: EditCaseOverviewSectionInput,
+): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) {
+    return fail({
+      message: "Supabase is not configured.",
+      table: "cases",
+      operation: "editCaseOverviewSection",
+    });
+  }
+
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(
+        toQueryError(
+          currentUserQuery.error ?? new Error("No active user available."),
+          "editCaseOverviewSection",
+          "users",
+        ),
+      );
+    }
+
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc(
+      "edit_case_overview_section" as never,
+      {
+        p_payload: {
+          caseId: input.caseId,
+          section: input.section,
+          reason: input.reason,
+          userId: currentUserQuery.data.id,
+          data: input.data,
+        },
+      } as never,
+    );
+
+    if (error) {
+      return fail(toQueryError(error, "editCaseOverviewSection", "cases"));
+    }
+
+    return ok(Number(data ?? input.caseId));
+  } catch (error) {
+    return fail(toQueryError(error, "editCaseOverviewSection", "cases"));
+  }
+}
+
 export async function getCaseParticipantsForCases(
   caseIds: number[],
 ): Promise<SupabaseQueryResult<CaseParticipantRecord[]>> {
