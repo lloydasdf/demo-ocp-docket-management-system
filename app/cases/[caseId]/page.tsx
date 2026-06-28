@@ -37,6 +37,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import {
+  getAddressTypes,
   getCaseAttachmentsIndex,
   getCaseCourtDetails,
   editCaseOverviewSection,
@@ -48,14 +49,22 @@ import {
   getCaseParticipants,
   getCasePetitionsForReview,
   getCaseTimelineEvents,
+  getCaseManagedNotes,
+  getCaseOverviewChangeHistory,
+  getCasePlaces,
   getProsecutors,
+  manageCaseNotes,
+  manageCasePlaces,
   type CaseCourtRecord,
   type CaseDetailsPageViewRecord,
   type CaseMotionRecord,
   type CaseParticipantRecord,
   type CasePetitionForReviewRecord,
   type CaseTimelineEventRecord,
+  type CaseOverviewChangeHistoryRecord,
   type CaseOverviewEditSection,
+  type CaseNoteManagementRecord,
+  type CasePlaceRecord,
 } from "@/lib/supabase/queries";
 import type { TableRow as SupabaseTableRow } from "@/lib/supabase/types";
 
@@ -591,8 +600,10 @@ function getOverviewInitialData(
   return {};
 }
 
+type OverviewAction = CaseOverviewEditSection | "history";
+
 type RefOption = { id: number; display_label?: string | null; name?: string | null; prefix?: string | null; code?: string | null; full_name?: string | null; short_name?: string | null };
-type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; prosecutors: RefOption[] };
+type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; prosecutors: RefOption[]; addressTypes: RefOption[] };
 
 type OverviewEditorProps = {
   title: string;
@@ -692,6 +703,182 @@ function FieldSelect({ label, value, onChange, options, optionLabel, allowEmpty 
   return <div><Label>{label}</Label><select className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>{allowEmpty ? <option value="">—</option> : null}{options.map((option) => <option key={option.id} value={option.id}>{optionLabel(option)}</option>)}</select></div>;
 }
 
+function formatJsonPreview(value: unknown) {
+  return JSON.stringify(value ?? null, null, 2);
+}
+
+const emptyPlaceForm = {
+  id: "",
+  addressTypeId: "",
+  line1: "",
+  line2: "",
+  barangay: "",
+  city: "",
+  province: "",
+  region: "",
+  zipCode: "",
+  country: "Philippines",
+  latitude: "",
+  longitude: "",
+  isPrimary: false,
+  remarks: "",
+};
+
+function placeToForm(place: CasePlaceRecord) {
+  return {
+    id: String(place.id),
+    addressTypeId: String(place.address_type_id ?? ""),
+    line1: place.addresses?.line1 ?? "",
+    line2: place.addresses?.line2 ?? "",
+    barangay: place.addresses?.barangay ?? "",
+    city: place.addresses?.city ?? "",
+    province: place.addresses?.province ?? "",
+    region: place.addresses?.region ?? "",
+    zipCode: place.addresses?.zip_code ?? "",
+    country: place.addresses?.country ?? "Philippines",
+    latitude: place.addresses?.latitude == null ? "" : String(place.addresses.latitude),
+    longitude: place.addresses?.longitude == null ? "" : String(place.addresses.longitude),
+    isPrimary: Boolean(place.is_primary),
+    remarks: place.remarks ?? "",
+  };
+}
+
+function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { caseId: number; refs: OverviewRefs; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => Promise<void> }) {
+  const [places, setPlaces] = useState<CasePlaceRecord[]>([]);
+  const [showRemoved, setShowRemoved] = useState(false);
+  const [formData, setFormData] = useState(emptyPlaceForm);
+  const [reason, setReason] = useState("");
+  const [mode, setMode] = useState<"add" | "edit">("add");
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const loadPlaces = useCallback(async () => {
+    const result = await getCasePlaces(caseId, showRemoved);
+    if (result.error) setError(result.error.message);
+    setPlaces(result.data ?? []);
+  }, [caseId, showRemoved]);
+
+  useEffect(() => { if (open) void loadPlaces(); }, [loadPlaces, open]);
+
+  const setValue = (key: keyof typeof emptyPlaceForm, value: string | boolean) => setFormData((current) => ({ ...current, [key]: value }));
+  const resetForm = () => { setMode("add"); setFormData(emptyPlaceForm); setReason(""); setError(null); };
+  const optionLabel = (option: RefOption) => option.display_label ?? option.name ?? option.code ?? String(option.id);
+
+  async function save(action: "add" | "edit" | "remove" | "restore", place?: CasePlaceRecord) {
+    if (!reason.trim()) { setError("Reason is required."); return; }
+    setIsSaving(true);
+    setError(null);
+    const result = await manageCasePlaces({ caseId, action, reason: reason.trim(), place: place ? { id: place.id } : formData });
+    setIsSaving(false);
+    if (result.error) { setError(result.error.message); return; }
+    resetForm();
+    await loadPlaces();
+    await onSaved();
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+        <DialogHeader>
+          <DialogTitle>Manage Places of Commission</DialogTitle>
+          <DialogDescription>Add, update, remove, or restore places of commission. Changes create audit logs only.</DialogDescription>
+        </DialogHeader>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showRemoved} onChange={(event) => setShowRemoved(event.target.checked)} /> Show removed places</label>
+        <div className="space-y-3">
+          {places.length === 0 ? <SectionEmpty>No places recorded.</SectionEmpty> : places.map((place) => (
+            <div key={place.id} className="rounded-lg border p-3 text-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium">{formatCaseAddress({ addresses: place.addresses, remarks: place.remarks }) ?? "Unnamed address"}</p>
+                  <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                    <span>{place.address_types?.display_label ?? "Address"}</span>
+                    {place.is_primary ? <Badge variant="secondary">Primary</Badge> : null}
+                    {place.is_deleted ? <Badge variant="destructive">REMOVED</Badge> : null}
+                  </div>
+                  {place.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Removed {formatDate(place.deleted_at)}{place.deleted_by_user_id ? ` by user #${place.deleted_by_user_id}` : ""} — {place.delete_reason ?? "No reason recorded"}</p> : null}
+                </div>
+                <div className="flex gap-2">
+                  {place.is_deleted ? <Button size="sm" variant="outline" onClick={() => save("restore", place)}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setMode("edit"); setFormData(placeToForm(place)); setReason(""); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => save("remove", place)}>Remove</Button></>}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="grid gap-4 rounded-lg border p-4 sm:grid-cols-2">
+          <h3 className="sm:col-span-2 font-semibold">{mode === "add" ? "Add Place" : "Edit Place"}</h3>
+          <FieldSelect label="Address type" value={formData.addressTypeId} onChange={(value) => setValue("addressTypeId", value)} options={refs.addressTypes} optionLabel={optionLabel} />
+          <label className="flex items-center gap-2 pt-7 text-sm"><input type="checkbox" checked={formData.isPrimary} onChange={(event) => setValue("isPrimary", event.target.checked)} /> Primary</label>
+          <FieldInput label="Line 1" value={formData.line1} onChange={(value) => setValue("line1", value)} />
+          <FieldInput label="Line 2" value={formData.line2} onChange={(value) => setValue("line2", value)} />
+          <FieldInput label="Barangay" value={formData.barangay} onChange={(value) => setValue("barangay", value)} />
+          <FieldInput label="City" value={formData.city} onChange={(value) => setValue("city", value)} />
+          <FieldInput label="Province" value={formData.province} onChange={(value) => setValue("province", value)} />
+          <FieldInput label="Region" value={formData.region} onChange={(value) => setValue("region", value)} />
+          <FieldInput label="ZIP code" value={formData.zipCode} onChange={(value) => setValue("zipCode", value)} />
+          <FieldInput label="Country" value={formData.country} onChange={(value) => setValue("country", value)} />
+          <FieldInput label="Latitude" value={formData.latitude} onChange={(value) => setValue("latitude", value)} />
+          <FieldInput label="Longitude" value={formData.longitude} onChange={(value) => setValue("longitude", value)} />
+          <FieldTextarea label="Remarks" value={formData.remarks} onChange={(value) => setValue("remarks", value)} className="sm:col-span-2" />
+          <FieldTextarea label="Reason for edit" value={reason} onChange={setReason} className="sm:col-span-2" />
+        </div>
+        {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+          {mode === "edit" ? <Button variant="outline" onClick={resetForm}>Cancel edit</Button> : null}
+          <Button disabled={isSaving} onClick={() => save(mode)}>{isSaving ? "Saving..." : mode === "add" ? "Add place" : "Save place"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ManageNotesDialog({ caseId, open, onOpenChange, onSaved }: { caseId: number; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => Promise<void> }) {
+  const [notes, setNotes] = useState<CaseNoteManagementRecord[]>([]);
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [noteText, setNoteText] = useState("");
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const loadNotes = useCallback(async () => {
+    const result = await getCaseManagedNotes(caseId, showDeleted);
+    if (result.error) setError(result.error.message);
+    setNotes(result.data ?? []);
+  }, [caseId, showDeleted]);
+
+  useEffect(() => { if (open) void loadNotes(); }, [loadNotes, open]);
+  const resetForm = () => { setEditingId(null); setNoteText(""); setIsPrivate(false); setReason(""); setError(null); };
+  async function save(action: "add" | "edit" | "remove" | "restore", note?: CaseNoteManagementRecord) {
+    if (!reason.trim()) { setError("Reason is required."); return; }
+    setIsSaving(true); setError(null);
+    const result = await manageCaseNotes({ caseId, action, reason: reason.trim(), note: note ? { id: note.id } : { id: editingId, noteText, isPrivate } });
+    setIsSaving(false);
+    if (result.error) { setError(result.error.message); return; }
+    resetForm(); await loadNotes(); await onSaved();
+  }
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader><DialogTitle>Manage Notes</DialogTitle><DialogDescription>Add, update, remove, or restore notes. Changes create audit logs only.</DialogDescription></DialogHeader>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showDeleted} onChange={(event) => setShowDeleted(event.target.checked)} /> Show deleted notes</label>
+        <div className="space-y-3">{notes.length === 0 ? <SectionEmpty>No notes recorded.</SectionEmpty> : notes.map((note) => <div key={note.id} className="rounded-lg border p-3 text-sm"><div className="flex items-start justify-between gap-3"><div><p className="whitespace-pre-wrap">{note.note_text}</p><div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground"><span>{formatDate(note.created_at)}</span>{note.is_private ? <Badge variant="secondary">Private</Badge> : null}{note.is_deleted ? <Badge variant="destructive">DELETED</Badge> : null}</div>{note.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Deleted {formatDate(note.deleted_at)}{note.deleted_by_user_id ? ` by user #${note.deleted_by_user_id}` : ""} — {note.delete_reason ?? "No reason recorded"}</p> : null}</div><div className="flex gap-2">{note.is_deleted ? <Button size="sm" variant="outline" onClick={() => save("restore", note)}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setEditingId(note.id); setNoteText(note.note_text); setIsPrivate(note.is_private); setReason(""); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => save("remove", note)}>Remove</Button></>}</div></div></div>)}</div>
+        <div className="grid gap-4 rounded-lg border p-4"><h3 className="font-semibold">{editingId ? "Edit Note" : "Add Note"}</h3><FieldTextarea label="Note" value={noteText} onChange={setNoteText} /><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={isPrivate} onChange={(event) => setIsPrivate(event.target.checked)} /> Private</label><FieldTextarea label="Reason for edit" value={reason} onChange={setReason} /></div>
+        {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>{editingId ? <Button variant="outline" onClick={resetForm}>Cancel edit</Button> : null}<Button disabled={isSaving} onClick={() => save(editingId ? "edit" : "add")}>{isSaving ? "Saving..." : editingId ? "Save note" : "Add note"}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function OverviewHistoryDialog({ caseId, open, onOpenChange }: { caseId: number; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [history, setHistory] = useState<CaseOverviewChangeHistoryRecord[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { if (!open) return; void getCaseOverviewChangeHistory(caseId).then((result) => { if (result.error) setError(result.error.message); setHistory(result.data ?? []); }); }, [caseId, open]);
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl"><DialogHeader><DialogTitle>Overview Change History</DialogTitle><DialogDescription>Audit entries for overview edits, places, and notes.</DialogDescription></DialogHeader>{error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}<div className="space-y-3">{history.length === 0 ? <SectionEmpty>No overview changes recorded.</SectionEmpty> : history.map((entry) => <div key={entry.id} className="rounded-lg border p-3 text-sm"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">{entry.action}</Badge><span className="text-muted-foreground">{formatDate(entry.created_at)}</span></div><p className="mt-2 font-medium">{entry.summary ?? "—"}</p><p className="text-muted-foreground">Reason: {typeof entry.metadata === "object" && entry.metadata && !Array.isArray(entry.metadata) && "reason" in entry.metadata ? String(entry.metadata.reason) : "—"}</p><div className="mt-3 grid gap-3 md:grid-cols-2"><pre className="overflow-auto rounded-md bg-muted p-2 text-xs">{formatJsonPreview(entry.old_data)}</pre><pre className="overflow-auto rounded-md bg-muted p-2 text-xs">{formatJsonPreview(entry.new_data)}</pre></div></div>)}</div><DialogFooter><Button onClick={() => onOpenChange(false)}>Close</Button></DialogFooter></DialogContent></Dialog>;
+}
+
 
 export default function CaseDetailsPage() {
   const params = useParams<{ caseId: string }>();
@@ -699,9 +886,9 @@ export default function CaseDetailsPage() {
   const [data, setData] = useState<CaseDetailsState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], prosecutors: [] });
+  const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], prosecutors: [], addressTypes: [] });
   const [activeOverviewEditor, setActiveOverviewEditor] =
-    useState<CaseOverviewEditSection | null>(null);
+    useState<OverviewAction | null>(null);
   const loadCase = useCallback(async () => {
     if (!Number.isFinite(caseId)) {
       setErrorMessage("Invalid case id.");
@@ -724,6 +911,7 @@ export default function CaseDetailsPage() {
       classifications,
       statuses,
       prosecutors,
+      addressTypes,
     ] = await Promise.all([
       getCaseDetailsPageById(caseId),
       getCaseParticipants(caseId),
@@ -736,6 +924,7 @@ export default function CaseDetailsPage() {
       getCaseClassifications(),
       getCaseStatuses(),
       getProsecutors(),
+      getAddressTypes(),
     ]);
 
     const criticalError = caseDetailsPage.error;
@@ -763,6 +952,7 @@ export default function CaseDetailsPage() {
       classifications: (classifications.data ?? []) as RefOption[],
       statuses: (statuses.data ?? []) as RefOption[],
       prosecutors: (prosecutors.data ?? []) as RefOption[],
+      addressTypes: (addressTypes.data ?? []) as RefOption[],
     });
 
     setData({
@@ -784,7 +974,7 @@ export default function CaseDetailsPage() {
   }, [loadCase]);
 
   const openOverviewEditor = useCallback(
-    (section: CaseOverviewEditSection) => setActiveOverviewEditor(section),
+    (section: OverviewAction) => setActiveOverviewEditor(section),
     [],
   );
 
@@ -799,8 +989,12 @@ export default function CaseDetailsPage() {
     return Array.from(grouped.entries());
   }, [data?.participants]);
 
-  const activeEditorCopy = activeOverviewEditor
-    ? overviewEditorCopy[activeOverviewEditor]
+  const activeSectionEditor =
+    activeOverviewEditor && activeOverviewEditor !== "history"
+      ? activeOverviewEditor
+      : null;
+  const activeEditorCopy = activeSectionEditor
+    ? overviewEditorCopy[activeSectionEditor]
     : null;
 
   return (
@@ -876,6 +1070,7 @@ export default function CaseDetailsPage() {
                         <DropdownMenuItem onSelect={() => openOverviewEditor("assignment")}>Assign / Reassign</DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => openOverviewEditor("places")}>Manage Places of Commission</DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => openOverviewEditor("notes")}>Manage Notes</DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => openOverviewEditor("history")}>View Overview Change History</DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -934,24 +1129,50 @@ export default function CaseDetailsPage() {
                 </CardHeader>
               </Card>
 
-              {activeOverviewEditor && activeEditorCopy ? (
+              {activeSectionEditor && activeEditorCopy &&
+              activeSectionEditor !== "places" &&
+              activeSectionEditor !== "notes" ? (
                 <OverviewSectionEditor
                   caseId={caseId}
                   description={activeEditorCopy.description}
                   initialData={getOverviewInitialData(
-                    activeOverviewEditor,
+                    activeSectionEditor,
                     data.details,
                   )}
                   onOpenChange={(open) =>
-                    setActiveOverviewEditor(open ? activeOverviewEditor : null)
+                    setActiveOverviewEditor(open ? activeSectionEditor : null)
                   }
                   onSaved={loadCase}
                   open
                   refs={refs}
-                  section={activeOverviewEditor}
+                  section={activeSectionEditor}
                   title={activeEditorCopy.title}
                 />
               ) : null}
+              <ManagePlacesDialog
+                caseId={caseId}
+                onOpenChange={(open) =>
+                  setActiveOverviewEditor(open ? "places" : null)
+                }
+                onSaved={loadCase}
+                open={activeOverviewEditor === "places"}
+                refs={refs}
+              />
+              <ManageNotesDialog
+                caseId={caseId}
+                onOpenChange={(open) =>
+                  setActiveOverviewEditor(open ? "notes" : null)
+                }
+                onSaved={loadCase}
+                open={activeOverviewEditor === "notes"}
+              />
+              <OverviewHistoryDialog
+                caseId={caseId}
+                onOpenChange={(open) =>
+                  setActiveOverviewEditor(open ? "history" : null)
+                }
+                open={activeOverviewEditor === "history"}
+              />
 
               <div className="space-y-6">
                 <Card>

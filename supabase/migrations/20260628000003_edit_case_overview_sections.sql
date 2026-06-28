@@ -61,6 +61,7 @@ BEGIN
     INSERT INTO public.case_private_details(case_id, source) VALUES (v_case_id, 'MANUAL_ENTRY') ON CONFLICT (case_id) DO NOTHING;
     SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code = 'STATUS_UPDATED' AND is_active IS TRUE LIMIT 1;
     IF v_event_type_id IS NULL THEN SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code = 'CASE_RECEIVED' LIMIT 1; END IF;
+    IF v_event_type_id IS NULL THEN RAISE EXCEPTION 'Missing case event type STATUS_UPDATED or CASE_RECEIVED'; END IF;
     INSERT INTO public.case_events(case_id,event_type_id,event_date,title,description,status_id,source,source_table,created_by_user_id,updated_by_user_id)
     VALUES (v_case_id,v_event_type_id,v_status_date,'Status updated',v_status_remarks,v_to_status_id,'MANUAL_EDIT','case_status_history',v_user_id,v_user_id) RETURNING id INTO v_event_id;
     INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id)
@@ -110,3 +111,135 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.edit_case_overview_section(jsonb) TO anon, authenticated, service_role;
+
+
+ALTER TABLE public.case_addresses
+  ADD COLUMN IF NOT EXISTS is_deleted boolean DEFAULT false NOT NULL,
+  ADD COLUMN IF NOT EXISTS deleted_at timestamp with time zone,
+  ADD COLUMN IF NOT EXISTS deleted_by_user_id bigint REFERENCES public.users(id),
+  ADD COLUMN IF NOT EXISTS delete_reason text;
+
+ALTER TABLE public.notes
+  ADD COLUMN IF NOT EXISTS is_deleted boolean DEFAULT false NOT NULL,
+  ADD COLUMN IF NOT EXISTS deleted_at timestamp with time zone,
+  ADD COLUMN IF NOT EXISTS deleted_by_user_id bigint REFERENCES public.users(id),
+  ADD COLUMN IF NOT EXISTS delete_reason text;
+
+CREATE OR REPLACE FUNCTION public.manage_case_places(p_payload jsonb)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_case_id bigint := (p_payload->>'caseId')::bigint;
+  v_action text := lower(btrim(p_payload->>'action'));
+  v_reason text := nullif(btrim(p_payload->>'reason'), '');
+  v_user_id bigint := nullif(p_payload->>'userId','')::bigint;
+  v_place jsonb := coalesce(p_payload->'place', '{}'::jsonb);
+  v_case_address_id bigint := nullif(v_place->>'id','')::bigint;
+  v_address_id bigint := nullif(v_place->>'addressId','')::bigint;
+  v_old jsonb;
+  v_new jsonb;
+BEGIN
+  IF v_case_id IS NULL THEN RAISE EXCEPTION 'caseId is required'; END IF;
+  IF v_action IS NULL THEN RAISE EXCEPTION 'action is required'; END IF;
+  IF v_reason IS NULL THEN RAISE EXCEPTION 'reason is required'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = v_case_id) THEN RAISE EXCEPTION 'Case % not found', v_case_id; END IF;
+
+  SELECT coalesce(jsonb_agg(to_jsonb(ca) || jsonb_build_object('address', to_jsonb(a), 'address_type', to_jsonb(at)) ORDER BY ca.id), '[]'::jsonb)
+  INTO v_old
+  FROM public.case_addresses ca
+  JOIN public.addresses a ON a.id = ca.address_id
+  LEFT JOIN public.address_types at ON at.id = ca.address_type_id
+  WHERE ca.case_id = v_case_id;
+
+  IF v_action IN ('add', 'edit') THEN
+    IF nullif(v_place->>'addressTypeId','') IS NULL THEN RAISE EXCEPTION 'addressTypeId is required'; END IF;
+    IF v_action = 'add' THEN
+      INSERT INTO public.addresses(line1,line2,barangay,city,province,region,zip_code,country,latitude,longitude)
+      VALUES (nullif(btrim(v_place->>'line1'),''), nullif(btrim(v_place->>'line2'),''), nullif(btrim(v_place->>'barangay'),''), nullif(btrim(v_place->>'city'),''), nullif(btrim(v_place->>'province'),''), nullif(btrim(v_place->>'region'),''), nullif(btrim(v_place->>'zipCode'),''), coalesce(nullif(btrim(v_place->>'country'),''), 'Philippines'), nullif(v_place->>'latitude','')::numeric, nullif(v_place->>'longitude','')::numeric)
+      RETURNING id INTO v_address_id;
+      INSERT INTO public.case_addresses(case_id,address_id,address_type_id,is_primary,remarks)
+      VALUES (v_case_id, v_address_id, (v_place->>'addressTypeId')::bigint, coalesce(nullif(v_place->>'isPrimary','')::boolean,false), nullif(btrim(v_place->>'remarks'),''));
+    ELSE
+      IF v_case_address_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
+      SELECT address_id INTO v_address_id FROM public.case_addresses WHERE id = v_case_address_id AND case_id = v_case_id;
+      IF v_address_id IS NULL THEN RAISE EXCEPTION 'Place % not found', v_case_address_id; END IF;
+      UPDATE public.addresses SET line1=nullif(btrim(v_place->>'line1'),''), line2=nullif(btrim(v_place->>'line2'),''), barangay=nullif(btrim(v_place->>'barangay'),''), city=nullif(btrim(v_place->>'city'),''), province=nullif(btrim(v_place->>'province'),''), region=nullif(btrim(v_place->>'region'),''), zip_code=nullif(btrim(v_place->>'zipCode'),''), country=coalesce(nullif(btrim(v_place->>'country'),''), 'Philippines'), latitude=nullif(v_place->>'latitude','')::numeric, longitude=nullif(v_place->>'longitude','')::numeric WHERE id = v_address_id;
+      UPDATE public.case_addresses SET address_type_id=(v_place->>'addressTypeId')::bigint, is_primary=coalesce(nullif(v_place->>'isPrimary','')::boolean,false), remarks=nullif(btrim(v_place->>'remarks'),'') WHERE id = v_case_address_id AND case_id = v_case_id;
+    END IF;
+  ELSIF v_action = 'remove' THEN
+    IF v_case_address_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
+    UPDATE public.case_addresses SET is_deleted = true, deleted_at = now(), deleted_by_user_id = v_user_id, delete_reason = v_reason WHERE id = v_case_address_id AND case_id = v_case_id;
+  ELSIF v_action = 'restore' THEN
+    IF v_case_address_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
+    UPDATE public.case_addresses SET is_deleted = false, deleted_at = NULL, deleted_by_user_id = NULL, delete_reason = NULL WHERE id = v_case_address_id AND case_id = v_case_id;
+  ELSE
+    RAISE EXCEPTION 'Unsupported places action %', v_action;
+  END IF;
+
+  SELECT coalesce(jsonb_agg(to_jsonb(ca) || jsonb_build_object('address', to_jsonb(a), 'address_type', to_jsonb(at)) ORDER BY ca.id), '[]'::jsonb)
+  INTO v_new
+  FROM public.case_addresses ca
+  JOIN public.addresses a ON a.id = ca.address_id
+  LEFT JOIN public.address_types at ON at.id = ca.address_type_id
+  WHERE ca.case_id = v_case_id;
+
+  INSERT INTO public.audit_logs(actor_user_id, action, entity_name, entity_id, case_id, summary, metadata, old_data, new_data)
+  VALUES (v_user_id, 'MANAGE_CASE_PLACES_' || upper(v_action), 'cases', v_case_id, v_case_id, 'Managed places of commission', jsonb_build_object('reason', v_reason, 'action', v_action), v_old, v_new);
+  RETURN v_case_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.manage_case_notes(p_payload jsonb)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_case_id bigint := (p_payload->>'caseId')::bigint;
+  v_action text := lower(btrim(p_payload->>'action'));
+  v_reason text := nullif(btrim(p_payload->>'reason'), '');
+  v_user_id bigint := nullif(p_payload->>'userId','')::bigint;
+  v_note jsonb := coalesce(p_payload->'note', '{}'::jsonb);
+  v_note_id bigint := nullif(v_note->>'id','')::bigint;
+  v_old jsonb;
+  v_new jsonb;
+BEGIN
+  IF v_case_id IS NULL THEN RAISE EXCEPTION 'caseId is required'; END IF;
+  IF v_action IS NULL THEN RAISE EXCEPTION 'action is required'; END IF;
+  IF v_reason IS NULL THEN RAISE EXCEPTION 'reason is required'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = v_case_id) THEN RAISE EXCEPTION 'Case % not found', v_case_id; END IF;
+
+  SELECT coalesce(jsonb_agg(to_jsonb(n) ORDER BY n.created_at DESC, n.id DESC), '[]'::jsonb) INTO v_old FROM public.notes n WHERE n.case_id = v_case_id;
+
+  IF v_action = 'add' THEN
+    IF nullif(btrim(v_note->>'noteText'),'') IS NULL THEN RAISE EXCEPTION 'noteText is required'; END IF;
+    INSERT INTO public.notes(case_id,created_by_user_id,note_text,is_private)
+    VALUES (v_case_id, v_user_id, nullif(btrim(v_note->>'noteText'),''), coalesce(nullif(v_note->>'isPrivate','')::boolean,false));
+  ELSIF v_action = 'edit' THEN
+    IF v_note_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
+    IF nullif(btrim(v_note->>'noteText'),'') IS NULL THEN RAISE EXCEPTION 'noteText is required'; END IF;
+    UPDATE public.notes SET note_text = nullif(btrim(v_note->>'noteText'),''), is_private = coalesce(nullif(v_note->>'isPrivate','')::boolean,false), updated_at = now() WHERE id = v_note_id AND case_id = v_case_id;
+  ELSIF v_action = 'remove' THEN
+    IF v_note_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
+    UPDATE public.notes SET is_deleted = true, deleted_at = now(), deleted_by_user_id = v_user_id, delete_reason = v_reason, updated_at = now() WHERE id = v_note_id AND case_id = v_case_id;
+  ELSIF v_action = 'restore' THEN
+    IF v_note_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
+    UPDATE public.notes SET is_deleted = false, deleted_at = NULL, deleted_by_user_id = NULL, delete_reason = NULL, updated_at = now() WHERE id = v_note_id AND case_id = v_case_id;
+  ELSE
+    RAISE EXCEPTION 'Unsupported notes action %', v_action;
+  END IF;
+
+  SELECT coalesce(jsonb_agg(to_jsonb(n) ORDER BY n.created_at DESC, n.id DESC), '[]'::jsonb) INTO v_new FROM public.notes n WHERE n.case_id = v_case_id;
+
+  INSERT INTO public.audit_logs(actor_user_id, action, entity_name, entity_id, case_id, summary, metadata, old_data, new_data)
+  VALUES (v_user_id, 'MANAGE_CASE_NOTES_' || upper(v_action), 'cases', v_case_id, v_case_id, 'Managed case notes', jsonb_build_object('reason', v_reason, 'action', v_action), v_old, v_new);
+  RETURN v_case_id;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.manage_case_places(jsonb) TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.manage_case_notes(jsonb) TO anon, authenticated, service_role;

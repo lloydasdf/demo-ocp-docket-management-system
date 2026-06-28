@@ -1325,6 +1325,210 @@ export async function editCaseOverviewSection(
   }
 }
 
+
+export type CasePlaceRecord = {
+  id: number;
+  case_id: number;
+  address_id: number;
+  address_type_id: number;
+  is_primary: boolean;
+  remarks: string | null;
+  created_at?: string | null;
+  is_deleted?: boolean | null;
+  deleted_at?: string | null;
+  deleted_by_user_id?: number | null;
+  delete_reason?: string | null;
+  addresses: {
+    id: number;
+    line1: string | null;
+    line2: string | null;
+    barangay: string | null;
+    city: string | null;
+    province: string | null;
+    region: string | null;
+    zip_code: string | null;
+    country: string | null;
+    latitude: number | string | null;
+    longitude: number | string | null;
+  } | null;
+  address_types: { id: number; display_label: string | null; code: string | null } | null;
+};
+
+export type ManageCasePlaceAction = "add" | "edit" | "remove" | "restore";
+
+export interface ManageCasePlacesInput {
+  caseId: number;
+  action: ManageCasePlaceAction;
+  reason: string;
+  place: Record<string, unknown>;
+}
+
+export type CaseNoteManagementRecord = {
+  id: number;
+  case_id: number;
+  created_by_user_id: number;
+  note_text: string;
+  is_private: boolean;
+  created_at: string;
+  updated_at: string;
+  is_deleted?: boolean | null;
+  deleted_at?: string | null;
+  deleted_by_user_id?: number | null;
+  delete_reason?: string | null;
+};
+
+export type ManageCaseNoteAction = "add" | "edit" | "remove" | "restore";
+
+export interface ManageCaseNotesInput {
+  caseId: number;
+  action: ManageCaseNoteAction;
+  reason: string;
+  note: Record<string, unknown>;
+}
+
+export type CaseOverviewChangeHistoryRecord = {
+  id: number;
+  action: string;
+  summary: string | null;
+  metadata: Json | null;
+  old_data: Json | null;
+  new_data: Json | null;
+  created_at: string;
+};
+
+export async function getCasePlaces(
+  caseId: number,
+  includeDeleted = false,
+): Promise<SupabaseQueryResult<CasePlaceRecord[]>> {
+  return runSupabaseQuery(
+    "getCasePlaces",
+    "case_addresses",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      let query = supabase
+        .from("case_addresses" as never)
+        .select("*, addresses(*), address_types(id,code,display_label)" as never)
+        .eq("case_id" as never, caseId)
+        .order("is_primary" as never, { ascending: false })
+        .order("id" as never, { ascending: true });
+
+      if (!includeDeleted) {
+        query = query.eq("is_deleted" as never, false);
+      }
+
+      return (await query) as unknown as {
+        data: CasePlaceRecord[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
+export async function manageCasePlaces(
+  input: ManageCasePlacesInput,
+): Promise<SupabaseQueryResult<number>> {
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "manageCasePlaces", "users"));
+    }
+
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("manage_case_places" as never, {
+      p_payload: {
+        caseId: input.caseId,
+        action: input.action,
+        reason: input.reason,
+        userId: currentUserQuery.data.id,
+        place: input.place,
+      },
+    } as never);
+
+    if (error) return fail(toQueryError(error, "manageCasePlaces", "cases"));
+    return ok(Number(data ?? input.caseId));
+  } catch (error) {
+    return fail(toQueryError(error, "manageCasePlaces", "cases"));
+  }
+}
+
+export async function getCaseManagedNotes(
+  caseId: number,
+  includeDeleted = false,
+): Promise<SupabaseQueryResult<CaseNoteManagementRecord[]>> {
+  return runSupabaseQuery(
+    "getCaseManagedNotes",
+    "notes",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      let query = supabase
+        .from("notes" as never)
+        .select("*" as never)
+        .eq("case_id" as never, caseId)
+        .order("created_at" as never, { ascending: false });
+
+      if (!includeDeleted) {
+        query = query.eq("is_deleted" as never, false);
+      }
+
+      return (await query) as unknown as {
+        data: CaseNoteManagementRecord[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
+export async function manageCaseNotes(
+  input: ManageCaseNotesInput,
+): Promise<SupabaseQueryResult<number>> {
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "manageCaseNotes", "users"));
+    }
+
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("manage_case_notes" as never, {
+      p_payload: {
+        caseId: input.caseId,
+        action: input.action,
+        reason: input.reason,
+        userId: currentUserQuery.data.id,
+        note: input.note,
+      },
+    } as never);
+
+    if (error) return fail(toQueryError(error, "manageCaseNotes", "cases"));
+    return ok(Number(data ?? input.caseId));
+  } catch (error) {
+    return fail(toQueryError(error, "manageCaseNotes", "cases"));
+  }
+}
+
+export async function getCaseOverviewChangeHistory(
+  caseId: number,
+): Promise<SupabaseQueryResult<CaseOverviewChangeHistoryRecord[]>> {
+  return runSupabaseQuery(
+    "getCaseOverviewChangeHistory",
+    "audit_logs",
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return (await supabase
+        .from("audit_logs" as never)
+        .select("id,action,summary,metadata,old_data,new_data,created_at" as never)
+        .eq("case_id" as never, caseId)
+        .or("action.like.EDIT_CASE_OVERVIEW%,action.like.MANAGE_CASE_PLACES%,action.like.MANAGE_CASE_NOTES%" as never)
+        .order("created_at" as never, { ascending: false })) as unknown as {
+        data: CaseOverviewChangeHistoryRecord[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
 export async function getCaseParticipantsForCases(
   caseIds: number[],
 ): Promise<SupabaseQueryResult<CaseParticipantRecord[]>> {
