@@ -193,20 +193,38 @@ function formatOrganizationDetails(details: unknown) {
     .join("; ");
 }
 
-function participantAliases(participant: CaseParticipantRecord) {
+function participantAliasNames(participant: CaseParticipantRecord) {
   const aliases =
     participant.participant_kind === "ORGANIZATION"
       ? participant.organizations?.organization_aliases
       : participant.persons?.person_aliases;
-  if (!Array.isArray(aliases)) return null;
+  if (!Array.isArray(aliases)) return [];
   const names = aliases
     .map((alias) =>
       typeof alias === "object" && alias && "alias_name" in alias
         ? String(alias.alias_name)
         : null,
     )
-    .filter(Boolean);
-  return names.length ? names.join(", ") : null;
+    .filter((name): name is string => Boolean(name));
+  return names;
+}
+
+function participantAliasBadges(participant: CaseParticipantRecord) {
+  const aliases = participantAliasNames(participant);
+
+  if (aliases.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {aliases.map((alias) => (
+        <Badge key={alias} variant="outline" className="text-xs font-normal">
+          @{alias}
+        </Badge>
+      ))}
+    </div>
+  );
 }
 
 function roleLabel(participant: CaseParticipantRecord) {
@@ -217,15 +235,24 @@ function roleLabel(participant: CaseParticipantRecord) {
   );
 }
 
-function formatPersonDemographics(participant: CaseParticipantRecord) {
-  const attributes = participant.case_participant_attributes;
-  const age = attributes?.age_text ?? attributes?.age_years;
-  const gender = attributes?.gender_text ?? attributes?.gender_normalized;
-  const parts = [age ? `Age at case: ${age}` : null, gender ?? null].filter(
-    (part): part is string => Boolean(part),
-  );
+function personBirthDateAndSex(participant: CaseParticipantRecord) {
+  const gender =
+    participant.case_participant_attributes?.gender_text ??
+    participant.case_participant_attributes?.gender_normalized ??
+    participant.persons?.gender;
+  const parts = [
+    participant.persons?.birth_date
+      ? formatDate(participant.persons.birth_date)
+      : null,
+    gender ?? null,
+  ].filter((part): part is string => Boolean(part));
 
-  return parts.join(" • ");
+  return parts.join(" | ");
+}
+
+function ageAtCase(participant: CaseParticipantRecord) {
+  const attributes = participant.case_participant_attributes;
+  return attributes?.age_text ?? attributes?.age_years ?? null;
 }
 
 function caseSpecificFlags(participant: CaseParticipantRecord) {
@@ -236,7 +263,25 @@ function caseSpecificFlags(participant: CaseParticipantRecord) {
     attributes?.is_pwd_at_case ? "PWD" : null,
   ].filter((flag): flag is string => Boolean(flag));
 
-  return flags.length > 0 ? flags.join(", ") : null;
+  return flags;
+}
+
+function caseFlagBadges(participant: CaseParticipantRecord) {
+  const flags = caseSpecificFlags(participant);
+
+  if (flags.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {flags.map((flag) => (
+        <Badge key={flag} variant="secondary" className="text-xs">
+          {flag}
+        </Badge>
+      ))}
+    </div>
+  );
 }
 
 function formatAddress(
@@ -668,8 +713,8 @@ export default function CaseDetailsPage() {
                                 key={participant.id}
                                 className="rounded-lg border p-4"
                               >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div>
+                                <div className="space-y-2">
+                                  <div className="flex flex-wrap items-center gap-2">
                                     {participantProfileHref(participant) ? (
                                       <Link
                                         href={participantProfileHref(participant) ?? "#"}
@@ -682,40 +727,17 @@ export default function CaseDetailsPage() {
                                         {participantName(participant)}
                                       </p>
                                     )}
-                                    {formatPersonDemographics(participant) ? (
-                                      <p className="text-sm text-muted-foreground">
-                                        {formatPersonDemographics(participant)}
-                                      </p>
-                                    ) : null}
+                                    {caseFlagBadges(participant)}
                                   </div>
+                                  {personBirthDateAndSex(participant) ? (
+                                    <p className="text-sm text-muted-foreground">
+                                      {personBirthDateAndSex(participant)}
+                                    </p>
+                                  ) : null}
+                                  {participantAliasBadges(participant)}
                                 </div>
                                 <Separator className="my-3" />
-                                <div className="grid gap-2 text-sm sm:grid-cols-2">
-                                  <DetailItem label="Role" value={role} />
-                                  <OptionalDetailItem
-                                    label="Contact information"
-                                    value={participantContacts(participant)}
-                                  />
-                                  <OptionalDetailItem
-                                    label="Birthdate"
-                                    value={
-                                      participant.persons?.birth_date
-                                        ? formatDate(
-                                            participant.persons.birth_date,
-                                          )
-                                        : null
-                                    }
-                                  />
-                                  <OptionalDetailItem
-                                    label="Organization details"
-                                    value={formatOrganizationDetails(
-                                      participant.organizations?.details_jsonb,
-                                    )}
-                                  />
-                                  <OptionalDetailItem
-                                    label="Aliases"
-                                    value={participantAliases(participant)}
-                                  />
+                                <div className="grid gap-4 text-sm sm:grid-cols-2">
                                   <OptionalDetailItem
                                     label="Addresses"
                                     value={
@@ -725,13 +747,28 @@ export default function CaseDetailsPage() {
                                     }
                                   />
                                   <OptionalDetailItem
-                                    label="Case flags"
-                                    value={caseSpecificFlags(participant)}
+                                    label="Contact information"
+                                    value={participantContacts(participant)}
                                   />
-                                  <OptionalDetailItem
-                                    label="Remarks"
-                                    value={participant.remarks}
-                                  />
+                                  <div className="space-y-2">
+                                    <OptionalDetailItem
+                                      label="Age at case"
+                                      value={ageAtCase(participant)}
+                                    />
+                                    <OptionalDetailItem
+                                      label="Remarks"
+                                      value={participant.remarks}
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <DetailItem label="Role" value={role} />
+                                    <OptionalDetailItem
+                                      label="Organization details"
+                                      value={formatOrganizationDetails(
+                                        participant.organizations?.details_jsonb,
+                                      )}
+                                    />
+                                  </div>
                                 </div>
                               </div>
                             ))}
