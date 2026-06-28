@@ -1,3 +1,14 @@
+ALTER TABLE public.case_assignments
+  ADD COLUMN IF NOT EXISTS is_voided boolean DEFAULT false NOT NULL,
+  ADD COLUMN IF NOT EXISTS voided_at timestamp with time zone,
+  ADD COLUMN IF NOT EXISTS voided_by_user_id bigint REFERENCES public.users(id),
+  ADD COLUMN IF NOT EXISTS void_reason text;
+
+DROP INDEX IF EXISTS public.one_active_assignment_per_case;
+CREATE UNIQUE INDEX IF NOT EXISTS one_active_assignment_per_case
+  ON public.case_assignments(case_id)
+  WHERE unassigned_at IS NULL AND is_voided IS FALSE;
+
 CREATE OR REPLACE FUNCTION public.edit_case_overview_section(p_payload jsonb)
 RETURNS bigint
 LANGUAGE plpgsql
@@ -95,11 +106,11 @@ BEGIN
     v_assignment_action := COALESCE(nullif(btrim(p_payload#>>'{data,assignmentMode}'),''), 'reassign');
     v_assigned_at := COALESCE(nullif(p_payload#>>'{data,assignedAt}','')::timestamptz, now());
     v_assignment_remarks := COALESCE(nullif(btrim(p_payload#>>'{data,remarks}'),''), v_reason);
-    IF v_prosecutor_id IS NULL THEN RAISE EXCEPTION 'prosecutorId is required'; END IF;
-    IF v_assignment_action NOT IN ('reassign', 'void_and_assign') THEN RAISE EXCEPTION 'Unsupported assignment mode %', v_assignment_action; END IF;
+    IF v_assignment_action <> 'void_only' AND v_prosecutor_id IS NULL THEN RAISE EXCEPTION 'prosecutorId is required'; END IF;
+    IF v_assignment_action NOT IN ('reassign', 'void_only', 'void_and_assign') THEN RAISE EXCEPTION 'Unsupported assignment mode %', v_assignment_action; END IF;
     SELECT id, prosecutor_id INTO v_old_assignment_id, v_old_prosecutor_id
     FROM public.case_assignments
-    WHERE case_id = v_case_id AND unassigned_at IS NULL
+    WHERE case_id = v_case_id AND unassigned_at IS NULL AND is_voided IS FALSE
     ORDER BY assigned_at DESC NULLS LAST, id DESC
     LIMIT 1;
     SELECT id INTO v_event_type_id
@@ -120,34 +131,50 @@ BEGIN
       RAISE EXCEPTION 'Missing case event type CASE_RAFFLED or CASE_ASSIGNED';
     END IF;
 
-    UPDATE public.case_assignments
-    SET unassigned_at = COALESCE(v_assigned_at, now()),
-        remarks = concat_ws(E'
-', remarks, CASE WHEN v_assignment_action = 'void_and_assign' THEN 'Void reason: ' || v_reason ELSE 'Reassigned/Void reason: ' || v_reason END)
-    WHERE case_id = v_case_id
-      AND unassigned_at IS NULL;
+    IF v_assignment_action = 'reassign' THEN
+      UPDATE public.case_assignments
+      SET unassigned_at = COALESCE(v_assigned_at, now()),
+          remarks = concat_ws(E'\n', remarks, 'Reassigned/Void reason: ' || v_reason)
+      WHERE case_id = v_case_id
+        AND unassigned_at IS NULL
+        AND is_voided IS FALSE;
+    ELSIF v_assignment_action IN ('void_only', 'void_and_assign') THEN
+      UPDATE public.case_assignments
+      SET is_voided = true,
+          voided_at = now(),
+          voided_by_user_id = v_user_id,
+          void_reason = v_reason,
+          remarks = concat_ws(E'\n', remarks, 'Void reason: ' || v_reason)
+      WHERE case_id = v_case_id
+        AND unassigned_at IS NULL
+        AND is_voided IS FALSE;
+    END IF;
 
-    INSERT INTO public.case_assignments(case_id,prosecutor_id,staff_id,assigned_by_user_id,assigned_at,remarks)
-    VALUES (v_case_id,v_prosecutor_id,v_staff_id,v_user_id,v_assigned_at,v_assignment_remarks) RETURNING id INTO v_assignment_id;
-    INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,prosecutor_id,staff_id,details_jsonb,source,source_table,source_id,created_by_user_id,updated_by_user_id)
-    VALUES (
-      v_case_id,
-      v_event_type_id,
-      v_assigned_at::date,
-      v_assigned_at::time,
-      CASE WHEN v_old_assignment_id IS NULL THEN 'Case assigned' ELSE 'Case reassigned' END,
-      v_assignment_remarks,
-      v_prosecutor_id,
-      v_staff_id,
-      jsonb_build_object('action', v_assignment_action, 'previous_assignment_id', v_old_assignment_id, 'previous_prosecutor_id', v_old_prosecutor_id, 'new_prosecutor_id', v_prosecutor_id, 'reason', v_reason),
-      'MANUAL_EDIT',
-      'case_assignments',
-      v_assignment_id,
-      v_user_id,
-      v_user_id
-    ) RETURNING id INTO v_event_id;
-    UPDATE public.case_assignments SET case_event_id = v_event_id WHERE id = v_assignment_id;
-    UPDATE public.cases SET updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_case_id;
+    IF v_assignment_action = 'void_only' THEN
+      UPDATE public.cases SET updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_case_id;
+    ELSE
+      INSERT INTO public.case_assignments(case_id,prosecutor_id,staff_id,assigned_by_user_id,assigned_at,remarks)
+      VALUES (v_case_id,v_prosecutor_id,v_staff_id,v_user_id,v_assigned_at,v_assignment_remarks) RETURNING id INTO v_assignment_id;
+      INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,prosecutor_id,staff_id,details_jsonb,source,source_table,source_id,created_by_user_id,updated_by_user_id)
+      VALUES (
+        v_case_id,
+        v_event_type_id,
+        v_assigned_at::date,
+        v_assigned_at::time,
+        CASE WHEN v_old_assignment_id IS NULL THEN 'Case assigned' ELSE 'Case reassigned' END,
+        v_assignment_remarks,
+        v_prosecutor_id,
+        v_staff_id,
+        jsonb_build_object('action', v_assignment_action, 'previous_assignment_id', v_old_assignment_id, 'previous_prosecutor_id', v_old_prosecutor_id, 'new_assignment_id', v_assignment_id, 'new_prosecutor_id', v_prosecutor_id, 'reason', v_reason),
+        'MANUAL_EDIT',
+        'case_assignments',
+        v_assignment_id,
+        v_user_id,
+        v_user_id
+      ) RETURNING id INTO v_event_id;
+      UPDATE public.case_assignments SET case_event_id = v_event_id WHERE id = v_assignment_id;
+      UPDATE public.cases SET updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_case_id;
+    END IF;
   ELSE
     RAISE EXCEPTION 'Editing section % is not implemented yet', v_section;
   END IF;
@@ -317,3 +344,103 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.manage_case_places(jsonb) TO anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.manage_case_notes(jsonb) TO anon, authenticated, service_role;
+
+
+-- Keep case overview assignment read model aligned with soft-voided assignments.
+CREATE OR REPLACE VIEW public.v_case_details_page AS
+ WITH latest_assignment AS (
+         SELECT DISTINCT ON (ca.case_id) ca.case_id,
+            ca.prosecutor_id,
+            ca.staff_id,
+            ca.assigned_at,
+            ca.id
+           FROM public.case_assignments ca
+          WHERE ca.unassigned_at IS NULL AND COALESCE(ca.is_voided, false) IS FALSE
+          ORDER BY ca.case_id, ca.assigned_at DESC NULLS LAST, ca.id DESC
+        ), violation_summary AS (
+         SELECT cv.case_id,
+            string_agg(COALESCE(NULLIF(btrim(cv.raw_violation_text), ''::text), v.title), ', '::text ORDER BY cv.violation_order, cv.id) AS violations
+           FROM (public.case_violations cv
+             LEFT JOIN public.violations v ON ((v.id = cv.violation_id)))
+          GROUP BY cv.case_id
+        ), note_summary AS (
+         SELECT n.case_id,
+            jsonb_agg(jsonb_build_object('id', n.id, 'note_text', n.note_text, 'is_private', n.is_private, 'created_by_user_id', n.created_by_user_id, 'created_at', n.created_at, 'updated_at', n.updated_at) ORDER BY n.created_at DESC, n.id DESC) AS notes
+           FROM public.notes n
+          GROUP BY n.case_id
+        ), case_address_summary AS (
+         SELECT ca.case_id,
+            jsonb_agg(jsonb_build_object('id', ca.id, 'address_id', ca.address_id, 'address_type_id', ca.address_type_id, 'address_type_label', at.display_label, 'is_primary', ca.is_primary, 'remarks', ca.remarks, 'addresses', jsonb_build_object('barangay', a.barangay, 'city', a.city, 'country', a.country, 'line1', a.line1, 'line2', a.line2, 'province', a.province, 'region', a.region, 'zip_code', a.zip_code)) ORDER BY ca.is_primary DESC, ca.id) AS case_addresses
+           FROM ((public.case_addresses ca
+             JOIN public.addresses a ON ((a.id = ca.address_id)))
+             LEFT JOIN public.address_types at ON ((at.id = ca.address_type_id)))
+          GROUP BY ca.case_id
+        )
+ SELECT c.id,
+    c.docket_type_id,
+    c.docket_year,
+    c.docket_number,
+    c.docket_month_code,
+    c.date_received,
+    c.created_by_user_id,
+    c.updated_by_user_id,
+    c.is_archived,
+    c.created_at,
+    c.updated_at,
+    c.region_code,
+    c.case_classification_id,
+    concat_ws('-'::text, c.region_code, dt.prefix, ("right"((c.docket_year)::text, 2) || COALESCE(c.docket_month_code, ''::text)), lpad((c.docket_number)::text, 6, '0'::text)) AS docket_display_number,
+    dt.prefix AS docket_type_prefix,
+    dt.name AS docket_type_name,
+    vs.violations,
+    cpd.source,
+    cpd.remarks,
+    cpd.legacy_source_file,
+    cpd.legacy_source_sheet,
+    cpd.legacy_row_number,
+    cpd.legacy_raw_json,
+    cpd.is_summary_procedure,
+    cpd.summary_text,
+    cpd.current_status_id,
+    cpd.current_status_date,
+    cpd.current_status_approved_date_raw,
+    cpd.current_status_approved_date_raw AS status_approved_date_raw,
+    NULL::date AS status_approved_date,
+    cpd.current_status_raw,
+    cpd.current_status_remarks,
+    cs.code AS current_status_code,
+    cs.display_label AS current_status_label,
+    la.prosecutor_id AS current_prosecutor_id,
+    p.short_name AS prosecutor_short_name,
+    p.full_name AS prosecutor_full_name,
+    la.staff_id AS current_staff_id,
+    st.short_name AS staff_short_name,
+    st.full_name AS staff_full_name,
+    la.assigned_at AS current_assigned_at,
+    NULL::text AS case_classification_code,
+    NULL::text AS case_classification_name,
+    cc.display_label AS case_classification_label,
+    cc.description AS case_classification_description,
+    NULL::text AS gdrive_folder_id,
+    NULL::text AS gdrive_folder_link,
+    NULL::text AS gdrive_folder_name,
+    NULL::text AS gdrive_folder_status,
+    NULL::timestamp with time zone AS gdrive_folder_last_scanned_at,
+    NULL::text AS court_codes,
+    NULL::text AS criminal_case_numbers,
+    NULL::boolean AS court_needs_review,
+    COALESCE(cas.case_addresses, '[]'::jsonb) AS case_addresses,
+    COALESCE(ns.notes, '[]'::jsonb) AS notes
+   FROM ((((((((((public.cases c
+     JOIN public.docket_types dt ON ((dt.id = c.docket_type_id)))
+     LEFT JOIN public.case_private_details cpd ON ((cpd.case_id = c.id)))
+     LEFT JOIN public.case_statuses cs ON ((cs.id = cpd.current_status_id)))
+     LEFT JOIN latest_assignment la ON ((la.case_id = c.id)))
+     LEFT JOIN public.prosecutors p ON ((p.id = la.prosecutor_id)))
+     LEFT JOIN public.staff st ON ((st.id = la.staff_id)))
+     LEFT JOIN public.case_classifications cc ON ((cc.id = c.case_classification_id)))
+     LEFT JOIN violation_summary vs ON ((vs.case_id = c.id)))
+     LEFT JOIN note_summary ns ON ((ns.case_id = c.id)))
+     LEFT JOIN case_address_summary cas ON ((cas.case_id = c.id)))
+  WHERE (NOT c.is_archived);
+
