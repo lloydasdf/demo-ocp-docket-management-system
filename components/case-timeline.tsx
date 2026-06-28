@@ -202,7 +202,7 @@ function visibleEventDetails(event: CaseTimelineEventRecord) {
   const hiddenKeys = event.event_type_code === "CASE_RECEIVED"
     ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
     : eventSourceTable(event) === "case_assignments"
-      ? new Set(["action", "previous_assignment_id", "new_assignment_id", "previous_prosecutor_id", "new_prosecutor_id", "previous_prosecutor_name", "new_prosecutor_name", "reason", "remarks"])
+      ? new Set(["action", "previous_assignment_id", "new_assignment_id", "previous_prosecutor_id", "new_prosecutor_id", "previous_prosecutor_name", "new_prosecutor_name", "voided_assignment_id", "voided_event_id", "reason", "remarks"])
       : isMotionForReconsideration(event)
         ? new Set(["status", "status_label", "prosecutor", "prosecutor_short_name", "court", "court_name"])
         : new Set<string>();
