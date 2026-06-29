@@ -983,6 +983,16 @@ export default function NewDocket() {
                     <Label htmlFor="region-code">Region</Label>
                     <Input id="region-code" value={regionCode} onChange={(event) => setRegionCode(event.target.value)} className="mt-1" />
                   </div>
+                  <div>
+                    <Label htmlFor="case-classification">Case Classification</Label>
+                    <Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}>
+                      <SelectTrigger id="case-classification" className="mt-1"><SelectValue placeholder="Select classification" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No classification</SelectItem>
+                        {lookups.caseClassifications.map((classification) => <SelectItem key={classification.id} value={classification.id.toString()}>{classification.display_label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="md:col-span-2">
                     <Label htmlFor="case-received-description">Case Received Description</Label>
                     <Textarea
@@ -1011,25 +1021,11 @@ export default function NewDocket() {
                   {violations.map((violation, index) => (
                     <div key={violation.id} className="space-y-3 rounded-lg border p-4">
                       <div className="flex items-start justify-between gap-4">
-                        <div className="grid flex-1 gap-3 md:grid-cols-2">
-                          <div>
-                            <Label className="text-xs">Violation *</Label>
-                            <Input value={violation.searchText} placeholder="Type a violation, law reference, or code" onChange={(event) => { updateViolation(violation.id, { searchText: event.target.value, existingViolationId: null, selectedExistingTitle: null, createNew: true, newViolationTitle: event.target.value }); loadViolationSuggestions(violation.id, event.target.value); }} className="mt-1" />
-                          </div>
-                          {index === 0 ? (
-                            <div>
-                              <Label htmlFor="case-classification">Case Classification</Label>
-                              <Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}>
-                                <SelectTrigger id="case-classification" className="mt-1"><SelectValue placeholder="Select classification" /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none">No classification</SelectItem>
-                                  {lookups.caseClassifications.map((classification) => <SelectItem key={classification.id} value={classification.id.toString()}>{classification.display_label}</SelectItem>)}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          ) : null}
+                        <div className="flex-1">
+                          <Label className="text-xs">Violation #{index + 1} *</Label>
+                          <Input value={violation.searchText} placeholder="Type a violation, law reference, or code" onChange={(event) => { updateViolation(violation.id, { searchText: event.target.value, existingViolationId: null, selectedExistingTitle: null, createNew: true, newViolationTitle: event.target.value }); loadViolationSuggestions(violation.id, event.target.value); }} className="mt-1" />
                         </div>
-                        <Button onClick={() => setViolations((current) => current.filter((item) => item.id !== violation.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
+                        <Button onClick={() => setViolations((current) => current.filter((item) => item.id !== violation.id))} variant="ghost" size="sm" className="mt-5 text-destructive"><X className="h-4 w-4" /></Button>
                       </div>
 
                       {violationSuggestions[violation.id]?.length ? (
@@ -1053,6 +1049,10 @@ export default function NewDocket() {
                 <Button onClick={addViolation} variant="outline" size="sm">
                   <Plus className="mr-2 h-4 w-4" /> Add another violation
                 </Button>
+              </div>
+
+              <div className="space-y-4 rounded-lg border p-4">
+                <h3 className="font-semibold">Procedure &amp; summary</h3>
 
                 <label className="flex items-center gap-2 text-sm font-medium">
                   <Checkbox id="summary-procedure" checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} />
@@ -1133,24 +1133,30 @@ export default function NewDocket() {
 
               <div className="space-y-4 rounded-lg border p-4">
                 <h3 className="font-semibold">Assignment</h3>
-                <div className="space-y-4">
-                  <div>
-                    <div className="flex items-center gap-2"><Checkbox id="case-also-raffled" checked={caseAlsoRaffled} onCheckedChange={(checked) => setCaseAlsoRaffled(checked === true)} /><Label htmlFor="case-also-raffled">Case also raffled</Label></div><Label htmlFor="assigned-prosecutor" className="mt-3 block">Prosecutor</Label>
-                    <Select value={assignedProsecutorId || 'none'} onValueChange={(value) => setAssignedProsecutorId(value === 'none' ? '' : value)} disabled={isLoadingLookups || !caseAlsoRaffled}>
-                      <SelectTrigger id="assigned-prosecutor" className="mt-1">
-                        <SelectValue placeholder="Select prosecutor" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">No prosecutor selected</SelectItem>
-                        {lookups.prosecutors.map((prosecutor) => (
-                          <SelectItem key={prosecutor.id} value={prosecutor.id.toString()}>
-                            {prosecutor.short_name ?? prosecutor.full_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {caseAlsoRaffled ? (
+
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <Checkbox id="case-also-raffled" checked={caseAlsoRaffled} onCheckedChange={(checked) => setCaseAlsoRaffled(checked === true)} />
+                  Case also raffled
+                </label>
+
+                {caseAlsoRaffled ? (
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <Label htmlFor="assigned-prosecutor">Prosecutor</Label>
+                      <Select value={assignedProsecutorId || 'none'} onValueChange={(value) => setAssignedProsecutorId(value === 'none' ? '' : value)} disabled={isLoadingLookups}>
+                        <SelectTrigger id="assigned-prosecutor" className="mt-1">
+                          <SelectValue placeholder="Select prosecutor" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No prosecutor selected</SelectItem>
+                          {lookups.prosecutors.map((prosecutor) => (
+                            <SelectItem key={prosecutor.id} value={prosecutor.id.toString()}>
+                              {prosecutor.short_name ?? prosecutor.full_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <div>
                       <Label htmlFor="assignment-remarks">Assignment remarks</Label>
                       <Input
@@ -1162,8 +1168,10 @@ export default function NewDocket() {
                       />
                       <p className="mt-1 text-xs text-muted-foreground">Leave blank to save no assignment remark. Assignment date defaults to the docket received date.</p>
                     </div>
-                  ) : null}
-                </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Enable &ldquo;Case also raffled&rdquo; to assign a prosecutor and add assignment remarks.</p>
+                )}
               </div>
 
               <div className="flex justify-end border-t pt-4">
@@ -1221,13 +1229,6 @@ export default function NewDocket() {
                         {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization preview: ${cleanString(person.organizationName) || 'Enter organization name'}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person preview: ${buildPersonFullName(person) || 'Enter at least one name component'}`)}
                       </p>
 
-
-                      <div className="space-y-3 rounded-md bg-muted/40 p-3">
-                        <div className="flex items-center justify-between"><Label className="text-xs">Contact numbers / email</Label><Button type="button" variant="outline" size="sm" onClick={() => addParticipantContact(person.id)}>+ Add Contact</Button></div>
-                        {(person.contactInformations ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No participant contacts added.</p> : null}
-                        {(person.contactInformations ?? []).map((contact) => <div key={contact.id} className="grid grid-cols-1 gap-2 rounded-md border bg-background p-3 md:grid-cols-[9rem_1fr_1fr_auto]"><div><Label className="text-xs">Type</Label><Select value={contact.contactType} onValueChange={(value) => updateParticipantContact(person.id, contact.id, { contactType: value as 'PHONE' | 'EMAIL' | 'OTHER' })}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PHONE">Phone</SelectItem><SelectItem value="EMAIL">Email</SelectItem><SelectItem value="OTHER">Other</SelectItem></SelectContent></Select></div><div><Label className="text-xs">Contact value</Label><Input value={contact.contactValue ?? ''} placeholder={contact.contactType === 'EMAIL' ? 'name@example.com' : 'Phone number'} onChange={(event) => updateParticipantContact(person.id, contact.id, { contactValue: event.target.value })} className="mt-1" /></div><div><Label className="text-xs">Label</Label><Input value={contact.label ?? ''} placeholder="Mobile, office, email" onChange={(event) => updateParticipantContact(person.id, contact.id, { label: event.target.value })} className="mt-1" /></div><Button type="button" variant="ghost" size="sm" className="self-end text-destructive" onClick={() => updatePerson(person.id, { contactInformations: (person.contactInformations ?? []).filter((item) => item.id !== contact.id) })}><X className="h-4 w-4" /></Button><label className="flex items-center gap-2 text-xs"><Checkbox checked={contact.isPrimary === true} onCheckedChange={(checked) => updateParticipantContact(person.id, contact.id, { isPrimary: checked === true })} /> Primary</label><div className="md:col-span-3"><Label className="text-xs">Remarks</Label><Input value={contact.remarks ?? ''} onChange={(event) => updateParticipantContact(person.id, contact.id, { remarks: event.target.value })} className="mt-1" /></div></div>)}
-                      </div>
-
                       {organizationSuggestions[person.id]?.length ? (
                         <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
                           <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing organization suggestions</p>
@@ -1253,6 +1254,12 @@ export default function NewDocket() {
                           </div>
                         </div>
                       ) : null}
+
+                      <div className="space-y-3 rounded-md bg-muted/40 p-3">
+                        <div className="flex items-center justify-between"><Label className="text-xs">Contact numbers / email</Label><Button type="button" variant="outline" size="sm" onClick={() => addParticipantContact(person.id)}>+ Add Contact</Button></div>
+                        {(person.contactInformations ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No participant contacts added.</p> : null}
+                        {(person.contactInformations ?? []).map((contact) => <div key={contact.id} className="grid grid-cols-1 gap-2 rounded-md border bg-background p-3 md:grid-cols-[9rem_1fr_1fr_auto]"><div><Label className="text-xs">Type</Label><Select value={contact.contactType} onValueChange={(value) => updateParticipantContact(person.id, contact.id, { contactType: value as 'PHONE' | 'EMAIL' | 'OTHER' })}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PHONE">Phone</SelectItem><SelectItem value="EMAIL">Email</SelectItem><SelectItem value="OTHER">Other</SelectItem></SelectContent></Select></div><div><Label className="text-xs">Contact value</Label><Input value={contact.contactValue ?? ''} placeholder={contact.contactType === 'EMAIL' ? 'name@example.com' : 'Phone number'} onChange={(event) => updateParticipantContact(person.id, contact.id, { contactValue: event.target.value })} className="mt-1" /></div><div><Label className="text-xs">Label</Label><Input value={contact.label ?? ''} placeholder="Mobile, office, email" onChange={(event) => updateParticipantContact(person.id, contact.id, { label: event.target.value })} className="mt-1" /></div><Button type="button" variant="ghost" size="sm" className="self-end text-destructive" onClick={() => updatePerson(person.id, { contactInformations: (person.contactInformations ?? []).filter((item) => item.id !== contact.id) })}><X className="h-4 w-4" /></Button><label className="flex items-center gap-2 text-xs"><Checkbox checked={contact.isPrimary === true} onCheckedChange={(checked) => updateParticipantContact(person.id, contact.id, { isPrimary: checked === true })} /> Primary</label><div className="md:col-span-3"><Label className="text-xs">Remarks</Label><Input value={contact.remarks ?? ''} onChange={(event) => updateParticipantContact(person.id, contact.id, { remarks: event.target.value })} className="mt-1" /></div></div>)}
+                      </div>
 
                       <div className="space-y-2 rounded-md bg-muted/40 p-3"><div className="flex items-center justify-between"><div><Label className="text-xs">Aliases</Label>{(person.existingAliases ?? []).length ? <p className="text-[11px] text-muted-foreground">Existing: {(person.existingAliases ?? []).map((alias) => alias.aliasName).filter(Boolean).join(', ')}</p> : null}</div><Button type="button" variant="outline" size="sm" onClick={() => updatePerson(person.id, { aliases: [...(person.aliases ?? []), { id: makeId('alias'), aliasName: '' }] })}>+ Add Alias</Button></div>{(person.aliases ?? []).map((alias) => <Input key={alias.id} placeholder="New alias name" value={alias.aliasName ?? ''} onChange={(event) => updatePerson(person.id, { aliases: (person.aliases ?? []).map((item) => item.id === alias.id ? { ...item, id: item.id ?? makeId('alias'), aliasName: event.target.value } : { ...item, id: item.id ?? makeId('alias') }) as AliasEntry[] })} />)}</div>
 
