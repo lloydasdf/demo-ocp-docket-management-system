@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertCircle, CheckCircle2, Loader2, Plus, Search, Settings2, X } from 'lucide-react';
+  import { AlertCircle, CheckCircle2, ClipboardList, FileText, Gavel, Loader2, MapPin, Plus, Search, Settings2, UserCog, Users, X } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -952,10 +952,12 @@ export default function NewDocket() {
                 </p>
               </div>
 
-              <div className="space-y-4 rounded-lg border p-4">
-                <h3 className="font-semibold">Docket information</h3>
-
-                <div className="grid gap-4 md:grid-cols-2">
+              <section className="overflow-hidden rounded-lg border">
+                <header className="flex items-center gap-2 border-b bg-muted/40 px-4 py-3">
+                  <FileText className="h-4 w-4 text-primary" />
+                  <h3 className="text-sm font-semibold uppercase tracking-wide">Docket information</h3>
+                </header>
+                <div className="grid gap-4 p-4 md:grid-cols-2">
                   <div>
                     <Label htmlFor="docket-type">Docket Type *</Label>
                     <Select value={docketTypeId} onValueChange={setDocketTypeId} disabled={isLoadingLookups}>
@@ -1012,12 +1014,19 @@ export default function NewDocket() {
                     <Textarea id="notes" placeholder="Optional case note stored in notes table" value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-1" />
                   </div>
                 </div>
-              </div>
+              </section>
 
-              <div className="space-y-4 rounded-lg border p-4">
-                <h3 className="font-semibold">Violations</h3>
-
-                <div className="space-y-3">
+              <section className="overflow-hidden rounded-lg border">
+                <header className="flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <Gavel className="h-4 w-4 text-primary" />
+                    <h3 className="text-sm font-semibold uppercase tracking-wide">Violations</h3>
+                  </div>
+                  <Button onClick={addViolation} variant="outline" size="sm">
+                    <Plus className="mr-2 h-4 w-4" /> Add violation
+                  </Button>
+                </header>
+                <div className="space-y-3 p-4">
                   {violations.map((violation, index) => (
                     <div key={violation.id} className="space-y-3 rounded-lg border p-4">
                       <div className="flex items-start justify-between gap-4">
@@ -1045,15 +1054,14 @@ export default function NewDocket() {
                     </div>
                   ))}
                 </div>
+              </section>
 
-                <Button onClick={addViolation} variant="outline" size="sm">
-                  <Plus className="mr-2 h-4 w-4" /> Add another violation
-                </Button>
-              </div>
-
-              <div className="space-y-4 rounded-lg border p-4">
-                <h3 className="font-semibold">Procedure &amp; summary</h3>
-
+              <section className="overflow-hidden rounded-lg border">
+                <header className="flex items-center gap-2 border-b bg-muted/40 px-4 py-3">
+                  <ClipboardList className="h-4 w-4 text-primary" />
+                  <h3 className="text-sm font-semibold uppercase tracking-wide">Procedure &amp; summary</h3>
+                </header>
+                <div className="space-y-4 p-4">
                 <label className="flex items-center gap-2 text-sm font-medium">
                   <Checkbox id="summary-procedure" checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} />
                   Summary procedure case
@@ -1070,17 +1078,20 @@ export default function NewDocket() {
                     <Textarea id="remarks" placeholder="Optional summary procedure remarks" value={remarks} onChange={(event) => setRemarks(event.target.value)} className="mt-1" />
                   </div>
                 </div>
-              </div>
+                </div>
+              </section>
 
-
-              <div className="space-y-4 rounded-lg border p-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold">Addresses (places of commission)</h3>
+              <section className="overflow-hidden rounded-lg border">
+                <header className="flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-primary" />
+                    <h3 className="text-sm font-semibold uppercase tracking-wide">Places of commission</h3>
+                  </div>
                   <Button onClick={addAddress} variant="outline" size="sm" disabled={!defaultAddressTypeId}>
-                    <Plus className="mr-2 h-4 w-4" /> Add Place
+                    <Plus className="mr-2 h-4 w-4" /> Add place
                   </Button>
-              </div>
-
+                </header>
+                <div className="space-y-4 p-4">
               {placesOfCommission.length === 0 ? (
                 <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No place of commission added yet</div>
               ) : (
@@ -1098,7 +1109,7 @@ export default function NewDocket() {
                       </div>
                       <div><Label className="text-xs">Search Existing Address</Label><Input value={placeOfCommission.suggestionQuery} placeholder="Type street, barangay, city, province, or region" onChange={(event) => { updateAddress(placeOfCommission.id, { suggestionQuery: event.target.value, existingAddressId: null }); loadAddressSuggestions(placeOfCommission.id, event.target.value); }} className="mt-1" /></div>
                     </div>
-                    <Button onClick={() => setPlacesOfCommission((current) => current.filter((address) => address.id !== placeOfCommission.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
+                    <Button onClick={() => setPlacesOfCommission((current) => current.filter((address) => address.id !== placeOfCommission.id))} variant="ghost" size="sm" className="mt-6 text-destructive"><X className="h-4 w-4" /></Button>
                   </div>
 
                   {addressSuggestions[placeOfCommission.id]?.length ? (
@@ -1128,12 +1139,15 @@ export default function NewDocket() {
                 </div>
                 ))
               )}
- 
-              </div>
+                </div>
+              </section>
 
-              <div className="space-y-4 rounded-lg border p-4">
-                <h3 className="font-semibold">Assignment</h3>
-
+              <section className="overflow-hidden rounded-lg border">
+                <header className="flex items-center gap-2 border-b bg-muted/40 px-4 py-3">
+                  <UserCog className="h-4 w-4 text-primary" />
+                  <h3 className="text-sm font-semibold uppercase tracking-wide">Assignment</h3>
+                </header>
+                <div className="space-y-4 p-4">
                 <label className="flex items-center gap-2 text-sm font-medium">
                   <Checkbox id="case-also-raffled" checked={caseAlsoRaffled} onCheckedChange={(checked) => setCaseAlsoRaffled(checked === true)} />
                   Case also raffled
@@ -1172,7 +1186,8 @@ export default function NewDocket() {
                 ) : (
                   <p className="text-xs text-muted-foreground">Enable &ldquo;Case also raffled&rdquo; to assign a prosecutor and add assignment remarks.</p>
                 )}
-              </div>
+                </div>
+              </section>
 
               <div className="flex justify-end border-t pt-4">
                 <Button onClick={() => setActiveTab('persons')}>Continue to Participants</Button>
@@ -1180,16 +1195,20 @@ export default function NewDocket() {
             </TabsContent>
 
             <TabsContent value="persons" className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold">Case Participants</h3>
-                  <p className="text-sm text-muted-foreground">Search existing persons while typing, or enter a new person.</p>
-                </div>
-                <Button onClick={addPerson} variant="outline" size="sm" disabled={!defaultRoleId}>
-                  <Plus className="mr-2 h-4 w-4" /> Add Participant
-                </Button>
-              </div>
-
+              <section className="overflow-hidden rounded-lg border">
+                <header className="flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-primary" />
+                    <div>
+                      <h3 className="text-sm font-semibold uppercase tracking-wide">Case participants</h3>
+                      <p className="text-xs font-normal normal-case text-muted-foreground">Search existing persons while typing, or enter a new one.</p>
+                    </div>
+                  </div>
+                  <Button onClick={addPerson} variant="outline" size="sm" disabled={!defaultRoleId}>
+                    <Plus className="mr-2 h-4 w-4" /> Add participant
+                  </Button>
+                </header>
+                <div className="space-y-4 p-4">
               {persons.length === 0 ? (
                 <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No participants added yet</div>
               ) : (
@@ -1222,7 +1241,7 @@ export default function NewDocket() {
                           {person.showOrganizationDetails ? <div className="space-y-3 rounded-md bg-muted/40 p-3 md:col-span-4"><div className="flex items-center justify-between gap-2"><div><Label className="text-xs">Custom organization details</Label><p className="text-[11px] text-muted-foreground">Add field titles and values. These are saved to organizations.details_jsonb.</p></div><Button type="button" variant="outline" size="sm" onClick={() => updatePerson(person.id, { organizationDetails: [...(person.organizationDetails ?? []), { id: makeId('organization-detail'), fieldTitle: '', fieldValue: '' }] })}>+ Add custom field</Button></div>{(person.organizationDetails ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No custom organization fields added.</p> : null}{(person.organizationDetails ?? []).map((detail) => <div key={detail.id} className="grid grid-cols-1 gap-2 rounded-md border bg-background p-3 md:grid-cols-[1fr_1fr_auto]"><div><Label className="text-xs">Field title</Label><Input value={detail.fieldTitle} placeholder="e.g. Accreditation" onChange={(event) => updatePerson(person.id, { organizationDetails: (person.organizationDetails ?? []).map((item) => item.id === detail.id ? { ...item, fieldTitle: event.target.value } : item) })} className="mt-1" /></div><div><Label className="text-xs">Field value</Label><Input value={detail.fieldValue} placeholder="e.g. ACC-12345" onChange={(event) => updatePerson(person.id, { organizationDetails: (person.organizationDetails ?? []).map((item) => item.id === detail.id ? { ...item, fieldValue: event.target.value } : item) })} className="mt-1" /></div><Button type="button" variant="ghost" size="sm" className="self-end text-destructive" onClick={() => updatePerson(person.id, { organizationDetails: (person.organizationDetails ?? []).filter((item) => item.id !== detail.id) })}><X className="h-4 w-4" /></Button></div>)}</div> : null}
                           </>}
                         </div>
-                        <Button onClick={() => setPersons((current) => current.filter((item) => item.id !== person.id))} variant="ghost" size="sm" className="text-destructive"><X className="h-4 w-4" /></Button>
+                        <Button onClick={() => setPersons((current) => current.filter((item) => item.id !== person.id))} variant="ghost" size="sm" className="mt-6 text-destructive"><X className="h-4 w-4" /></Button>
                       </div>
 
                       <p className="text-xs text-muted-foreground">
@@ -1293,6 +1312,8 @@ export default function NewDocket() {
                   ))}
                 </div>
               )}
+                </div>
+              </section>
 
               <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:justify-between">
                 <Button onClick={() => setActiveTab('case-info')} variant="outline">Back to Case</Button>
