@@ -905,17 +905,22 @@ export default function NewDocket() {
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-[824px] flex-col gap-4 p-3 pt-16 md:gap-6 md:p-8">
-      {isDevelopment ? (
-        <div>
-          <Button type="button" variant="outline" size="sm" onClick={fillTestData} disabled={isLoadingLookups || !defaultRoleId || !defaultAddressTypeId}>
-            Fill Test Data
-          </Button>
+    <div className="p-4 md:p-8">
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground">New Docket Entry</h1>
+            <p className="mt-1 text-muted-foreground">Register a new docket with its case details, participants, and violations.</p>
+          </div>
           {/* TODO: Remove debug Fill Test Data button before production hardening. */}
+          {isDevelopment ? (
+            <Button type="button" variant="outline" size="sm" onClick={fillTestData} disabled={isLoadingLookups || !defaultRoleId || !defaultAddressTypeId}>
+              Fill Test Data
+            </Button>
+          ) : null}
         </div>
-      ) : null}
 
-      {message && (
+        {message && (
         <Alert variant={message.type === 'error' ? 'destructive' : 'default'}>
           {message.type === 'error' ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
           <AlertTitle>{message.type === 'error' ? 'Unable to create docket' : 'Docket created'}</AlertTitle>
@@ -934,19 +939,21 @@ export default function NewDocket() {
         <CardContent className="p-4 sm:p-6">
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
             <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="case-info">Case</TabsTrigger>
-              <TabsTrigger value="persons">Participants</TabsTrigger>
-              <TabsTrigger value="review">Review</TabsTrigger>
+              <TabsTrigger value="case-info">1. Case</TabsTrigger>
+              <TabsTrigger value="persons">2. Participants</TabsTrigger>
+              <TabsTrigger value="review">3. Review</TabsTrigger>
             </TabsList>
 
             <TabsContent value="case-info" className="space-y-4">
-              <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
-                <div>
-                  <h3 className="font-semibold">Docket information</h3>
-                  <p className="mt-2 text-2xl font-bold tracking-tight text-primary">
-                    {isLoadingNextDocket ? 'Detecting next number…' : generatedDocketNumber}
-                  </p>
-                </div>
+              <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Generated docket number</p>
+                <p className="mt-1 text-2xl font-bold tracking-tight text-primary">
+                  {isLoadingNextDocket ? 'Detecting next number…' : generatedDocketNumber}
+                </p>
+              </div>
+
+              <div className="space-y-4 rounded-lg border p-4">
+                <h3 className="font-semibold">Docket information</h3>
 
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
@@ -1159,7 +1166,9 @@ export default function NewDocket() {
                 </div>
               </div>
 
-              <Button onClick={() => setActiveTab('persons')} className="mt-2">Continue to Participants</Button>
+              <div className="flex justify-end border-t pt-4">
+                <Button onClick={() => setActiveTab('persons')}>Continue to Participants</Button>
+              </div>
             </TabsContent>
 
             <TabsContent value="persons" className="space-y-4">
@@ -1278,13 +1287,16 @@ export default function NewDocket() {
                 </div>
               )}
 
-              <Button onClick={() => setActiveTab('review')} className="mt-2">Continue to Review</Button>
+              <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:justify-between">
+                <Button onClick={() => setActiveTab('case-info')} variant="outline">Back to Case</Button>
+                <Button onClick={() => setActiveTab('review')}>Continue to Review</Button>
+              </div>
             </TabsContent>
 
 
 
             <TabsContent value="review" className="space-y-4">
-              <Card className="mt-6 bg-muted/20">
+              <Card className="bg-muted/20">
                 <CardHeader>
                   <CardTitle className="text-base">Review before submission</CardTitle>
                   <CardDescription>Preview only: the official docket number is returned by the database after save.</CardDescription>
@@ -1298,20 +1310,19 @@ export default function NewDocket() {
                 </CardContent>
               </Card>
 
-              <div className="mt-6 flex gap-4">
-                <Button onClick={handleSubmit} className="flex-1" disabled={isSubmitting || isLoadingLookups || isLoadingNextDocket}>
+              <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:justify-between">
+                <Button onClick={() => setActiveTab('persons')} variant="outline">Back to Participants</Button>
+                <Button onClick={handleSubmit} className="sm:min-w-48" disabled={isSubmitting || isLoadingLookups || isLoadingNextDocket}>
                   {isSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   Submit Docket Entry
                 </Button>
-              </div>
-              <div className="flex gap-4">
-                <Button onClick={() => setActiveTab('persons')} variant="outline">Back to Participants</Button>
               </div>
             </TabsContent>
 
           </Tabs>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }
