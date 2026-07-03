@@ -11,6 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -58,6 +59,9 @@ type ExistingAliasEntry = { aliasName: string };
 type AddressEntry = NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null; existingRelation?: boolean };
 type CustomOrganizationDetailEntry = { id: string; fieldTitle: string; fieldValue: string };
 type ContactInformationEntry = { id: string; contactType: "PHONE" | "EMAIL" | "OTHER"; contactValue: string; label?: string | null; isPrimary?: boolean | null; remarks?: string | null };
+type ParticipantColumnRole = 'Complainant' | 'Respondent';
+type ParticipantDialogState = { role: ParticipantColumnRole; step: number; entry: PersonEntry } | null;
+type AddOnDialogState = { personId: string; kind: 'alias' | 'address' | 'contact'; step: number; alias: AliasEntry; address: AddressEntry; contact: ContactInformationEntry } | null;
 type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; aliases?: AliasEntry[]; existingAliases?: ExistingAliasEntry[]; addresses?: AddressEntry[]; organizationDetails?: CustomOrganizationDetailEntry[]; showOrganizationDetails?: boolean };
 type ViolationEntry = NewDocketViolationInput & { id: string; searchText: string; selectedExistingTitle?: string | null; createNew?: boolean; newViolationTitle?: string | null; referenceCode?: string | null; shortLabel?: string | null; description?: string | null; lawReference?: string | null };
 
@@ -73,6 +77,11 @@ const emptyLookups: LookupState = {
 
 const thisYear = new Date().getFullYear();
 const genderOptions = ['Female', 'Male', 'Other', 'Unspecified'];
+const personWorkflowSteps = ['Participant Type', 'First Name', 'Middle Name', 'Surname', 'Suffix', 'Role', 'Gender', 'Birthdate', 'Age', 'Case Flags', 'Remarks'];
+const organizationWorkflowSteps = ['Participant Type', 'Organization Name', 'Contact Person', 'Contact Number', 'Email', 'Custom Details', 'Role', 'Case Flags', 'Remarks'];
+const aliasWorkflowSteps = ['Alias Name', 'Remarks'];
+const addressWorkflowSteps = ['Address Type', 'Existing Address Search', 'Line 1', 'Line 2', 'Barangay', 'City', 'Province', 'Region', 'ZIP Code', 'Country', 'Primary', 'Remarks'];
+const contactWorkflowSteps = ['Contact Type', 'Contact Value', 'Label', 'Primary', 'Remarks'];
 const defaultRegionCode = 'IV-31';
 const defaultAddressRegionCode = 'IV-A';
 const isDevelopment = process.env.NODE_ENV !== 'production';
@@ -151,6 +160,22 @@ function buildPersonFullName(person: Pick<PersonEntry, 'firstName' | 'middleName
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+
+function buildLegalNamePreview(person: Pick<PersonEntry, 'firstName' | 'middleName' | 'lastName' | 'suffix' | 'noMiddleName'>) {
+  const surname = cleanString(person.lastName);
+  const given = [cleanString(person.firstName), person.noMiddleName ? 'NMN' : cleanString(person.middleName)].filter(Boolean).join(' ');
+  const suffix = cleanString(person.suffix);
+  const body = [given, suffix].filter(Boolean).join(' ');
+  if (surname && body) return `${surname}, ${body}`;
+  return surname || body || 'Unnamed person';
+}
+
+function getRoleIdByLabel(rows: TableRow<'participant_roles'>[], label: ParticipantColumnRole, fallback: string) {
+  const normalized = label.toLowerCase();
+  const match = rows.find((role) => [role.code, role.display_label].filter(Boolean).join(' ').toLowerCase().includes(normalized));
+  return match?.id.toString() ?? fallback;
 }
 
 function formatAddress(address: TableRow<'addresses'>) {
@@ -256,6 +281,8 @@ export default function NewDocket() {
   const [organizationSuggestions, setOrganizationSuggestions] = useState<Record<string, OrganizationDetailsSearchRow[]>>({});
   const [addressSuggestions, setAddressSuggestions] = useState<Record<string, TableRow<'addresses'>[]>>({});
   const [violationSuggestions, setViolationSuggestions] = useState<Record<string, TableRow<'violations'>[]>>({});
+  const [participantDialog, setParticipantDialog] = useState<ParticipantDialogState>(null);
+  const [addOnDialog, setAddOnDialog] = useState<AddOnDialogState>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -345,6 +372,8 @@ export default function NewDocket() {
   }, [docketTypeId, docketYear]);
 
   const defaultRoleId = useMemo(() => getFirstId(lookups.participantRoles), [lookups.participantRoles]);
+  const complainantRoleId = useMemo(() => getRoleIdByLabel(lookups.participantRoles, 'Complainant', defaultRoleId), [defaultRoleId, lookups.participantRoles]);
+  const respondentRoleId = useMemo(() => getRoleIdByLabel(lookups.participantRoles, 'Respondent', defaultRoleId), [defaultRoleId, lookups.participantRoles]);
   const defaultAddressTypeId = useMemo(() => getFirstId(lookups.addressTypes), [lookups.addressTypes]);
   const defaultCaseAddressTypeId = useMemo(
     () => getAddressTypeIdByKeywords(lookups.addressTypes, ['commission', 'incident', 'offense', 'offence']),
@@ -365,28 +394,33 @@ export default function NewDocket() {
   const docketMonthCode = getDocketMonthCode(dateReceived);
   const generatedDocketNumber = formatDocketNumber(selectedDocketType?.prefix, docketYear, nextDocketNumber, docketMonthCode === '—' ? null : docketMonthCode, regionCode);
 
-  const addPerson = () => {
-    setPersons((current) => [
-      ...current,
-      {
-        id: makeId('person'),
-        firstName: '',
-        middleName: '',
-        lastName: '',
-        suffix: '',
-        gender: 'Unspecified',
-        age: '',
-        birthDate: '',
-        roleId: toNumber(defaultRoleId),
-        participantOrder: current.length + 1,
-        remarks: '',
-        sourceDetail: '',
-        participantKind: 'PERSON',
-        aliases: [],
-        addresses: [],
-        contactInformations: [],
-      },
-    ]);
+  const makeEmptyParticipant = (role: ParticipantColumnRole): PersonEntry => ({
+    id: makeId(role.toLowerCase()),
+    firstName: '',
+    middleName: '',
+    lastName: '',
+    suffix: '',
+    gender: 'Unspecified',
+    age: '',
+    birthDate: '',
+    roleId: toNumber(role === 'Complainant' ? complainantRoleId : respondentRoleId),
+    participantOrder: persons.length + 1,
+    remarks: '',
+    sourceDetail: role,
+    participantKind: 'PERSON',
+    aliases: [],
+    addresses: [],
+    contactInformations: [],
+  });
+
+  const openParticipantDialog = (role: ParticipantColumnRole) => {
+    setParticipantDialog({ role, step: 0, entry: makeEmptyParticipant(role) });
+  };
+
+  const saveParticipantDialog = () => {
+    if (!participantDialog) return;
+    setPersons((current) => [...current, { ...participantDialog.entry, participantOrder: current.length + 1 }]);
+    setParticipantDialog(null);
   };
 
   const addAddress = () => {
@@ -904,6 +938,77 @@ export default function NewDocket() {
     router.push(`/cases/${result.data.caseId}`);
   };
 
+
+  const updateParticipantDraft = (updates: Partial<PersonEntry>) => {
+    setParticipantDialog((current) => current ? { ...current, entry: { ...current.entry, ...updates } } : current);
+  };
+
+  const participantSteps = participantDialog?.entry.participantKind === 'ORGANIZATION' ? organizationWorkflowSteps : personWorkflowSteps;
+  const isParticipantFinalStep = Boolean(participantDialog && participantDialog.step >= participantSteps.length - 1);
+  const participantsByColumn = (role: ParticipantColumnRole) => persons.filter((person) => person.sourceDetail === role || lookups.participantRoles.find((item) => item.id === person.roleId)?.display_label?.toLowerCase().includes(role.toLowerCase()));
+
+  const openAddOnDialog = (personId: string, kind: 'alias' | 'address' | 'contact') => {
+    setAddOnDialog({
+      personId,
+      kind,
+      step: 0,
+      alias: { id: makeId('alias'), aliasName: '' },
+      address: makeEmptyAddress(defaultPersonAddressTypeId, 'participant-address'),
+      contact: { id: makeId('contact'), contactType: 'PHONE', contactValue: '', label: '', isPrimary: false, remarks: '' },
+    });
+  };
+
+  const saveAddOnDialog = () => {
+    if (!addOnDialog) return;
+    setPersons((current) => current.map((person) => {
+      if (person.id !== addOnDialog.personId) return person;
+      if (addOnDialog.kind === 'alias') return { ...person, aliases: [...(person.aliases ?? []), addOnDialog.alias] };
+      if (addOnDialog.kind === 'address') return { ...person, addresses: [...(person.addresses ?? []), addOnDialog.address] };
+      return { ...person, contactInformations: [...(person.contactInformations ?? []), addOnDialog.contact] };
+    }));
+    setAddOnDialog(null);
+  };
+
+  const renderParticipantDraftField = () => {
+    if (!participantDialog) return null;
+    const entry = participantDialog.entry;
+    const stepName = participantSteps[participantDialog.step];
+    if (stepName === 'Participant Type') return <Select value={entry.participantKind ?? 'PERSON'} onValueChange={(value) => updateParticipantDraft({ participantKind: value as 'PERSON' | 'ORGANIZATION' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PERSON">Person</SelectItem><SelectItem value="ORGANIZATION">Organization</SelectItem></SelectContent></Select>;
+    if (stepName === 'First Name') return <Input value={entry.firstName ?? ''} onChange={(event) => updateParticipantDraft({ firstName: event.target.value })} placeholder="First name or skip" />;
+    if (stepName === 'Middle Name') return <div className="space-y-3"><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.noMiddleName === true} onCheckedChange={(checked) => updateParticipantDraft({ noMiddleName: checked === true, middleName: checked === true ? 'NMN' : '' })} /> NMN (No Middle Name)</label><Input value={entry.noMiddleName ? 'NMN' : (entry.middleName ?? '')} disabled={entry.noMiddleName === true} onChange={(event) => updateParticipantDraft({ middleName: event.target.value, noMiddleName: false })} placeholder="Middle name or skip" /></div>;
+    if (stepName === 'Surname') return <Input value={entry.lastName ?? ''} onChange={(event) => updateParticipantDraft({ lastName: event.target.value })} placeholder="Surname or skip" />;
+    if (stepName === 'Suffix') return <div className="space-y-3"><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.suffix === ''} onCheckedChange={(checked) => updateParticipantDraft({ suffix: checked === true ? '' : entry.suffix })} /> No Suffix</label><Input value={entry.suffix ?? ''} onChange={(event) => updateParticipantDraft({ suffix: event.target.value })} placeholder="Suffix or skip" /></div>;
+    if (stepName === 'Role') return <Select value={entry.roleId ? entry.roleId.toString() : ''} onValueChange={(value) => updateParticipantDraft({ roleId: toNumber(value) })}><SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger><SelectContent>{lookups.participantRoles.map((role) => <SelectItem key={role.id} value={role.id.toString()}>{role.display_label}</SelectItem>)}</SelectContent></Select>;
+    if (stepName === 'Gender') return <div className="flex flex-wrap gap-2">{genderOptions.map((gender) => <Button key={gender} type="button" variant={entry.gender === gender ? 'default' : 'outline'} onClick={() => updateParticipantDraft({ gender })}>{gender}</Button>)}</div>;
+    if (stepName === 'Birthdate') return <Input type="date" value={entry.birthDate ?? ''} onChange={(event) => updateParticipantDraft({ birthDate: event.target.value })} />;
+    if (stepName === 'Age') return <Input value={entry.age ?? ''} onChange={(event) => updateParticipantDraft({ age: event.target.value })} placeholder="Age or skip" />;
+    if (stepName === 'Case Flags') return <div className="flex flex-wrap gap-4"><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.attributes?.isMinorAtCase === true} onCheckedChange={(checked) => updateParticipantDraft({ attributes: { ...(entry.attributes ?? {}), isMinorAtCase: checked === true, minorText: checked === true ? 'YES' : null } })} /> Minor</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.attributes?.isSeniorAtCase === true} onCheckedChange={(checked) => updateParticipantDraft({ attributes: { ...(entry.attributes ?? {}), isSeniorAtCase: checked === true, seniorText: checked === true ? 'YES' : null } })} /> Senior</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.attributes?.isPwdAtCase === true} onCheckedChange={(checked) => updateParticipantDraft({ attributes: { ...(entry.attributes ?? {}), isPwdAtCase: checked === true, pwdText: checked === true ? 'YES' : null } })} /> PWD</label></div>;
+    if (stepName === 'Organization Name') return <Input value={entry.organizationName ?? ''} onChange={(event) => updateParticipantDraft({ organizationName: event.target.value })} placeholder="Organization name or skip" />;
+    if (stepName === 'Contact Person') return <Input value={entry.contactPerson ?? ''} onChange={(event) => updateParticipantDraft({ contactPerson: event.target.value })} placeholder="Contact person or skip" />;
+    if (stepName === 'Contact Number') return <Input value={entry.contactNumber ?? ''} onChange={(event) => updateParticipantDraft({ contactNumber: event.target.value })} placeholder="Contact number or skip" />;
+    if (stepName === 'Email') return <Input value={entry.email ?? ''} onChange={(event) => updateParticipantDraft({ email: event.target.value })} placeholder="Email or skip" />;
+    if (stepName === 'Custom Details') return <Textarea value={entry.organizationDetails?.[0]?.fieldValue ?? ''} onChange={(event) => updateParticipantDraft({ organizationDetails: [{ id: entry.organizationDetails?.[0]?.id ?? makeId('organization-detail'), fieldTitle: 'Details', fieldValue: event.target.value }] })} placeholder="Organization details or skip" />;
+    return <Textarea value={entry.remarks ?? ''} onChange={(event) => updateParticipantDraft({ remarks: event.target.value })} placeholder="Remarks or skip" />;
+  };
+
+  const renderAddOnField = () => {
+    if (!addOnDialog) return null;
+    const steps = addOnDialog.kind === 'alias' ? aliasWorkflowSteps : addOnDialog.kind === 'address' ? addressWorkflowSteps : contactWorkflowSteps;
+    const stepName = steps[addOnDialog.step];
+    const updateAddOn = (updates: Partial<AddOnDialogState>) => setAddOnDialog((current) => current ? { ...current, ...updates } as AddOnDialogState : current);
+    if (addOnDialog.kind === 'alias') return <Input value={addOnDialog.alias.aliasName} onChange={(event) => updateAddOn({ alias: { ...addOnDialog.alias, aliasName: event.target.value } })} placeholder="Alias or skip" />;
+    if (addOnDialog.kind === 'contact') {
+      if (stepName === 'Contact Type') return <Select value={addOnDialog.contact.contactType} onValueChange={(value) => updateAddOn({ contact: { ...addOnDialog.contact, contactType: value as 'PHONE' | 'EMAIL' | 'OTHER' } })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PHONE">Phone</SelectItem><SelectItem value="EMAIL">Email</SelectItem><SelectItem value="OTHER">Other</SelectItem></SelectContent></Select>;
+      if (stepName === 'Primary') return <label className="flex items-center gap-2 text-sm"><Checkbox checked={addOnDialog.contact.isPrimary === true} onCheckedChange={(checked) => updateAddOn({ contact: { ...addOnDialog.contact, isPrimary: checked === true } })} /> Primary contact</label>;
+      const key = stepName === 'Contact Value' ? 'contactValue' : stepName.toLowerCase() as 'label' | 'remarks';
+      return <Input value={(addOnDialog.contact as any)[key] ?? ''} onChange={(event) => updateAddOn({ contact: { ...addOnDialog.contact, [key]: event.target.value } })} placeholder={`${stepName} or skip`} />;
+    }
+    if (stepName === 'Address Type') return <Select value={addOnDialog.address.addressTypeId ? addOnDialog.address.addressTypeId.toString() : ''} onValueChange={(value) => updateAddOn({ address: { ...addOnDialog.address, addressTypeId: toNumber(value) } })}><SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger><SelectContent>{lookups.addressTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.display_label}</SelectItem>)}</SelectContent></Select>;
+    if (stepName === 'Primary') return <label className="flex items-center gap-2 text-sm"><Checkbox checked={addOnDialog.address.isPrimary === true} onCheckedChange={(checked) => updateAddOn({ address: { ...addOnDialog.address, isPrimary: checked === true } })} /> Primary address</label>;
+    const addressKey = stepName === 'Existing Address Search' ? 'suggestionQuery' : stepName === 'Line 1' ? 'line1' : stepName === 'Line 2' ? 'line2' : stepName === 'ZIP Code' ? 'zipCode' : stepName.toLowerCase() as keyof AddressEntry;
+    return <Input value={(addOnDialog.address as any)[addressKey] ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, [addressKey]: event.target.value } })} placeholder={`${stepName} or skip`} />;
+  };
+
   return (
     <div className="p-4 md:p-8">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
@@ -1196,132 +1301,76 @@ export default function NewDocket() {
 
             <TabsContent value="persons" className="space-y-4">
               <section className="overflow-hidden rounded-lg border">
-                <header className="flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-3">
+                <header className="border-b bg-muted/40 px-4 py-3">
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4 text-primary" />
                     <div>
                       <h3 className="text-sm font-semibold uppercase tracking-wide">Case participants</h3>
-                      <p className="text-xs font-normal normal-case text-muted-foreground">Search existing persons while typing, or enter a new one.</p>
+                      <p className="text-xs font-normal normal-case text-muted-foreground">Add participants through progressive dialogs. No participant fields appear directly on this tab.</p>
                     </div>
                   </div>
-                  <Button onClick={addPerson} variant="outline" size="sm" disabled={!defaultRoleId}>
-                    <Plus className="mr-2 h-4 w-4" /> Add participant
-                  </Button>
                 </header>
-                <div className="space-y-4 p-4">
-              {persons.length === 0 ? (
-                <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No participants added yet</div>
-              ) : (
-                <div className="space-y-4">
-                  {persons.map((person) => (
-                    <div key={person.id} className="space-y-3 rounded-lg border p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="grid flex-1 grid-cols-1 gap-3 md:grid-cols-4">
-                          <div><Label className="text-xs">Type</Label><Select value={person.participantKind ?? 'PERSON'} onValueChange={(value) => switchParticipantKind(person.id, value as 'PERSON' | 'ORGANIZATION')}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PERSON">Person</SelectItem><SelectItem value="ORGANIZATION">Organization</SelectItem></SelectContent></Select></div>
-                          {person.participantKind !== 'ORGANIZATION' ? <>
-                          <div><Label className="text-xs">First Name *</Label><Input value={person.firstName ?? ''} onChange={(event) => { updatePerson(person.id, clearSelectedPersonData(person, { firstName: event.target.value })); }} className="mt-1" /></div>
-                          <div>
-                            <div className="flex items-center justify-between gap-2">
-                              <Label className="text-xs">Middle Name</Label>
-                              <label className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                                <Checkbox checked={person.noMiddleName === true} onCheckedChange={(checked) => updatePerson(person.id, clearSelectedPersonData(person, { noMiddleName: checked === true, middleName: checked === true ? 'NMN' : '' }))} />
-                                No Middle Name
-                              </label>
+                <div className="grid gap-4 p-4 md:grid-cols-2">
+                  {(['Complainant', 'Respondent'] as ParticipantColumnRole[]).map((columnRole) => {
+                    const columnParticipants = participantsByColumn(columnRole);
+                    return (
+                      <div key={columnRole} className="space-y-3 rounded-lg border bg-muted/20 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div><h4 className="font-semibold">{columnRole}s</h4><p className="text-xs text-muted-foreground">{columnParticipants.length} added</p></div>
+                          <Button type="button" variant="outline" onClick={() => openParticipantDialog(columnRole)} disabled={!defaultRoleId}><Plus className="mr-2 h-4 w-4" /> Add {columnRole}</Button>
+                        </div>
+                        {columnParticipants.length === 0 ? <div className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">No {columnRole.toLowerCase()}s added yet</div> : null}
+                        <div className="space-y-3">
+                          {columnParticipants.map((person) => (
+                            <div key={person.id} className="rounded-md border bg-background p-3 shadow-sm">
+                              <div className="flex items-start justify-between gap-3">
+                                <div><p className="font-medium">{person.participantKind === 'ORGANIZATION' ? (cleanString(person.organizationName) || 'Unnamed organization') : buildLegalNamePreview(person)}</p><p className="text-xs text-muted-foreground">{person.participantKind === 'ORGANIZATION' ? 'Organization participant' : 'Person participant'}</p></div>
+                                <Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => setPersons((current) => current.filter((item) => item.id !== person.id))}><X className="h-4 w-4" /></Button>
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <Button type="button" variant="outline" size="sm" onClick={() => openAddOnDialog(person.id, 'alias')}>Add Alias</Button>
+                                <Button type="button" variant="outline" size="sm" onClick={() => openAddOnDialog(person.id, 'address')}>Add Address</Button>
+                                <Button type="button" variant="outline" size="sm" onClick={() => openAddOnDialog(person.id, 'contact')}>Add Contact Info</Button>
+                              </div>
+                              {(person.aliases?.length || person.addresses?.length || person.contactInformations?.length) ? <p className="mt-2 text-xs text-muted-foreground">{person.aliases?.length ?? 0} aliases · {person.addresses?.length ?? 0} addresses · {person.contactInformations?.length ?? 0} contacts</p> : null}
                             </div>
-                            <Input value={person.noMiddleName ? 'NMN' : (person.middleName ?? '')} disabled={person.noMiddleName === true} onChange={(event) => updatePerson(person.id, clearSelectedPersonData(person, { middleName: event.target.value, noMiddleName: false }))} className="mt-1" />
-                          </div>
-                          <div><Label className="text-xs">Last Name *</Label><Input value={person.lastName ?? ''} onChange={(event) => { updatePerson(person.id, clearSelectedPersonData(person, { lastName: event.target.value })); }} className="mt-1" /></div>
-                          <div><Label className="text-xs">Suffix</Label><Input value={person.suffix ?? ''} onChange={(event) => updatePerson(person.id, clearSelectedPersonData(person, { suffix: event.target.value }))} className="mt-1" /></div>
-                          </> : <>
-                          <div className="md:col-span-3"><Label className="text-xs">Organization Name *</Label><Input value={person.organizationName ?? ''} onChange={(event) => { updatePerson(person.id, clearSelectedOrganizationData({ organizationName: event.target.value })); }} className="mt-1" /></div>
-                          <div><Label className="text-xs">Contact Person</Label><Input value={person.contactPerson ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ contactPerson: event.target.value }) : { contactPerson: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Contact Number</Label><Input value={person.contactNumber ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ contactNumber: event.target.value }) : { contactNumber: event.target.value })} className="mt-1" /></div>
-                          <div><Label className="text-xs">Email</Label><Input value={person.email ?? ''} onChange={(event) => updatePerson(person.id, person.existingOrganizationId ? clearSelectedOrganizationData({ email: event.target.value }) : { email: event.target.value })} className="mt-1" /></div>
-                          <div className="md:col-span-4"><Button type="button" variant={person.showOrganizationDetails ? 'default' : 'outline'} size="sm" className="mt-1 w-full justify-start font-semibold" onClick={() => updatePerson(person.id, { showOrganizationDetails: !person.showOrganizationDetails, organizationDetails: person.organizationDetails?.length ? person.organizationDetails : [{ id: makeId('organization-detail'), fieldTitle: '', fieldValue: '' }] })}><Settings2 className="mr-2 h-4 w-4" /> Custom organization details</Button></div>
-                          {person.showOrganizationDetails ? <div className="space-y-3 rounded-md bg-muted/40 p-3 md:col-span-4"><div className="flex items-center justify-between gap-2"><div><Label className="text-xs">Custom organization details</Label><p className="text-[11px] text-muted-foreground">Add field titles and values. These are saved to organizations.details_jsonb.</p></div><Button type="button" variant="outline" size="sm" onClick={() => updatePerson(person.id, { organizationDetails: [...(person.organizationDetails ?? []), { id: makeId('organization-detail'), fieldTitle: '', fieldValue: '' }] })}>+ Add custom field</Button></div>{(person.organizationDetails ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No custom organization fields added.</p> : null}{(person.organizationDetails ?? []).map((detail) => <div key={detail.id} className="grid grid-cols-1 gap-2 rounded-md border bg-background p-3 md:grid-cols-[1fr_1fr_auto]"><div><Label className="text-xs">Field title</Label><Input value={detail.fieldTitle} placeholder="e.g. Accreditation" onChange={(event) => updatePerson(person.id, { organizationDetails: (person.organizationDetails ?? []).map((item) => item.id === detail.id ? { ...item, fieldTitle: event.target.value } : item) })} className="mt-1" /></div><div><Label className="text-xs">Field value</Label><Input value={detail.fieldValue} placeholder="e.g. ACC-12345" onChange={(event) => updatePerson(person.id, { organizationDetails: (person.organizationDetails ?? []).map((item) => item.id === detail.id ? { ...item, fieldValue: event.target.value } : item) })} className="mt-1" /></div><Button type="button" variant="ghost" size="sm" className="self-end text-destructive" onClick={() => updatePerson(person.id, { organizationDetails: (person.organizationDetails ?? []).filter((item) => item.id !== detail.id) })}><X className="h-4 w-4" /></Button></div>)}</div> : null}
-                          </>}
+                          ))}
                         </div>
-                        <Button onClick={() => setPersons((current) => current.filter((item) => item.id !== person.id))} variant="ghost" size="sm" className="mt-6 text-destructive"><X className="h-4 w-4" /></Button>
                       </div>
-
-                      <p className="text-xs text-muted-foreground">
-                        {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization preview: ${cleanString(person.organizationName) || 'Enter organization name'}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person preview: ${buildPersonFullName(person) || 'Enter at least one name component'}`)}
-                      </p>
-
-                      {organizationSuggestions[person.id]?.length ? (
-                        <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
-                          <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing organization suggestions</p>
-                          <div className="flex flex-wrap gap-2">
-                            {organizationSuggestions[person.id].map((suggestion) => (
-                              <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyOrganizationSuggestion(person.id, suggestion)}>
-                                {suggestion.organization_name}
-                              </Button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-
-                      {personSuggestions[person.id]?.length ? (
-                        <div className="rounded-md border bg-background p-2 text-sm shadow-sm">
-                          <p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing person suggestions</p>
-                          <div className="flex flex-wrap gap-2">
-                            {personSuggestions[person.id].map((suggestion) => (
-                              <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyPersonSuggestion(person.id, suggestion)}>
-                                {suggestion.full_name}
-                              </Button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-
-                      <div className="space-y-3 rounded-md bg-muted/40 p-3">
-                        <div className="flex items-center justify-between"><Label className="text-xs">Contact numbers / email</Label><Button type="button" variant="outline" size="sm" onClick={() => addParticipantContact(person.id)}>+ Add Contact</Button></div>
-                        {(person.contactInformations ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No participant contacts added.</p> : null}
-                        {(person.contactInformations ?? []).map((contact) => <div key={contact.id} className="grid grid-cols-1 gap-2 rounded-md border bg-background p-3 md:grid-cols-[9rem_1fr_1fr_auto]"><div><Label className="text-xs">Type</Label><Select value={contact.contactType} onValueChange={(value) => updateParticipantContact(person.id, contact.id, { contactType: value as 'PHONE' | 'EMAIL' | 'OTHER' })}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PHONE">Phone</SelectItem><SelectItem value="EMAIL">Email</SelectItem><SelectItem value="OTHER">Other</SelectItem></SelectContent></Select></div><div><Label className="text-xs">Contact value</Label><Input value={contact.contactValue ?? ''} placeholder={contact.contactType === 'EMAIL' ? 'name@example.com' : 'Phone number'} onChange={(event) => updateParticipantContact(person.id, contact.id, { contactValue: event.target.value })} className="mt-1" /></div><div><Label className="text-xs">Label</Label><Input value={contact.label ?? ''} placeholder="Mobile, office, email" onChange={(event) => updateParticipantContact(person.id, contact.id, { label: event.target.value })} className="mt-1" /></div><Button type="button" variant="ghost" size="sm" className="self-end text-destructive" onClick={() => updatePerson(person.id, { contactInformations: (person.contactInformations ?? []).filter((item) => item.id !== contact.id) })}><X className="h-4 w-4" /></Button><label className="flex items-center gap-2 text-xs"><Checkbox checked={contact.isPrimary === true} onCheckedChange={(checked) => updateParticipantContact(person.id, contact.id, { isPrimary: checked === true })} /> Primary</label><div className="md:col-span-3"><Label className="text-xs">Remarks</Label><Input value={contact.remarks ?? ''} onChange={(event) => updateParticipantContact(person.id, contact.id, { remarks: event.target.value })} className="mt-1" /></div></div>)}
-                      </div>
-
-                      <div className="space-y-2 rounded-md bg-muted/40 p-3"><div className="flex items-center justify-between"><div><Label className="text-xs">Aliases</Label>{(person.existingAliases ?? []).length ? <p className="text-[11px] text-muted-foreground">Existing: {(person.existingAliases ?? []).map((alias) => alias.aliasName).filter(Boolean).join(', ')}</p> : null}</div><Button type="button" variant="outline" size="sm" onClick={() => updatePerson(person.id, { aliases: [...(person.aliases ?? []), { id: makeId('alias'), aliasName: '' }] })}>+ Add Alias</Button></div>{(person.aliases ?? []).map((alias) => <Input key={alias.id} placeholder="New alias name" value={alias.aliasName ?? ''} onChange={(event) => updatePerson(person.id, { aliases: (person.aliases ?? []).map((item) => item.id === alias.id ? { ...item, id: item.id ?? makeId('alias'), aliasName: event.target.value } : { ...item, id: item.id ?? makeId('alias') }) as AliasEntry[] })} />)}</div>
-
-                      <div className="space-y-3 rounded-md bg-muted/40 p-3"><div className="flex items-center justify-between"><Label className="text-xs">{person.participantKind === 'ORGANIZATION' ? 'Organization Addresses' : 'Addresses'}</Label><Button type="button" variant="outline" size="sm" onClick={() => addParticipantAddress(person.id)}>+ Add Address</Button></div>{(person.addresses ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No participant addresses added.</p> : null}{(person.addresses ?? []).map((address) => <div key={address.id} className="space-y-2 rounded-md border bg-background p-3"><div className="flex items-start justify-between gap-3"><div className="grid flex-1 grid-cols-1 gap-2 md:grid-cols-[12rem_1fr]"><div><Label className="text-xs">Address Type</Label><Select value={address.addressTypeId ? address.addressTypeId.toString() : ''} onValueChange={(value) => updateParticipantAddress(person.id, address.id, { addressTypeId: toNumber(value), existingRelation: false })}><SelectTrigger className="mt-1"><SelectValue placeholder="Select type" /></SelectTrigger><SelectContent>{lookups.addressTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.display_label}</SelectItem>)}</SelectContent></Select></div><div><Label className="text-xs">Existing address or new address</Label><Input value={address.suggestionQuery ?? ''} placeholder="Search existing address" onChange={(event) => { updateParticipantAddress(person.id, address.id, { suggestionQuery: event.target.value, existingAddressId: null, existingRelation: false }); loadAddressSuggestions(address.id, event.target.value); }} className="mt-1" /></div></div><Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => updatePerson(person.id, { addresses: (person.addresses ?? []).filter((item) => item.id !== address.id) as AddressEntry[] })}><X className="h-4 w-4" /></Button></div>{addressSuggestions[address.id]?.length ? <div className="rounded-md border bg-background p-2 text-sm shadow-sm"><p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing address suggestions</p><div className="flex flex-wrap gap-2">{addressSuggestions[address.id].map((suggestion) => <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyParticipantAddressSuggestion(person.id, address.id, suggestion)}>{formatAddress(suggestion) || `Address #${suggestion.id}`}</Button>)}</div></div> : null}<div className="grid grid-cols-1 gap-2 md:grid-cols-4"><div><Label className="text-xs">Line 1</Label><Input value={address.line1 ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { line1: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Line 2</Label><Input value={address.line2 ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { line2: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Barangay</Label><Input value={address.barangay ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { barangay: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">City</Label><Input value={address.city ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { city: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Province</Label><Input value={address.province ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { province: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Region</Label><Input value={address.region ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { region: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">ZIP Code</Label><Input value={address.zipCode ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { zipCode: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><div><Label className="text-xs">Country</Label><Input value={address.country ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { country: event.target.value, existingAddressId: null, existingRelation: false })} className="mt-1" /></div><label className="flex items-center gap-2 text-xs"><Checkbox checked={address.isPrimary === true} onCheckedChange={(checked) => updateParticipantAddress(person.id, address.id, { isPrimary: checked === true })} /> Primary</label><div className="md:col-span-3"><Label className="text-xs">Remarks</Label><Input value={address.remarks ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { remarks: event.target.value })} className="mt-1" /></div></div></div>)}</div>
-
-                      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                        <div>
-                          <Label className="text-xs">Role *</Label>
-                          <Select value={person.roleId ? person.roleId.toString() : ''} onValueChange={(value) => updatePerson(person.id, { roleId: toNumber(value) })}>
-                            <SelectTrigger className="mt-1"><SelectValue placeholder="Select role" /></SelectTrigger>
-                            <SelectContent>{lookups.participantRoles.map((role) => <SelectItem key={role.id} value={role.id.toString()}>{role.display_label}</SelectItem>)}</SelectContent>
-                          </Select>
-                        </div>
-                        {person.participantKind !== 'ORGANIZATION' ? <>
-                        <div>
-                          <Label className="text-xs">Gender</Label>
-                          <Select value={person.gender ?? 'Unspecified'} onValueChange={(value) => updatePerson(person.id, { gender: value })}>
-                            <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                            <SelectContent>{genderOptions.map((gender) => <SelectItem key={gender} value={gender}>{gender}</SelectItem>)}</SelectContent>
-                          </Select>
-                        </div>
-                        <div><Label className="text-xs">Birth Date</Label><Input type="date" value={person.birthDate ?? ''} onChange={(event) => updatePerson(person.id, { birthDate: event.target.value })} className="mt-1" /></div>
-                        <div><Label className="text-xs">Age</Label><Input value={person.age ?? ''} onChange={(event) => updatePerson(person.id, { age: event.target.value })} className="mt-1" /></div>
-                        <label className="flex items-center gap-2 self-end text-xs"><Checkbox checked={person.attributes?.isMinorAtCase === true} onCheckedChange={(checked) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), isMinorAtCase: checked === true, minorText: checked === true ? 'YES' : null } })} /> Minor</label>
-                        <label className="flex items-center gap-2 self-end text-xs"><Checkbox checked={person.attributes?.isSeniorAtCase === true} onCheckedChange={(checked) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), isSeniorAtCase: checked === true, seniorText: checked === true ? 'YES' : null } })} /> Senior</label>
-                        <label className="flex items-center gap-2 self-end text-xs"><Checkbox checked={person.attributes?.isPwdAtCase === true} onCheckedChange={(checked) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), isPwdAtCase: checked === true, pwdText: checked === true ? 'YES' : null } })} /> PWD</label>
-                        </> : null}
-                        <div><Label className="text-xs">Remarks</Label><Input value={person.remarks ?? ''} onChange={(event) => updatePerson(person.id, { remarks: event.target.value })} className="mt-1" /></div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    );
+                  })}
                 </div>
               </section>
+
+              <Dialog open={Boolean(participantDialog)} onOpenChange={(open) => !open && setParticipantDialog(null)}>
+                <DialogContent>
+                  <DialogHeader><DialogTitle>Add {participantDialog?.role}</DialogTitle><DialogDescription>Step {(participantDialog?.step ?? 0) + 1} of {participantSteps.length}: {participantSteps[participantDialog?.step ?? 0]}. Nullable fields can be skipped.</DialogDescription></DialogHeader>
+                  <div className="space-y-2"><Label>{participantSteps[participantDialog?.step ?? 0]}</Label>{renderParticipantDraftField()}</div>
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setParticipantDialog(null)}>Cancel</Button>
+                    {participantDialog && participantDialog.step > 0 ? <Button type="button" variant="outline" onClick={() => setParticipantDialog((current) => current ? { ...current, step: current.step - 1 } : current)}>Back</Button> : null}
+                    {isParticipantFinalStep ? <Button type="button" onClick={saveParticipantDialog}>OK</Button> : <Button type="button" onClick={() => setParticipantDialog((current) => current ? { ...current, step: Math.min(current.step + 1, participantSteps.length - 1) } : current)}>Next / Skip</Button>}
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
+              <Dialog open={Boolean(addOnDialog)} onOpenChange={(open) => !open && setAddOnDialog(null)}>
+                <DialogContent>
+                  <DialogHeader><DialogTitle>Add {addOnDialog?.kind === 'alias' ? 'Alias' : addOnDialog?.kind === 'address' ? 'Address' : 'Contact Info'}</DialogTitle><DialogDescription>Progressive entry with one nullable field at a time.</DialogDescription></DialogHeader>
+                  <div className="space-y-2"><Label>{addOnDialog ? (addOnDialog.kind === 'alias' ? aliasWorkflowSteps : addOnDialog.kind === 'address' ? addressWorkflowSteps : contactWorkflowSteps)[addOnDialog.step] : ''}</Label>{renderAddOnField()}</div>
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setAddOnDialog(null)}>Cancel</Button>
+                    {addOnDialog && addOnDialog.step > 0 ? <Button type="button" variant="outline" onClick={() => setAddOnDialog((current) => current ? { ...current, step: current.step - 1 } : current)}>Back</Button> : null}
+                    {addOnDialog && addOnDialog.step >= (addOnDialog.kind === 'alias' ? aliasWorkflowSteps : addOnDialog.kind === 'address' ? addressWorkflowSteps : contactWorkflowSteps).length - 1 ? <Button type="button" onClick={saveAddOnDialog}>OK</Button> : <Button type="button" onClick={() => setAddOnDialog((current) => current ? { ...current, step: current.step + 1 } : current)}>Next / Skip</Button>}
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               <div className="flex flex-col-reverse gap-3 border-t pt-4 sm:flex-row sm:justify-between">
                 <Button onClick={() => setActiveTab('case-info')} variant="outline">Back to Case</Button>
                 <Button onClick={() => setActiveTab('review')}>Continue to Review</Button>
               </div>
             </TabsContent>
-
-
 
             <TabsContent value="review" className="space-y-4">
               <Card className="bg-muted/20">
