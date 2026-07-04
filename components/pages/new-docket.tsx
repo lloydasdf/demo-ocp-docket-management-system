@@ -474,6 +474,12 @@ export default function NewDocket() {
   }, [lookups.prosecutors, prosecutorSearch]);
   const docketMonthCode = getDocketMonthCode(dateReceived);
   const generatedDocketNumber = formatDocketNumber(selectedDocketType?.prefix, docketYear, nextDocketNumber, docketMonthCode === '—' ? null : docketMonthCode, regionCode);
+  const reviewDocketStamp = useMemo(() => {
+    const label = [selectedDocketType?.prefix, selectedDocketType?.name].filter(Boolean).join(' ').toLowerCase();
+    if (label.includes('inquest') || label.includes('inq')) return { text: 'INQUEST', className: 'border-red-600 text-red-600' };
+    if (label.includes('investigation') || label.includes('inv')) return { text: 'INVESTIGATION', className: 'border-blue-600 text-blue-600' };
+    return { text: selectedDocketType?.prefix || 'DOCKET', className: 'border-foreground text-foreground' };
+  }, [selectedDocketType]);
 
   const makeEmptyParticipant = (role: ParticipantColumnRole): PersonEntry => ({
     id: makeId(role.toLowerCase()),
@@ -1477,36 +1483,42 @@ export default function NewDocket() {
             <TabsContent value="review" className="space-y-4">
               <Card className="bg-background">
                 <CardContent className="space-y-6 p-6 text-sm">
-                  <div className="grid grid-cols-1 gap-x-12 gap-y-3 md:grid-cols-2">
-                    <p className="text-lg"><span className="font-medium">NPS DOCKET NO.</span> {generatedDocketNumber}</p>
-                    <p className="text-lg"><span className="font-medium">Assigned to:</span> <span className="inline-block min-w-48 border-b border-foreground px-2">{selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? ''}</span></p>
-                    <p className="text-base"><span className="font-medium">DATE RECEIVED:</span> {dateReceived}</p>
-                    <p className="text-base"><span className="font-medium">Date Assigned:</span> <span className="inline-block min-w-48 border-b border-foreground px-2">{assignedProsecutorId ? assignmentDate : ''}</span></p>
+                  <div className="grid grid-cols-1 gap-x-12 gap-y-4 md:grid-cols-2">
+                    <div className="space-y-3">
+                      <p className="font-serif text-2xl font-bold uppercase"><span>NPS DOCKET NO.</span> {generatedDocketNumber}</p>
+                      <p className="font-serif text-base"><span className="font-medium uppercase">DATE RECEIVED:</span> {dateReceived}</p>
+                    </div>
+                    <div className="space-y-3 font-serif text-base">
+                      <p><span className="font-medium">Assigned to:</span> {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? ''}</p>
+                      <p><span className="font-medium">Date Assigned:</span> {assignedProsecutorId ? assignmentDate : ''}</p>
+                    </div>
                   </div>
 
-                  {isSummaryProcedure ? <div className="space-y-2"><p>Falls Under Summary Procedure</p><p>Summary Remarks: {remarks || '____________________________'}</p></div> : null}
-                  <p>Case Classification: {selectedCaseClassification?.display_label ?? ''}</p>
+                  <div className="space-y-2 font-serif text-base">
+                    {isSummaryProcedure ? <><p className="flex items-center gap-2"><span className="inline-flex size-4 items-center justify-center border border-foreground text-[10px] leading-none">✓</span><span>Falls Under Summary Procedure</span></p><p>Summary Remarks: {remarks || '—'}</p></> : null}
+                    <p><span className="font-medium">Case Classification:</span> {selectedCaseClassification?.display_label ?? ''}</p>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <div className={`rotate-[-6deg] rounded-md border-4 px-6 py-2 text-2xl font-black uppercase tracking-widest ${reviewDocketStamp.className}`}>{reviewDocketStamp.text}</div>
+                  </div>
+
                   <div className="border-t-2 border-foreground" />
 
                   <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
                     <div className="space-y-2">
                       <h3 className="font-bold uppercase">COMPLAINANT/s:</h3>
-                      {participantsByColumn('Complainant').length ? participantsByColumn('Complainant').map((person) => <div key={person.id} className="leading-tight"><p className="font-serif text-base">{formatParticipantPreviewName(person)}</p>{person.participantKind === 'PERSON' ? <p>{[person.gender, person.age ? `Age ${person.age}` : null, formatBirthdatePreview(person.birthDate), formatParticipantFlags(person), cleanString(person.remarks)].filter(Boolean).join(' | ')}</p> : null}{(person.contactInformations ?? []).map((contact) => <p key={contact.id}>{contact.contactValue}</p>)}{(person.addresses ?? []).map((address, index) => <p key={address.id}>Address {index + 1}: {formatAddressLike(address) || address.selectedExistingLabel || ''}</p>)}</div>) : <div className="space-y-2">{Array.from({ length: 4 }).map((_, index) => <div key={index} className="border-b border-foreground">&nbsp;</div>)}</div>}
+                      {participantsByColumn('Complainant').map((person) => <div key={person.id} className="leading-tight"><p className="font-serif text-base">{formatParticipantPreviewName(person)}</p>{person.participantKind === 'PERSON' ? <p>{[person.gender, person.age ? `Age ${person.age}` : null, formatBirthdatePreview(person.birthDate), formatParticipantFlags(person), cleanString(person.remarks)].filter(Boolean).join(' | ')}</p> : null}{(person.contactInformations ?? []).map((contact) => <p key={contact.id}>{contact.contactValue}</p>)}{(person.addresses ?? []).map((address, index) => <p key={address.id}>Address {index + 1}: {formatAddressLike(address) || address.selectedExistingLabel || ''}</p>)}</div>)}
                     </div>
                     <div className="space-y-2">
                       <h3 className="font-bold uppercase">RESPONDENT/s:</h3>
-                      {participantsByColumn('Respondent').length ? participantsByColumn('Respondent').map((person) => <div key={person.id} className="leading-tight"><p className="font-serif text-base">{formatParticipantPreviewName(person)}</p>{person.participantKind === 'PERSON' ? <p>{[person.gender, person.age ? `Age ${person.age}` : null, formatBirthdatePreview(person.birthDate), formatParticipantFlags(person), cleanString(person.remarks)].filter(Boolean).join(' | ')}</p> : null}{(person.contactInformations ?? []).map((contact) => <p key={contact.id}>{contact.contactValue}</p>)}{(person.addresses ?? []).map((address, index) => <p key={address.id}>Address {index + 1}: {formatAddressLike(address) || address.selectedExistingLabel || ''}</p>)}</div>) : <div className="space-y-2">{Array.from({ length: 4 }).map((_, index) => <div key={index} className="border-b border-foreground">&nbsp;</div>)}</div>}
+                      {participantsByColumn('Respondent').map((person) => <div key={person.id} className="leading-tight"><p className="font-serif text-base">{formatParticipantPreviewName(person)}</p>{person.participantKind === 'PERSON' ? <p>{[person.gender, person.age ? `Age ${person.age}` : null, formatBirthdatePreview(person.birthDate), formatParticipantFlags(person), cleanString(person.remarks)].filter(Boolean).join(' | ')}</p> : null}{(person.contactInformations ?? []).map((contact) => <p key={contact.id}>{contact.contactValue}</p>)}{(person.addresses ?? []).map((address, index) => <p key={address.id}>Address {index + 1}: {formatAddressLike(address) || address.selectedExistingLabel || ''}</p>)}</div>)}
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
-                    <div className="space-y-2"><h3 className="font-bold uppercase">VIOLATIONS/s:</h3>{violations.length ? violations.map((violation) => <p key={violation.id} className="border-b border-foreground">{violation.existingViolationId ? violation.selectedExistingTitle : (violation.newViolationTitle || violation.searchText || 'Untitled')}</p>) : Array.from({ length: 4 }).map((_, index) => <div key={index} className="border-b border-foreground">&nbsp;</div>)}</div>
-                    <div className="space-y-2"><h3 className="font-bold uppercase">WITNESS/es:</h3>{Array.from({ length: 4 }).map((_, index) => <div key={index} className="border-b border-foreground">&nbsp;</div>)}</div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
-                    <div className="space-y-2"><h3 className="font-bold uppercase">DATE &amp; TIME of COMMISSION:</h3>{Array.from({ length: 2 }).map((_, index) => <div key={index} className="border-b border-foreground">&nbsp;</div>)}</div>
-                    <div className="space-y-2"><h3 className="font-bold uppercase">PLACE of COMMISION:</h3>{placesOfCommission.length ? placesOfCommission.map((place) => <p key={place.id} className="border-b border-foreground">{formatAddressLike(place) || place.selectedExistingLabel || ''}</p>) : Array.from({ length: 2 }).map((_, index) => <div key={index} className="border-b border-foreground">&nbsp;</div>)}</div>
+                    <div className="space-y-2"><h3 className="font-bold uppercase">VIOLATIONS/s:</h3>{violations.map((violation) => <p key={violation.id} className="font-serif text-base">{violation.existingViolationId ? violation.selectedExistingTitle : (violation.newViolationTitle || violation.searchText || 'Untitled')}</p>)}</div>
+                    <div className="space-y-2"><h3 className="font-bold uppercase">PLACE of COMMISSION:</h3>{placesOfCommission.map((place) => <p key={place.id} className="font-serif text-base">{formatAddressLike(place) || place.selectedExistingLabel || ''}</p>)}</div>
                   </div>
                 </CardContent>
               </Card>
