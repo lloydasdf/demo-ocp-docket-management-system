@@ -55,7 +55,7 @@ type MessageState =
   | { type: 'error'; text: string }
   | null;
 
-type AliasEntry = { id: string; aliasName: string };
+type AliasEntry = { id: string; aliasName: string; remarks?: string | null };
 type ExistingAliasEntry = { aliasName: string };
 type AddressEntry = NewDocketAddressInput & { id: string; suggestionQuery: string; selectedExistingLabel?: string | null; existingRelation?: boolean };
 type CustomOrganizationDetailEntry = { id: string; fieldTitle: string; fieldValue: string };
@@ -924,7 +924,7 @@ export default function NewDocket() {
       participants: persons.map(({ id: _id, selectedExistingName: _selectedExistingName, selectedExistingOrganizationName: _selectedExistingOrganizationName, fullNamePreview: _fullNamePreview, age, gender, aliases, addresses: participantAddresses, contactInformations, ...person }, index) => ({
         ...person,
         participantOrder: person.participantOrder ?? index + 1,
-        aliases: aliases?.map(({ id: _aliasId, ...alias }) => alias),
+        aliases: aliases?.map((alias: any) => ({ aliasName: alias.aliasName })),
         contactInformations: contactInformations?.map(({ id: _contactId, ...contact }) => contact).filter((contact) => cleanString(contact.contactValue)),
         addresses: participantAddresses?.map(({ id: _addressId, suggestionQuery: _sq, selectedExistingLabel: _sel, ...address }) => ({ ...address, newAddress: address.existingAddressId ? undefined : { line1: address.line1, line2: address.line2, barangay: address.barangay, city: address.city, province: address.province, region: address.region, zipCode: address.zipCode, country: address.country } })),
         newOrganization: person.participantKind === 'ORGANIZATION' && !person.existingOrganizationId ? { organizationName: person.organizationName, contactPerson: person.contactPerson, contactNumber: person.contactNumber, email: person.email, detailsJsonb: buildOrganizationDetailsJson(person.organizationDetails).value } : undefined,
@@ -1003,7 +1003,7 @@ export default function NewDocket() {
       personId,
       kind,
       step: 0,
-      alias: { id: makeId('alias'), aliasName: '' },
+      alias: { id: makeId('alias'), aliasName: '', remarks: '' },
       address: makeEmptyAddress(defaultPersonAddressTypeId, 'participant-address'),
       contact: { id: makeId('contact'), contactType: 'PHONE', contactValue: '', label: '', isPrimary: false, remarks: '' },
     });
@@ -1047,7 +1047,7 @@ export default function NewDocket() {
     const steps = addOnDialog.kind === 'alias' ? aliasWorkflowSteps : addOnDialog.kind === 'address' ? addressWorkflowSteps : contactWorkflowSteps;
     const stepName = steps[addOnDialog.step];
     const updateAddOn = (updates: Partial<AddOnDialogState>) => setAddOnDialog((current) => current ? { ...current, ...updates } as AddOnDialogState : current);
-    if (addOnDialog.kind === 'alias') return <Input value={addOnDialog.alias.aliasName} onChange={(event) => updateAddOn({ alias: { ...addOnDialog.alias, aliasName: event.target.value } })} placeholder="Alias or skip" />;
+    if (addOnDialog.kind === 'alias') return stepName === 'Alias Name' ? <Input value={addOnDialog.alias.aliasName} onChange={(event) => updateAddOn({ alias: { ...addOnDialog.alias, aliasName: event.target.value } })} placeholder="Alias or skip" /> : <Input value={addOnDialog.alias.remarks ?? ''} onChange={(event) => updateAddOn({ alias: { ...addOnDialog.alias, remarks: event.target.value } })} placeholder="Remarks or skip" />;
     if (addOnDialog.kind === 'contact') {
       if (stepName === 'Contact Type') return <Select value={addOnDialog.contact.contactType} onValueChange={(value) => updateAddOn({ contact: { ...addOnDialog.contact, contactType: value as 'PHONE' | 'EMAIL' | 'OTHER' } })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PHONE">Phone</SelectItem><SelectItem value="EMAIL">Email</SelectItem><SelectItem value="OTHER">Other</SelectItem></SelectContent></Select>;
       if (stepName === 'Primary') return <label className="flex items-center gap-2 text-sm"><Checkbox checked={addOnDialog.contact.isPrimary === true} onCheckedChange={(checked) => updateAddOn({ contact: { ...addOnDialog.contact, isPrimary: checked === true } })} /> Primary contact</label>;
@@ -1158,6 +1158,34 @@ export default function NewDocket() {
   };
 
   const caseModalTitle = caseModal?.kind === 'docket' ? 'Docket Information' : caseModal?.kind === 'violation' ? 'Violation' : caseModal?.kind === 'procedure' ? 'Procedure and Case Classification' : caseModal?.kind === 'place' ? 'Place of Commission' : 'Assignment';
+
+
+  const shouldAdvanceDialogOnEnter = (event: React.KeyboardEvent) => {
+    const target = event.target as HTMLElement;
+    return event.key === 'Enter' && target.tagName !== 'TEXTAREA';
+  };
+
+  const handleParticipantDialogEnter = (event: React.KeyboardEvent) => {
+    if (!shouldAdvanceDialogOnEnter(event)) return;
+    event.preventDefault();
+    if (isParticipantFinalStep) saveParticipantDialog();
+    else setParticipantDialog((current) => current ? { ...current, step: Math.min(current.step + 1, participantSteps.length - 1) } : current);
+  };
+
+  const handleAddOnDialogEnter = (event: React.KeyboardEvent) => {
+    if (!shouldAdvanceDialogOnEnter(event) || !addOnDialog) return;
+    event.preventDefault();
+    const steps = addOnDialog.kind === 'alias' ? aliasWorkflowSteps : addOnDialog.kind === 'address' ? addressWorkflowSteps : contactWorkflowSteps;
+    if (addOnDialog.step >= steps.length - 1) saveAddOnDialog();
+    else setAddOnDialog((current) => current ? { ...current, step: current.step + 1 } : current);
+  };
+
+  const handleCaseModalEnter = (event: React.KeyboardEvent) => {
+    if (!shouldAdvanceDialogOnEnter(event) || !caseModal) return;
+    event.preventDefault();
+    if (isCaseModalFinalStep) saveCaseModal();
+    else setCaseModal((current) => current ? { ...current, step: Math.min(current.step + 1, caseModalSteps.length - 1) } : current);
+  };
 
   return (
     <div className="p-4 md:p-8">
@@ -1285,7 +1313,7 @@ export default function NewDocket() {
               )}
 
               <Dialog open={Boolean(caseModal)} onOpenChange={(open) => !open && setCaseModal(null)}>
-                <DialogContent>
+                <DialogContent onKeyDown={handleCaseModalEnter}>
                   <DialogHeader><DialogTitle>{caseModalTitle}</DialogTitle><DialogDescription>{caseModal?.kind === 'docket' ? 'Choose a docket type first. Date received and docket year appear after selection.' : `Step ${(caseModal?.step ?? 0) + 1} of ${caseModalSteps.length}: ${caseModalSteps[caseModal?.step ?? 0]}. Nullable fields can be skipped.`}</DialogDescription></DialogHeader>
                   <div className="space-y-2"><Label>{caseModalSteps[caseModal?.step ?? 0]}</Label>{renderCaseModalField()}</div>
                   <DialogFooter>
@@ -1330,9 +1358,9 @@ export default function NewDocket() {
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0 flex-1 space-y-1">
                                   <p className="break-words font-medium">{formatParticipantPreviewName(person)}</p>
-                                  {person.participantKind === 'PERSON' ? <p className="text-xs text-muted-foreground">{[person.gender, person.age ? `Age ${person.age}` : null, formatBirthdatePreview(person.birthDate), formatParticipantFlags(person)].filter(Boolean).join(' | ')}</p> : <p className="text-xs text-muted-foreground">{[person.contactPerson, person.email, person.contactNumber].filter(Boolean).join(' | ') || 'Organization participant'}</p>}
-                                  {(person.contactInformations ?? []).length ? <div className="text-xs text-muted-foreground">{(person.contactInformations ?? []).map((contact) => <p key={contact.id}>{[contact.label, contact.contactValue].filter(Boolean).join(': ') || contact.contactType}</p>)}</div> : null}
-                                  {(person.addresses ?? []).length ? <div className="text-xs text-muted-foreground">{(person.addresses ?? []).map((address, index) => <p key={address.id}>Address {index + 1}: {formatAddressLike(address) || address.selectedExistingLabel || 'Unspecified address'}</p>)}</div> : null}
+                                  {person.participantKind === 'PERSON' ? <p className="text-xs text-muted-foreground">{[person.gender, person.age ? `Age ${person.age}` : null, formatBirthdatePreview(person.birthDate), formatParticipantFlags(person), cleanString(person.remarks)].filter(Boolean).join(' | ')}</p> : <p className="text-xs text-muted-foreground">{[person.contactPerson, person.email, person.contactNumber].filter(Boolean).join(' | ') || 'Organization participant'}</p>}
+                                  {(person.contactInformations ?? []).length ? <div className="text-xs text-muted-foreground">{(person.contactInformations ?? []).map((contact) => <p key={contact.id}>{[[contact.label, contact.contactValue].filter(Boolean).join(': ') || contact.contactType, contact.remarks ? `Remarks: ${contact.remarks}` : null].filter(Boolean).join(' | ')}</p>)}</div> : null}
+                                  {(person.addresses ?? []).length ? <div className="text-xs text-muted-foreground">{(person.addresses ?? []).map((address, index) => <p key={address.id}>Address {index + 1}: {[formatAddressLike(address) || address.selectedExistingLabel || 'Unspecified address', address.remarks ? `Remarks: ${address.remarks}` : null].filter(Boolean).join(' | ')}</p>)}</div> : null}
                                 </div>
                                 <div className="flex shrink-0 items-center gap-1">
                                   <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="sm"><Settings2 className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => setParticipantEditDialog({ personId: person.id, mode: 'attributes' })}>{person.participantKind === 'ORGANIZATION' ? 'Edit organization attributes' : 'Edit person attributes'}</DropdownMenuItem><DropdownMenuItem onClick={() => setParticipantEditDialog({ personId: person.id, mode: 'addresses' })}>Edit address</DropdownMenuItem><DropdownMenuItem onClick={() => setParticipantEditDialog({ personId: person.id, mode: 'contacts' })}>Edit contact info</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
@@ -1354,7 +1382,7 @@ export default function NewDocket() {
               </section>
 
               <Dialog open={Boolean(participantDialog)} onOpenChange={(open) => !open && setParticipantDialog(null)}>
-                <DialogContent>
+                <DialogContent onKeyDown={handleParticipantDialogEnter}>
                   <DialogHeader><DialogTitle>Add {participantDialog?.role}</DialogTitle><DialogDescription>Step {(participantDialog?.step ?? 0) + 1} of {participantSteps.length}: {participantSteps[participantDialog?.step ?? 0]}. Nullable fields can be skipped.</DialogDescription></DialogHeader>
                   <div className="space-y-2"><Label>{participantSteps[participantDialog?.step ?? 0]}</Label>{renderParticipantDraftField()}</div>
                   <DialogFooter>
@@ -1366,7 +1394,7 @@ export default function NewDocket() {
               </Dialog>
 
               <Dialog open={Boolean(addOnDialog)} onOpenChange={(open) => !open && setAddOnDialog(null)}>
-                <DialogContent>
+                <DialogContent onKeyDown={handleAddOnDialogEnter}>
                   <DialogHeader><DialogTitle>Add {addOnDialog?.kind === 'alias' ? 'Alias' : addOnDialog?.kind === 'address' ? 'Address' : 'Contact Info'}</DialogTitle><DialogDescription>Progressive entry with one nullable field at a time.</DialogDescription></DialogHeader>
                   <div className="space-y-2"><Label>{addOnDialog ? (addOnDialog.kind === 'alias' ? aliasWorkflowSteps : addOnDialog.kind === 'address' ? addressWorkflowSteps : contactWorkflowSteps)[addOnDialog.step] : ''}</Label>{renderAddOnField()}</div>
                   <DialogFooter>
