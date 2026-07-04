@@ -1230,7 +1230,7 @@ export default function NewDocket() {
 
   return (
     <div className="p-4 md:p-8">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+      <div className="flex w-full flex-col gap-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-foreground">New Docket Entry</h1>
@@ -1279,7 +1279,7 @@ export default function NewDocket() {
                 </section>
               ) : (
                 <>
-                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                  <div className="px-1">
                     <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Generated docket number</p>
                     <p className="mt-1 text-2xl font-bold tracking-tight text-primary">
                       {isLoadingNextDocket ? 'Detecting next number…' : generatedDocketNumber}
