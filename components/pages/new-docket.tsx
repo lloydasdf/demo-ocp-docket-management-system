@@ -1230,7 +1230,7 @@ export default function NewDocket() {
 
   return (
     <div className="p-4 md:p-8">
-      <div className="flex w-full flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-foreground">New Docket Entry</h1>
@@ -1293,7 +1293,7 @@ export default function NewDocket() {
                     </header>
                     <div className="p-4 text-sm">
                       <div className="rounded-lg border p-4">
-                        <div className="grid gap-2 md:grid-cols-2">
+                        <div className="grid max-w-2xl gap-x-8 gap-y-2 md:grid-cols-2">
                           <p><strong>Docket type:</strong> {selectedDocketType ? `${selectedDocketType.prefix} — ${selectedDocketType.name}` : '—'}</p>
                           <p><strong>Docket year:</strong> {docketYear || '—'}</p>
                           <p><strong>Date received:</strong> {dateReceived || '—'}</p>
