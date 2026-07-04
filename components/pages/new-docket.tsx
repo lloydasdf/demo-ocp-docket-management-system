@@ -119,7 +119,6 @@ const placeWorkflowSteps = ['Address Type', 'Address Details'];
 const assignmentWorkflowSteps = ['Assignment Details'];
 const defaultRegionCode = 'IV-31';
 const defaultAddressRegionCode = 'IV-A';
-const isDevelopment = process.env.NODE_ENV !== 'production';
 
 function makeId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -670,6 +669,11 @@ export default function NewDocket() {
 
   const resetForm = () => {
     window.localStorage.removeItem(newDocketDraftStorageKey);
+    setMessage(null);
+    setParticipantDialog(null);
+    setAddOnDialog(null);
+    setCaseModal(null);
+    setParticipantEditDialog(null);
     setDocketTypeId('');
     setDocketYear(String(thisYear));
     setDateReceived(new Date().toISOString().slice(0, 10));
@@ -679,6 +683,7 @@ export default function NewDocket() {
     setSummaryText('');
     setRemarks('');
     setNotes('');
+    setInitialStatusId(getReceivedStatusId(lookups.statuses));
     setCaseClassificationId('');
     setCaseClassificationSearch('');
     setProsecutorSearch('');
@@ -695,100 +700,6 @@ export default function NewDocket() {
     setOrganizationSuggestions({});
     setAddressSuggestions({});
     setViolationSuggestions({});
-    setActiveTab('case-info');
-  };
-
-  const fillTestData = () => {
-    const unique = crypto.randomUUID().slice(0, 8);
-    const roleId = toNumber(defaultRoleId);
-    const caseAddressTypeId = toNumber(defaultCaseAddressTypeId);
-    const personAddressTypeId = toNumber(defaultPersonAddressTypeId);
-    const prosecutor = lookups.prosecutors[0];
-
-    setCaseClassificationId(lookups.caseClassifications[0]?.id?.toString() ?? '');
-    setSummaryText(`Test summary ${unique}`);
-    setRemarks(`Test remarks ${unique}`);
-    setNotes(`Test notes ${unique}`);
-    setCaseAlsoRaffled(Boolean(prosecutor));
-    setIsDocketInformationSaved(true);
-    setAssignedProsecutorId(prosecutor?.id?.toString() ?? '');
-
-    setPersons([
-      {
-        id: makeId('person'),
-        participantKind: 'PERSON',
-        roleId,
-        participantOrder: 1,
-        firstName: `Juan${unique}`,
-        middleName: 'Dela',
-        lastName: `Cruz${unique}`,
-        suffix: '',
-        gender: 'Male',
-        age: '17',
-        birthDate: '',
-        remarks: `Person remarks ${unique}`,
-        aliases: [{ id: makeId('alias'), aliasName: `Person Alias ${unique}` }],
-        existingAliases: [],
-        addresses: [{
-          ...makeEmptyAddress(defaultPersonAddressTypeId, 'participant-address'),
-          addressTypeId: personAddressTypeId,
-          line1: `Person Address ${unique}`,
-          barangay: 'Sample Barangay',
-          city: 'General Trias',
-          province: 'Cavite',
-          region: defaultAddressRegionCode,
-          country: 'Philippines',
-          isPrimary: true,
-        }],
-        attributes: {
-          ageText: '17',
-          ageYears: 17,
-          genderText: 'Male',
-          genderNormalized: 'MALE',
-          minorText: 'YES',
-          isMinorAtCase: true,
-          seniorText: 'NO',
-          isSeniorAtCase: false,
-          pwdText: 'YES',
-          isPwdAtCase: true,
-        },
-      },
-      {
-        id: makeId('organization'),
-        participantKind: 'ORGANIZATION',
-        roleId,
-        participantOrder: 2,
-        organizationName: `Test Organization ${unique}`,
-        contactPerson: `Contact ${unique}`,
-        contactNumber: '09170000000',
-        email: `org-${unique}@example.test`,
-        showOrganizationDetails: true,
-        organizationDetails: [
-          { id: makeId('organization-detail'), fieldTitle: 'Accreditation', fieldValue: `ACC-${unique}` },
-          { id: makeId('organization-detail'), fieldTitle: 'Office Hours', fieldValue: 'Monday-Friday 8:00 AM-5:00 PM' },
-          { id: makeId('organization-detail'), fieldTitle: 'Intake Desk', fieldValue: `Desk ${unique}` },
-        ],
-        remarks: `Organization remarks ${unique}`,
-        aliases: [{ id: makeId('alias'), aliasName: `Org Alias ${unique}` }],
-        existingAliases: [],
-        addresses: [],
-      },
-    ]);
-
-    setPlacesOfCommission([{
-      ...makeEmptyAddress(defaultCaseAddressTypeId, 'place'),
-      addressTypeId: caseAddressTypeId,
-      line1: `Place of Commission ${unique}`,
-      barangay: 'Sample Barangay',
-      city: 'General Trias',
-      province: 'Cavite',
-      region: defaultAddressRegionCode,
-      country: 'Philippines',
-      isPrimary: true,
-      remarks: `Place remarks ${unique}`,
-    }]);
-
-    setViolations([{ id: makeId('violation'), existingViolationId: null, violationOrder: 1, rawViolationText: '', searchText: `Test Violation ${unique}`, createNew: true, newViolationTitle: `Test Violation ${unique}` }]);
     setActiveTab('case-info');
   };
 
@@ -1364,12 +1275,9 @@ export default function NewDocket() {
             <h1 className="text-3xl font-bold text-foreground">New Docket Entry</h1>
             <p className="mt-1 text-muted-foreground">Register a new docket with its case details, participants, and violations.</p>
           </div>
-          {/* TODO: Remove debug Fill Test Data button before production hardening. */}
-          {isDevelopment ? (
-            <Button type="button" variant="outline" size="sm" onClick={fillTestData} disabled={isLoadingLookups || !defaultRoleId || !defaultAddressTypeId}>
-              Fill Test Data
-            </Button>
-          ) : null}
+          <Button type="button" variant="outline" size="sm" onClick={resetForm}>
+            Clear All Fields
+          </Button>
         </div>
 
         {message && (
