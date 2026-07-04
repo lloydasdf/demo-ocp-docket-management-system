@@ -78,6 +78,33 @@ const emptyLookups: LookupState = {
   prosecutors: [],
 };
 
+
+const newDocketDraftStorageKey = 'ocp:new-docket-entry:draft:v1';
+
+type NewDocketDraftState = {
+  activeTab: string;
+  docketTypeId: string;
+  docketYear: string;
+  dateReceived: string;
+  caseReceivedDescription: string;
+  isCaseReceivedDescriptionEdited: boolean;
+  initialStatusId: string;
+  caseClassificationId: string;
+  caseAlsoRaffled: boolean;
+  assignedProsecutorId: string;
+  assignmentRemarks: string;
+  assignmentDate: string;
+  isDocketInformationSaved: boolean;
+  regionCode: string;
+  summaryText: string;
+  remarks: string;
+  notes: string;
+  isSummaryProcedure: boolean;
+  persons: PersonEntry[];
+  placesOfCommission: AddressEntry[];
+  violations: ViolationEntry[];
+};
+
 const thisYear = new Date().getFullYear();
 const genderOptions = ['Female', 'Male', 'Other', 'Unspecified'];
 const personWorkflowSteps = ['Participant Type', 'First Name', 'Middle Name', 'Surname', 'Suffix', 'Gender', 'Birthdate', 'Age', 'Case Flags', 'Role', 'Remarks'];
@@ -272,6 +299,7 @@ export default function NewDocket() {
   const [isLoadingLookups, setIsLoadingLookups] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<MessageState>(null);
+  const [isDraftHydrated, setIsDraftHydrated] = useState(false);
 
   const [docketTypeId, setDocketTypeId] = useState('');
   const [docketYear, setDocketYear] = useState(String(thisYear));
@@ -355,6 +383,76 @@ export default function NewDocket() {
     assignedProsecutorId,
     docketTypeId,
   ]);
+
+  useEffect(() => {
+    try {
+      const savedDraft = window.localStorage.getItem(newDocketDraftStorageKey);
+      if (savedDraft) {
+        const draft = JSON.parse(savedDraft) as Partial<NewDocketDraftState>;
+        const fallbackDate = new Date().toISOString().slice(0, 10);
+
+        setActiveTab(draft.activeTab || 'case-info');
+        setDocketTypeId(draft.docketTypeId || '');
+        setDocketYear(draft.docketYear || String(thisYear));
+        setDateReceived(draft.dateReceived || fallbackDate);
+        setCaseReceivedDescription(draft.caseReceivedDescription || formatCaseReceivedDefaultDescription(draft.dateReceived || fallbackDate));
+        setIsCaseReceivedDescriptionEdited(Boolean(draft.isCaseReceivedDescriptionEdited));
+        setInitialStatusId(draft.initialStatusId || '');
+        setCaseClassificationId(draft.caseClassificationId || '');
+        setCaseAlsoRaffled(Boolean(draft.caseAlsoRaffled));
+        setAssignedProsecutorId(draft.assignedProsecutorId || '');
+        setAssignmentRemarks(draft.assignmentRemarks || '');
+        setAssignmentDate(draft.assignmentDate || fallbackDate);
+        setIsDocketInformationSaved(Boolean(draft.isDocketInformationSaved));
+        setRegionCode(draft.regionCode || defaultRegionCode);
+        setSummaryText(draft.summaryText || '');
+        setRemarks(draft.remarks || '');
+        setNotes(draft.notes || '');
+        setIsSummaryProcedure(Boolean(draft.isSummaryProcedure));
+        setPersons(Array.isArray(draft.persons) ? draft.persons : []);
+        setPlacesOfCommission(Array.isArray(draft.placesOfCommission) ? draft.placesOfCommission : []);
+        setViolations(Array.isArray(draft.violations) ? draft.violations : []);
+      }
+    } catch (error) {
+      console.error('Unable to restore new docket draft', error);
+    } finally {
+      setIsDraftHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isDraftHydrated) return;
+
+    const draft: NewDocketDraftState = {
+      activeTab,
+      docketTypeId,
+      docketYear,
+      dateReceived,
+      caseReceivedDescription,
+      isCaseReceivedDescriptionEdited,
+      initialStatusId,
+      caseClassificationId,
+      caseAlsoRaffled,
+      assignedProsecutorId,
+      assignmentRemarks,
+      assignmentDate,
+      isDocketInformationSaved,
+      regionCode,
+      summaryText,
+      remarks,
+      notes,
+      isSummaryProcedure,
+      persons,
+      placesOfCommission,
+      violations,
+    };
+
+    try {
+      window.localStorage.setItem(newDocketDraftStorageKey, JSON.stringify(draft));
+    } catch (error) {
+      console.error('Unable to save new docket draft', error);
+    }
+  }, [activeTab, docketTypeId, docketYear, dateReceived, caseReceivedDescription, isCaseReceivedDescriptionEdited, initialStatusId, caseClassificationId, caseAlsoRaffled, assignedProsecutorId, assignmentRemarks, assignmentDate, isDocketInformationSaved, regionCode, summaryText, remarks, notes, isSummaryProcedure, persons, placesOfCommission, violations, isDraftHydrated]);
 
   useEffect(() => {
     let isMounted = true;
@@ -571,14 +669,23 @@ export default function NewDocket() {
   };
 
   const resetForm = () => {
+    window.localStorage.removeItem(newDocketDraftStorageKey);
+    setDocketTypeId('');
+    setDocketYear(String(thisYear));
+    setDateReceived(new Date().toISOString().slice(0, 10));
+    setCaseReceivedDescription(formatCaseReceivedDefaultDescription(new Date().toISOString().slice(0, 10)));
+    setIsCaseReceivedDescriptionEdited(false);
     setRegionCode(defaultRegionCode);
     setSummaryText('');
     setRemarks('');
     setNotes('');
     setCaseClassificationId('');
+    setCaseClassificationSearch('');
+    setProsecutorSearch('');
     setIsSummaryProcedure(false);
     setCaseAlsoRaffled(false);
     setAssignedProsecutorId('');
+    setAssignmentRemarks('');
     setAssignmentDate(new Date().toISOString().slice(0, 10));
     setIsDocketInformationSaved(false);
     setPersons([]);
@@ -1024,6 +1131,7 @@ export default function NewDocket() {
       return;
     }
 
+    window.localStorage.removeItem(newDocketDraftStorageKey);
     setMessage({ type: 'success', text: `Docket ${result.data.docketDisplayNumber} created as case #${result.data.caseId}.`, caseId: result.data.caseId });
     router.push(`/cases/${result.data.caseId}`);
   };
