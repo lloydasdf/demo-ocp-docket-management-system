@@ -83,11 +83,11 @@ const organizationWorkflowSteps = ['Participant Type', 'Organization Name', 'Con
 const aliasWorkflowSteps = ['Alias Name', 'Remarks'];
 const addressWorkflowSteps = ['Address Type', 'Address Details'];
 const contactWorkflowSteps = ['Contact Type', 'Contact Value', 'Label', 'Primary', 'Remarks'];
-const docketWorkflowSteps = ['Docket Type', 'Docket Year', 'Date Received', 'Region', 'Case Classification', 'Case Received Description', 'Case Notes'];
+const docketWorkflowSteps = ['Docket Type'];
 const violationWorkflowSteps = ['Violation Search', 'Raw Text / Law Reference', 'Remarks / Description'];
-const procedureWorkflowSteps = ['Summary Procedure Case', 'Summary', 'Remarks'];
+const procedureWorkflowSteps = ['Procedure and Case Classification'];
 const placeWorkflowSteps = ['Address Type', 'Address Details'];
-const assignmentWorkflowSteps = ['Case Also Raffled', 'Prosecutor', 'Assignment Remarks'];
+const assignmentWorkflowSteps = ['Assignment Details'];
 const defaultRegionCode = 'IV-31';
 const defaultAddressRegionCode = 'IV-A';
 const isDevelopment = process.env.NODE_ENV !== 'production';
@@ -274,7 +274,9 @@ export default function NewDocket() {
   const [caseClassificationId, setCaseClassificationId] = useState('');
   const [caseAlsoRaffled, setCaseAlsoRaffled] = useState(false);
   const [assignedProsecutorId, setAssignedProsecutorId] = useState('');
-  const [assignmentRemarks, setAssignmentRemarks] = useState('Assigned during manual docket creation');
+  const [assignmentRemarks, setAssignmentRemarks] = useState('');
+  const [assignmentDate, setAssignmentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [isDocketInformationSaved, setIsDocketInformationSaved] = useState(false);
   const [regionCode, setRegionCode] = useState(defaultRegionCode);
   const [summaryText, setSummaryText] = useState('');
   const [remarks, setRemarks] = useState('');
@@ -338,7 +340,6 @@ export default function NewDocket() {
 
       setLookups(nextLookups);
       setCurrentUser(userResult.data ?? null);
-      setDocketTypeId((current) => current || getFirstId(nextLookups.docketTypes));
       setInitialStatusId((current) => current || getReceivedStatusId(nextLookups.statuses));
       setIsLoadingLookups(false);
     }
@@ -506,6 +507,8 @@ export default function NewDocket() {
     setIsSummaryProcedure(false);
     setCaseAlsoRaffled(false);
     setAssignedProsecutorId('');
+    setAssignmentDate(new Date().toISOString().slice(0, 10));
+    setIsDocketInformationSaved(false);
     setPersons([]);
     setPlacesOfCommission([]);
     setViolations([]);
@@ -528,6 +531,7 @@ export default function NewDocket() {
     setRemarks(`Test remarks ${unique}`);
     setNotes(`Test notes ${unique}`);
     setCaseAlsoRaffled(Boolean(prosecutor));
+    setIsDocketInformationSaved(true);
     setAssignedProsecutorId(prosecutor?.id?.toString() ?? '');
 
     setPersons([
@@ -1038,6 +1042,12 @@ export default function NewDocket() {
 
   const saveCaseModal = () => {
     if (!caseModal) return;
+    if (caseModal.kind === 'docket') {
+      setIsDocketInformationSaved(Boolean(docketTypeId));
+    }
+    if (caseModal.kind === 'assignment') {
+      setCaseAlsoRaffled(Boolean(assignedProsecutorId));
+    }
     if (caseModal.kind === 'violation' && caseModal.violation) {
       setViolations((current) => caseModal.id ? current.map((item) => item.id === caseModal.id ? caseModal.violation as ViolationEntry : item) : [...current, { ...caseModal.violation as ViolationEntry, violationOrder: current.length + 1 }]);
     }
@@ -1053,7 +1063,6 @@ export default function NewDocket() {
     if (caseModal.kind === 'violation') return violationWorkflowSteps;
     if (caseModal.kind === 'procedure') return procedureWorkflowSteps;
     if (caseModal.kind === 'place') return placeWorkflowSteps;
-    if (!caseAlsoRaffled && caseModal.step === 0) return ['Case Also Raffled'];
     return assignmentWorkflowSteps;
   };
 
@@ -1080,23 +1089,13 @@ export default function NewDocket() {
     if (!caseModal) return null;
     const stepName = caseModalSteps[caseModal.step];
     if (caseModal.kind === 'docket') {
-      if (stepName === 'Docket Type') return <Select value={docketTypeId} onValueChange={setDocketTypeId} disabled={isLoadingLookups}><SelectTrigger><SelectValue placeholder="Select docket type" /></SelectTrigger><SelectContent>{lookups.docketTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.prefix} — {type.name}</SelectItem>)}</SelectContent></Select>;
-      if (stepName === 'Docket Year') return <Input type="number" value={docketYear} onChange={(event) => setDocketYear(event.target.value)} />;
-      if (stepName === 'Date Received') return <Input type="date" value={dateReceived} onChange={(event) => setDateReceived(event.target.value)} />;
-      if (stepName === 'Region') return <Input value={regionCode} onChange={(event) => setRegionCode(event.target.value)} placeholder="Region or skip" />;
-      if (stepName === 'Case Classification') return <Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}><SelectTrigger><SelectValue placeholder="Select classification" /></SelectTrigger><SelectContent><SelectItem value="none">No classification</SelectItem>{lookups.caseClassifications.map((classification) => <SelectItem key={classification.id} value={classification.id.toString()}>{classification.display_label}</SelectItem>)}</SelectContent></Select>;
-      if (stepName === 'Case Received Description') return <Textarea value={caseReceivedDescription} onChange={(event) => { setIsCaseReceivedDescriptionEdited(true); setCaseReceivedDescription(event.target.value); }} placeholder={formatCaseReceivedDefaultDescription(dateReceived)} />;
-      return <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Optional case note stored in notes table" />;
+      return <div className="space-y-4"><Select value={docketTypeId} onValueChange={setDocketTypeId} disabled={isLoadingLookups}><SelectTrigger><SelectValue placeholder="Select docket type" /></SelectTrigger><SelectContent>{lookups.docketTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.prefix} — {type.name}</SelectItem>)}</SelectContent></Select>{docketTypeId ? <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><div><Label className="text-xs">Date Received</Label><Input type="date" value={dateReceived} onChange={(event) => setDateReceived(event.target.value)} className="mt-1" /></div><div><Label className="text-xs">Docket Year</Label><Input type="number" value={docketYear} onChange={(event) => setDocketYear(event.target.value)} className="mt-1" /></div></div> : null}</div>;
     }
     if (caseModal.kind === 'procedure') {
-      if (stepName === 'Summary Procedure Case') return <label className="flex items-center gap-2 text-sm"><Checkbox checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} /> Summary procedure case</label>;
-      if (stepName === 'Summary') return <Textarea value={summaryText} onChange={(event) => setSummaryText(event.target.value)} placeholder="Case summary stored in summary_text" />;
-      return <Textarea value={remarks} onChange={(event) => setRemarks(event.target.value)} placeholder="Optional summary procedure remarks" />;
+      return <div className="space-y-4"><label className="flex items-center gap-2 text-sm"><Checkbox checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} /> Falls under Summary Procedure</label><div><Label className="text-xs">Case Classification</Label><Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}><SelectTrigger className="mt-1"><SelectValue placeholder="Select classification" /></SelectTrigger><SelectContent><SelectItem value="none">No classification</SelectItem>{lookups.caseClassifications.map((classification) => <SelectItem key={classification.id} value={classification.id.toString()}>{classification.display_label}</SelectItem>)}</SelectContent></Select></div>{isSummaryProcedure ? <div><Label className="text-xs">Remarks</Label><Textarea value={remarks} onChange={(event) => setRemarks(event.target.value)} placeholder="Optional summary procedure remarks" className="mt-1" /></div> : null}</div>;
     }
     if (caseModal.kind === 'assignment') {
-      if (stepName === 'Case Also Raffled') return <label className="flex items-center gap-2 text-sm"><Checkbox checked={caseAlsoRaffled} onCheckedChange={(checked) => { setCaseAlsoRaffled(checked === true); if (checked !== true) setAssignedProsecutorId(''); }} /> Case also raffled</label>;
-      if (stepName === 'Prosecutor') return <Select value={assignedProsecutorId || 'none'} onValueChange={(value) => setAssignedProsecutorId(value === 'none' ? '' : value)} disabled={isLoadingLookups}><SelectTrigger><SelectValue placeholder="Select prosecutor" /></SelectTrigger><SelectContent><SelectItem value="none">No prosecutor selected</SelectItem>{lookups.prosecutors.map((prosecutor) => <SelectItem key={prosecutor.id} value={prosecutor.id.toString()}>{prosecutor.short_name ?? prosecutor.full_name}</SelectItem>)}</SelectContent></Select>;
-      return <Input value={assignmentRemarks} onChange={(event) => setAssignmentRemarks(event.target.value)} placeholder="Optional assignment remarks" />;
+      return <div className="space-y-4"><div><Label className="text-xs">Prosecutor</Label><Select value={assignedProsecutorId || 'none'} onValueChange={(value) => { const nextValue = value === 'none' ? '' : value; setAssignedProsecutorId(nextValue); setCaseAlsoRaffled(Boolean(nextValue)); }} disabled={isLoadingLookups}><SelectTrigger className="mt-1"><SelectValue placeholder="Select prosecutor" /></SelectTrigger><SelectContent><SelectItem value="none">No prosecutor selected</SelectItem>{lookups.prosecutors.map((prosecutor) => <SelectItem key={prosecutor.id} value={prosecutor.id.toString()}>{prosecutor.short_name ?? prosecutor.full_name}</SelectItem>)}</SelectContent></Select></div>{assignedProsecutorId ? <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><div><Label className="text-xs">Assignment date</Label><Input type="date" value={assignmentDate} onChange={(event) => setAssignmentDate(event.target.value)} className="mt-1" /></div><div className="md:row-span-2"><Label className="text-xs">Remarks</Label><Textarea value={assignmentRemarks} onChange={(event) => setAssignmentRemarks(event.target.value)} placeholder="Optional assignment remarks" className="mt-1 min-h-24" /></div></div> : null}</div>;
     }
     if (caseModal.kind === 'violation' && caseModal.violation) {
       const violation = caseModal.violation;
@@ -1112,7 +1111,7 @@ export default function NewDocket() {
     return null;
   };
 
-  const caseModalTitle = caseModal?.kind === 'docket' ? 'Docket Information' : caseModal?.kind === 'violation' ? 'Violation' : caseModal?.kind === 'procedure' ? 'Procedure and Summary' : caseModal?.kind === 'place' ? 'Place of Commission' : 'Assignment';
+  const caseModalTitle = caseModal?.kind === 'docket' ? 'Docket Information' : caseModal?.kind === 'violation' ? 'Violation' : caseModal?.kind === 'procedure' ? 'Procedure and Case Classification' : caseModal?.kind === 'place' ? 'Place of Commission' : 'Assignment';
 
   return (
     <div className="p-4 md:p-8">
@@ -1155,117 +1154,106 @@ export default function NewDocket() {
             </TabsList>
 
             <TabsContent value="case-info" className="space-y-4">
-              <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Generated docket number</p>
-                <p className="mt-1 text-2xl font-bold tracking-tight text-primary">
-                  {isLoadingNextDocket ? 'Detecting next number…' : generatedDocketNumber}
-                </p>
-              </div>
-
-              <section className="overflow-hidden rounded-lg border">
-                <header className="flex items-center gap-2 border-b bg-muted/40 px-4 py-3">
-                  <FileText className="h-4 w-4 text-primary" />
-                  <h3 className="text-sm font-semibold uppercase tracking-wide">Docket information</h3>
-                </header>
-                <div className="space-y-3 p-4">
-                  <div className="rounded-lg border p-4 text-sm">
-                    <div className="grid gap-2 md:grid-cols-2">
-                      <p><strong>Docket type:</strong> {selectedDocketType ? `${selectedDocketType.prefix} — ${selectedDocketType.name}` : '—'}</p>
-                      <p><strong>Docket year:</strong> {docketYear || '—'}</p>
-                      <p><strong>Date received:</strong> {dateReceived || '—'}</p>
-                      <p><strong>Region:</strong> {regionCode || '—'}</p>
-                      <p><strong>Case classification:</strong> {selectedCaseClassification?.display_label ?? '—'}</p>
-                      <p><strong>Received description:</strong> {shortPreview(caseReceivedDescription)}</p>
-                      <p className="md:col-span-2"><strong>Case notes:</strong> {shortPreview(notes)}</p>
-                    </div>
+              {!isDocketInformationSaved ? (
+                <section className="overflow-hidden rounded-lg border">
+                  <div className="p-4">
+                    <Button type="button" variant="outline" onClick={() => openCaseModal('docket')}>
+                      <Plus className="mr-2 h-4 w-4" /> Add Docket
+                    </Button>
                   </div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => openCaseModal('docket')}>
-                    {docketTypeId && docketYear && dateReceived ? 'Edit Docket Information' : 'Add Docket Information'}
-                  </Button>
-                </div>
-              </section>
-
-              <section className="overflow-hidden rounded-lg border">
-                <header className="flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-3">
-                  <div className="flex items-center gap-2"><Gavel className="h-4 w-4 text-primary" /><h3 className="text-sm font-semibold uppercase tracking-wide">Violations</h3></div>
-                  <Button type="button" onClick={() => openCaseModal('violation')} variant="outline" size="sm"><Plus className="mr-2 h-4 w-4" /> Add violation</Button>
-                </header>
-                <div className="space-y-3 p-4">
-                  {violations.length === 0 ? <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No violations added yet</div> : null}
-                  {violations.map((violation) => <div key={violation.id} className="rounded-lg border p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div><p className="font-medium">{violation.existingViolationId ? violation.selectedExistingTitle : (violation.newViolationTitle || violation.searchText || 'Untitled violation')}</p>{violation.rawViolationText || violation.description ? <p className="mt-1 text-xs text-muted-foreground">{shortPreview(violation.rawViolationText || violation.description)}</p> : null}</div>
-                      <div className="flex gap-2"><Button type="button" variant="outline" size="sm" onClick={() => openCaseModal('violation', violation.id)}>Edit</Button><Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => setViolations((current) => current.filter((item) => item.id !== violation.id))}>Remove</Button></div>
-                    </div>
-                  </div>)}
-                </div>
-              </section>
-
-              <section className="overflow-hidden rounded-lg border">
-                <header className="flex items-center gap-2 border-b bg-muted/40 px-4 py-3">
-                  <ClipboardList className="h-4 w-4 text-primary" />
-                  <h3 className="text-sm font-semibold uppercase tracking-wide">Procedure &amp; summary</h3>
-                </header>
-                <div className="space-y-3 p-4">
-                  <div className="rounded-lg border p-4 text-sm">
-                    <p><strong>Summary procedure case:</strong> {isSummaryProcedure ? 'Yes' : 'No'}</p>
-                    <p><strong>Summary:</strong> {shortPreview(summaryText)}</p>
-                    <p><strong>Remarks:</strong> {shortPreview(remarks)}</p>
+                </section>
+              ) : (
+                <>
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-4">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Generated docket number</p>
+                    <p className="mt-1 text-2xl font-bold tracking-tight text-primary">
+                      {isLoadingNextDocket ? 'Detecting next number…' : generatedDocketNumber}
+                    </p>
                   </div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => openCaseModal('procedure')}>
-                    {summaryText || remarks || isSummaryProcedure ? 'Edit Procedure and Summary' : 'Add Procedure and Summary'}
-                  </Button>
-                </div>
-              </section>
 
-              <section className="overflow-hidden rounded-lg border">
-                <header className="flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-3">
-                  <div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-primary" /><h3 className="text-sm font-semibold uppercase tracking-wide">Places of commission</h3></div>
-                  <Button type="button" onClick={() => openCaseModal('place')} variant="outline" size="sm" disabled={!defaultAddressTypeId}><Plus className="mr-2 h-4 w-4" /> Add place</Button>
-                </header>
-                <div className="space-y-3 p-4">
-                  {placesOfCommission.length === 0 ? <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No place of commission added yet</div> : null}
-                  {placesOfCommission.map((place) => <div key={place.id} className="rounded-lg border p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div><p className="font-medium">{formatAddressLike(place) || place.selectedExistingLabel || 'Unspecified address'}</p>{place.remarks ? <p className="mt-1 text-xs text-muted-foreground">{place.remarks}</p> : null}</div>
-                      <div className="flex gap-2"><Button type="button" variant="outline" size="sm" onClick={() => openCaseModal('place', place.id)}>Edit</Button><Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => setPlacesOfCommission((current) => current.filter((item) => item.id !== place.id))}>Remove</Button></div>
+                  <section className="overflow-hidden rounded-lg border">
+                    <header className="flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-3">
+                      <div className="flex items-center gap-2"><FileText className="h-4 w-4 text-primary" /><h3 className="text-sm font-semibold uppercase tracking-wide">Docket information</h3></div>
+                      <Button type="button" variant="outline" size="sm" onClick={() => openCaseModal('docket')}>Edit Docket</Button>
+                    </header>
+                    <div className="p-4 text-sm">
+                      <div className="rounded-lg border p-4">
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <p><strong>Docket type:</strong> {selectedDocketType ? `${selectedDocketType.prefix} — ${selectedDocketType.name}` : '—'}</p>
+                          <p><strong>Docket year:</strong> {docketYear || '—'}</p>
+                          <p><strong>Date received:</strong> {dateReceived || '—'}</p>
+                        </div>
+                      </div>
                     </div>
-                  </div>)}
-                </div>
-              </section>
+                  </section>
 
-              <section className="overflow-hidden rounded-lg border">
-                <header className="flex items-center gap-2 border-b bg-muted/40 px-4 py-3">
-                  <UserCog className="h-4 w-4 text-primary" />
-                  <h3 className="text-sm font-semibold uppercase tracking-wide">Assignment</h3>
-                </header>
-                <div className="space-y-3 p-4">
-                  <div className="rounded-lg border p-4 text-sm">
-                    <p><strong>Case also raffled:</strong> {caseAlsoRaffled ? 'Yes' : 'No'}</p>
-                    <p><strong>Assigned prosecutor:</strong> {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? '—'}</p>
-                    <p><strong>Assignment remarks:</strong> {shortPreview(caseAlsoRaffled ? assignmentRemarks : '')}</p>
-                  </div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => openCaseModal('assignment')}>
-                    {caseAlsoRaffled || assignedProsecutorId ? 'Edit Assignment' : 'Add Assignment'}
-                  </Button>
-                </div>
-              </section>
+                  <section className="overflow-hidden rounded-lg border">
+                    <header className="flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-3">
+                      <div className="flex items-center gap-2"><Gavel className="h-4 w-4 text-primary" /><h3 className="text-sm font-semibold uppercase tracking-wide">Violations</h3></div>
+                      <Button type="button" onClick={() => openCaseModal('violation')} variant="outline" size="sm"><Plus className="mr-2 h-4 w-4" /> Add violation</Button>
+                    </header>
+                    <div className="space-y-3 p-4">
+                      {violations.length === 0 ? <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No violations added yet</div> : null}
+                      {violations.map((violation) => <div key={violation.id} className="rounded-lg border p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div><p className="font-medium">{violation.existingViolationId ? violation.selectedExistingTitle : (violation.newViolationTitle || violation.searchText || 'Untitled violation')}</p>{violation.rawViolationText || violation.description ? <p className="mt-1 text-xs text-muted-foreground">{shortPreview(violation.rawViolationText || violation.description)}</p> : null}</div>
+                          <div className="flex gap-2"><Button type="button" variant="outline" size="sm" onClick={() => openCaseModal('violation', violation.id)}>Edit</Button><Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => setViolations((current) => current.filter((item) => item.id !== violation.id))}>Remove</Button></div>
+                        </div>
+                      </div>)}
+                    </div>
+                  </section>
+
+                  {violations.length > 0 ? (
+                    <>
+                      <section className="overflow-hidden rounded-lg border">
+                        <header className="flex items-center gap-2 border-b bg-muted/40 px-4 py-3"><ClipboardList className="h-4 w-4 text-primary" /><h3 className="text-sm font-semibold uppercase tracking-wide">Procedure and Case Classification</h3></header>
+                        <div className="space-y-3 p-4">
+                          <div className="rounded-lg border p-4 text-sm">
+                            <p><strong>Falls under Summary Procedure:</strong> {isSummaryProcedure ? 'Yes' : 'No'}</p>
+                            <p><strong>Case classification:</strong> {selectedCaseClassification?.display_label ?? '—'}</p>
+                            {isSummaryProcedure ? <p><strong>Remarks:</strong> {shortPreview(remarks)}</p> : null}
+                          </div>
+                          <Button type="button" variant="outline" size="sm" onClick={() => openCaseModal('procedure')}>Edit Procedure and Case Classification</Button>
+                        </div>
+                      </section>
+
+                      <section className="overflow-hidden rounded-lg border">
+                        <header className="flex items-center justify-between gap-2 border-b bg-muted/40 px-4 py-3"><div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-primary" /><h3 className="text-sm font-semibold uppercase tracking-wide">Places of commission</h3></div><Button type="button" onClick={() => openCaseModal('place')} variant="outline" size="sm" disabled={!defaultAddressTypeId}><Plus className="mr-2 h-4 w-4" /> Add place</Button></header>
+                        <div className="space-y-3 p-4">
+                          {placesOfCommission.length === 0 ? <div className="rounded-lg border border-dashed py-8 text-center text-muted-foreground">No place of commission added yet</div> : null}
+                          {placesOfCommission.map((place) => <div key={place.id} className="rounded-lg border p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-medium">{formatAddressLike(place) || place.selectedExistingLabel || 'Unspecified address'}</p>{place.remarks ? <p className="mt-1 text-xs text-muted-foreground">{place.remarks}</p> : null}</div><div className="flex gap-2"><Button type="button" variant="outline" size="sm" onClick={() => openCaseModal('place', place.id)}>Edit</Button><Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => setPlacesOfCommission((current) => current.filter((item) => item.id !== place.id))}>Remove</Button></div></div></div>)}
+                        </div>
+                      </section>
+
+                      <section className="overflow-hidden rounded-lg border">
+                        <header className="flex items-center gap-2 border-b bg-muted/40 px-4 py-3"><UserCog className="h-4 w-4 text-primary" /><h3 className="text-sm font-semibold uppercase tracking-wide">Assignment</h3></header>
+                        <div className="space-y-3 p-4">
+                          {assignedProsecutorId ? <div className="rounded-lg border p-4 text-sm"><p><strong>Assigned prosecutor:</strong> {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? '—'}</p><p><strong>Assignment date:</strong> {assignmentDate || '—'}</p><p><strong>Remarks:</strong> {shortPreview(assignmentRemarks)}</p></div> : null}
+                          <Button type="button" variant="outline" size="sm" onClick={() => openCaseModal('assignment')}>{assignedProsecutorId ? 'Edit Assignment' : 'Add Assignment'}</Button>
+                        </div>
+                      </section>
+                    </>
+                  ) : null}
+                </>
+              )}
 
               <Dialog open={Boolean(caseModal)} onOpenChange={(open) => !open && setCaseModal(null)}>
                 <DialogContent>
-                  <DialogHeader><DialogTitle>{caseModalTitle}</DialogTitle><DialogDescription>Step {(caseModal?.step ?? 0) + 1} of {caseModalSteps.length}: {caseModalSteps[caseModal?.step ?? 0]}. Nullable fields can be skipped.</DialogDescription></DialogHeader>
+                  <DialogHeader><DialogTitle>{caseModalTitle}</DialogTitle><DialogDescription>{caseModal?.kind === 'docket' ? 'Choose a docket type first. Date received and docket year appear after selection.' : `Step ${(caseModal?.step ?? 0) + 1} of ${caseModalSteps.length}: ${caseModalSteps[caseModal?.step ?? 0]}. Nullable fields can be skipped.`}</DialogDescription></DialogHeader>
                   <div className="space-y-2"><Label>{caseModalSteps[caseModal?.step ?? 0]}</Label>{renderCaseModalField()}</div>
                   <DialogFooter>
                     <Button type="button" variant="outline" onClick={() => setCaseModal(null)}>Cancel</Button>
                     {caseModal && caseModal.step > 0 ? <Button type="button" variant="outline" onClick={() => setCaseModal((current) => current ? { ...current, step: current.step - 1 } : current)}>Back</Button> : null}
-                    {isCaseModalFinalStep ? <Button type="button" onClick={saveCaseModal}>OK</Button> : <Button type="button" onClick={() => setCaseModal((current) => current ? { ...current, step: Math.min(current.step + 1, caseModalSteps.length - 1) } : current)}>Next / Skip</Button>}
+                    {isCaseModalFinalStep ? <Button type="button" onClick={saveCaseModal} disabled={caseModal?.kind === 'docket' && !docketTypeId}>{caseModal?.kind === 'docket' ? 'Save' : 'OK'}</Button> : <Button type="button" onClick={() => setCaseModal((current) => current ? { ...current, step: Math.min(current.step + 1, caseModalSteps.length - 1) } : current)}>Next / Skip</Button>}
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
 
-              <div className="flex justify-end border-t pt-4">
-                <Button onClick={() => setActiveTab('persons')}>Continue to Participants</Button>
-              </div>
+              {isDocketInformationSaved ? (
+                <div className="flex justify-end border-t pt-4">
+                  <Button onClick={() => setActiveTab('persons')}>Continue to Participants</Button>
+                </div>
+              ) : null}
             </TabsContent>
 
             <TabsContent value="persons" className="space-y-4">
