@@ -1591,7 +1591,7 @@ export default function NewDocket() {
             <TabsContent value="review" className="space-y-4">
               <Card className="bg-background">
                 <CardContent className="relative space-y-6 p-6 text-sm">
-                  <div className="grid grid-cols-1 gap-x-8 gap-y-4 md:grid-cols-[minmax(0,1fr)_minmax(24rem,1fr)]">
+                  <div className="grid grid-cols-1 items-start gap-x-8 gap-y-4 md:grid-cols-[minmax(0,1fr)_16rem_14rem]">
                     <div className="space-y-3">
                       <p className="whitespace-nowrap text-base uppercase"><span>NPS DOCKET NO.</span> <span className="font-black">{generatedDocketNumber}</span></p>
                       <p className="text-base"><span className="font-medium uppercase">DATE RECEIVED:</span> {dateReceived}</p>
@@ -1600,9 +1600,9 @@ export default function NewDocket() {
                       <p><span className="font-medium">Assigned to:</span> {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? ''}</p>
                       <p><span className="font-medium">Date Assigned:</span> {assignedProsecutorId ? assignmentDate : ''}</p>
                     </div>
-                  </div>
-                  <div className="pointer-events-none absolute right-56 top-32 hidden md:flex">
-                    <div className={`rotate-[-6deg] rounded-md border-4 px-6 py-2 text-2xl font-black uppercase tracking-widest ${reviewDocketStamp.className}`}>{reviewDocketStamp.text}</div>
+                    <div className="hidden justify-self-start md:flex">
+                      <div className={`rotate-[-6deg] rounded-md border-4 px-6 py-2 text-2xl font-black uppercase tracking-widest ${reviewDocketStamp.className}`}>{reviewDocketStamp.text}</div>
+                    </div>
                   </div>
 
                   <div className="space-y-2 text-base">
