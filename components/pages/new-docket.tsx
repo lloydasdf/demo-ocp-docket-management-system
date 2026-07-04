@@ -299,6 +299,7 @@ export default function NewDocket() {
     }
   }, [dateReceived, isCaseReceivedDescriptionEdited]);
 
+
   const [persons, setPersons] = useState<PersonEntry[]>([]);
   const [placesOfCommission, setPlacesOfCommission] = useState<AddressEntry[]>([]);
   const [violations, setViolations] = useState<ViolationEntry[]>([]);
@@ -310,6 +311,46 @@ export default function NewDocket() {
   const [addOnDialog, setAddOnDialog] = useState<AddOnDialogState>(null);
   const [caseModal, setCaseModal] = useState<CaseModalState>(null);
   const [participantEditDialog, setParticipantEditDialog] = useState<ParticipantEditDialogState>(null);
+
+
+  useEffect(() => {
+    if (!participantDialog && !addOnDialog && !caseModal) return;
+
+    const timer = window.setTimeout(() => {
+      const dialog = document.querySelector('[data-slot="dialog-content"]') as HTMLElement | null;
+      if (!dialog) return;
+
+      const textField = dialog.querySelector('input:not([disabled]), textarea:not([disabled])') as HTMLElement | null;
+      if (textField) {
+        textField.focus();
+        if (textField instanceof HTMLInputElement) {
+          textField.select();
+        }
+        return;
+      }
+
+      const comboBox = dialog.querySelector('[role="combobox"]') as HTMLElement | null;
+      if (comboBox) {
+        comboBox.focus();
+        comboBox.click();
+        return;
+      }
+
+      const checkbox = dialog.querySelector('[role="checkbox"]') as HTMLElement | null;
+      checkbox?.focus();
+    }, 80);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    participantDialog?.step,
+    participantDialog?.entry.participantKind,
+    addOnDialog?.step,
+    addOnDialog?.kind,
+    caseModal?.step,
+    caseModal?.kind,
+    assignedProsecutorId,
+    docketTypeId,
+  ]);
 
   useEffect(() => {
     let isMounted = true;
