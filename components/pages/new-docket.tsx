@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -63,6 +64,7 @@ type ParticipantColumnRole = 'Complainant' | 'Respondent';
 type ParticipantDialogState = { role: ParticipantColumnRole; step: number; entry: PersonEntry } | null;
 type AddOnDialogState = { personId: string; kind: 'alias' | 'address' | 'contact'; step: number; alias: AliasEntry; address: AddressEntry; contact: ContactInformationEntry } | null;
 type CaseModalState = { kind: 'docket' | 'violation' | 'procedure' | 'place' | 'assignment'; step: number; id?: string; violation?: ViolationEntry; place?: AddressEntry } | null;
+type ParticipantEditDialogState = { personId: string; mode: 'attributes' | 'addresses' | 'contacts' } | null;
 type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; aliases?: AliasEntry[]; existingAliases?: ExistingAliasEntry[]; addresses?: AddressEntry[]; organizationDetails?: CustomOrganizationDetailEntry[]; showOrganizationDetails?: boolean };
 type ViolationEntry = NewDocketViolationInput & { id: string; searchText: string; selectedExistingTitle?: string | null; createNew?: boolean; newViolationTitle?: string | null; referenceCode?: string | null; shortLabel?: string | null; description?: string | null; lawReference?: string | null };
 
@@ -78,8 +80,8 @@ const emptyLookups: LookupState = {
 
 const thisYear = new Date().getFullYear();
 const genderOptions = ['Female', 'Male', 'Other', 'Unspecified'];
-const personWorkflowSteps = ['Participant Type', 'First Name', 'Middle Name', 'Surname', 'Suffix', 'Role', 'Gender', 'Birthdate', 'Age', 'Case Flags', 'Remarks'];
-const organizationWorkflowSteps = ['Participant Type', 'Organization Name', 'Contact Person', 'Contact Number', 'Email', 'Custom Details', 'Role', 'Case Flags', 'Remarks'];
+const personWorkflowSteps = ['Participant Type', 'First Name', 'Middle Name', 'Surname', 'Suffix', 'Gender', 'Birthdate', 'Age', 'Case Flags', 'Role', 'Remarks'];
+const organizationWorkflowSteps = ['Participant Type', 'Organization Name', 'Contact Person', 'Contact Number', 'Email', 'Custom Details', 'Role', 'Remarks'];
 const aliasWorkflowSteps = ['Alias Name', 'Remarks'];
 const addressWorkflowSteps = ['Address Type', 'Address Details'];
 const contactWorkflowSteps = ['Contact Type', 'Contact Value', 'Label', 'Primary', 'Remarks'];
@@ -299,6 +301,7 @@ export default function NewDocket() {
   const [participantDialog, setParticipantDialog] = useState<ParticipantDialogState>(null);
   const [addOnDialog, setAddOnDialog] = useState<AddOnDialogState>(null);
   const [caseModal, setCaseModal] = useState<CaseModalState>(null);
+  const [participantEditDialog, setParticipantEditDialog] = useState<ParticipantEditDialogState>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -965,6 +968,28 @@ export default function NewDocket() {
   const isParticipantFinalStep = Boolean(participantDialog && participantDialog.step >= participantSteps.length - 1);
   const participantsByColumn = (role: ParticipantColumnRole) => persons.filter((person) => person.sourceDetail === role || lookups.participantRoles.find((item) => item.id === person.roleId)?.display_label?.toLowerCase().includes(role.toLowerCase()));
 
+
+  const formatParticipantPreviewName = (person: PersonEntry) => {
+    const baseName = person.participantKind === 'ORGANIZATION' ? (cleanString(person.organizationName) || 'Unnamed organization') : buildLegalNamePreview(person);
+    const aliases = [...(person.existingAliases ?? []), ...(person.aliases ?? [])]
+      .map((alias) => cleanString(alias.aliasName))
+      .filter(Boolean)
+      .map((alias) => `@${alias}`)
+      .join(' ');
+    return aliases ? `${baseName} ${aliases}` : baseName;
+  };
+
+  const formatParticipantFlags = (person: PersonEntry) => [
+    person.attributes?.isMinorAtCase ? 'Minor' : null,
+    person.attributes?.isSeniorAtCase ? 'Senior' : null,
+    person.attributes?.isPwdAtCase ? 'PWD' : null,
+  ].filter(Boolean).join(' | ');
+
+  const updateParticipantAlias = (personId: string, aliasId: string, aliasName: string) => updatePerson(personId, {
+    aliases: (persons.find((person) => person.id === personId)?.aliases ?? []).map((alias) => alias.id === aliasId ? { ...alias, id: alias.id ?? makeId('alias'), aliasName } : { ...alias, id: alias.id ?? makeId('alias') }) as AliasEntry[],
+  });
+
+
   const openAddOnDialog = (personId: string, kind: 'alias' | 'address' | 'contact') => {
     setAddOnDialog({
       personId,
@@ -1025,6 +1050,20 @@ export default function NewDocket() {
     return <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><div className="md:col-span-2"><Label className="text-xs">Search Existing Address</Label><Input value={addOnDialog.address.suggestionQuery} placeholder="Type street, barangay, city, province, or region" onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, suggestionQuery: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">Line 1</Label><Input value={addOnDialog.address.line1 ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, line1: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">Line 2</Label><Input value={addOnDialog.address.line2 ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, line2: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">Barangay</Label><Input value={addOnDialog.address.barangay ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, barangay: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">City</Label><Input value={addOnDialog.address.city ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, city: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">Province</Label><Input value={addOnDialog.address.province ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, province: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">Region</Label><Input value={addOnDialog.address.region ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, region: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">ZIP Code</Label><Input value={addOnDialog.address.zipCode ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, zipCode: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">Country</Label><Input value={addOnDialog.address.country ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, country: event.target.value, existingAddressId: null } })} className="mt-1" /></div><label className="flex items-center gap-2 text-xs"><Checkbox checked={addOnDialog.address.isPrimary === true} onCheckedChange={(checked) => updateAddOn({ address: { ...addOnDialog.address, isPrimary: checked === true } })} /> Primary</label><div><Label className="text-xs">Remarks</Label><Input value={addOnDialog.address.remarks ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, remarks: event.target.value } })} className="mt-1" /></div></div>;
   };
 
+
+
+  const renderParticipantEditDialog = () => {
+    if (!participantEditDialog) return null;
+    const person = persons.find((item) => item.id === participantEditDialog.personId);
+    if (!person) return null;
+    if (participantEditDialog.mode === 'attributes') {
+      return <div className="space-y-4"><div className="grid grid-cols-1 gap-3 md:grid-cols-2">{person.participantKind === 'ORGANIZATION' ? <><div className="md:col-span-2"><Label className="text-xs">Organization Name</Label><Input value={person.organizationName ?? ''} onChange={(event) => updatePerson(person.id, { organizationName: event.target.value })} className="mt-1" /></div><div><Label className="text-xs">Contact Person</Label><Input value={person.contactPerson ?? ''} onChange={(event) => updatePerson(person.id, { contactPerson: event.target.value })} className="mt-1" /></div><div><Label className="text-xs">Email</Label><Input value={person.email ?? ''} onChange={(event) => updatePerson(person.id, { email: event.target.value })} className="mt-1" /></div></> : <><div><Label className="text-xs">First Name</Label><Input value={person.firstName ?? ''} onChange={(event) => updatePerson(person.id, { firstName: event.target.value })} className="mt-1" /></div><div><Label className="text-xs">Middle Name</Label><Input value={person.middleName ?? ''} onChange={(event) => updatePerson(person.id, { middleName: event.target.value, noMiddleName: false })} className="mt-1" /></div><div><Label className="text-xs">Surname</Label><Input value={person.lastName ?? ''} onChange={(event) => updatePerson(person.id, { lastName: event.target.value })} className="mt-1" /></div><div><Label className="text-xs">Suffix</Label><Input value={person.suffix ?? ''} onChange={(event) => updatePerson(person.id, { suffix: event.target.value })} className="mt-1" /></div><div><Label className="text-xs">Gender</Label><Select value={person.gender ?? 'Unspecified'} onValueChange={(value) => updatePerson(person.id, { gender: value })}><SelectTrigger className="mt-1"><SelectValue /></SelectTrigger><SelectContent>{genderOptions.map((gender) => <SelectItem key={gender} value={gender}>{gender}</SelectItem>)}</SelectContent></Select></div><div><Label className="text-xs">Age</Label><Input value={person.age ?? ''} onChange={(event) => updatePerson(person.id, { age: event.target.value })} className="mt-1" /></div><div><Label className="text-xs">Birthdate</Label><Input type="date" value={person.birthDate ?? ''} onChange={(event) => updatePerson(person.id, { birthDate: event.target.value })} className="mt-1" /></div><div className="flex items-end gap-3"><label className="flex items-center gap-2 text-xs"><Checkbox checked={person.attributes?.isMinorAtCase === true} onCheckedChange={(checked) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), isMinorAtCase: checked === true } })} /> Minor</label><label className="flex items-center gap-2 text-xs"><Checkbox checked={person.attributes?.isSeniorAtCase === true} onCheckedChange={(checked) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), isSeniorAtCase: checked === true } })} /> Senior</label><label className="flex items-center gap-2 text-xs"><Checkbox checked={person.attributes?.isPwdAtCase === true} onCheckedChange={(checked) => updatePerson(person.id, { attributes: { ...(person.attributes ?? {}), isPwdAtCase: checked === true } })} /> PWD</label></div></>}</div><div className="space-y-2"><Label className="text-xs">Aliases</Label>{(person.aliases ?? []).length === 0 ? <p className="text-xs text-muted-foreground">No editable aliases added.</p> : null}{(person.aliases ?? []).map((alias) => <div key={alias.id} className="flex items-center gap-2"><span className="text-sm text-muted-foreground">@</span><Input value={alias.aliasName ?? ''} onChange={(event) => updateParticipantAlias(person.id, alias.id ?? '', event.target.value)} /></div>)}</div></div>;
+    }
+    if (participantEditDialog.mode === 'addresses') {
+      return <div className="space-y-3">{(person.addresses ?? []).length === 0 ? <p className="text-sm text-muted-foreground">No addresses added yet.</p> : null}{(person.addresses ?? []).map((address) => <div key={address.id} className="grid grid-cols-1 gap-2 rounded-md border p-3 md:grid-cols-2"><Input value={address.line1 ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { line1: event.target.value })} placeholder="Line 1" /><Input value={address.line2 ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { line2: event.target.value })} placeholder="Line 2" /><Input value={address.barangay ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { barangay: event.target.value })} placeholder="Barangay" /><Input value={address.city ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { city: event.target.value })} placeholder="City" /><Input value={address.province ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { province: event.target.value })} placeholder="Province" /><Input value={address.region ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { region: event.target.value })} placeholder="Region" /><Input value={address.zipCode ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { zipCode: event.target.value })} placeholder="ZIP Code" /><Input value={address.country ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { country: event.target.value })} placeholder="Country" /><Input className="md:col-span-2" value={address.remarks ?? ''} onChange={(event) => updateParticipantAddress(person.id, address.id, { remarks: event.target.value })} placeholder="Remarks" /></div>)}</div>;
+    }
+    return <div className="space-y-3">{(person.contactInformations ?? []).length === 0 ? <p className="text-sm text-muted-foreground">No contact info added yet.</p> : null}{(person.contactInformations ?? []).map((contact) => <div key={contact.id} className="grid grid-cols-1 gap-2 rounded-md border p-3 md:grid-cols-[9rem_1fr_1fr]"><Select value={contact.contactType} onValueChange={(value) => updateParticipantContact(person.id, contact.id, { contactType: value as 'PHONE' | 'EMAIL' | 'OTHER' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PHONE">Phone</SelectItem><SelectItem value="EMAIL">Email</SelectItem><SelectItem value="OTHER">Other</SelectItem></SelectContent></Select><Input value={contact.contactValue ?? ''} onChange={(event) => updateParticipantContact(person.id, contact.id, { contactValue: event.target.value })} placeholder="Contact value" /><Input value={contact.label ?? ''} onChange={(event) => updateParticipantContact(person.id, contact.id, { label: event.target.value })} placeholder="Label" /><Input className="md:col-span-3" value={contact.remarks ?? ''} onChange={(event) => updateParticipantContact(person.id, contact.id, { remarks: event.target.value })} placeholder="Remarks" /></div>)}</div>;
+  };
 
   const openCaseModal = (kind: NonNullable<CaseModalState>['kind'], id?: string) => {
     if (kind === 'violation') {
@@ -1115,7 +1154,7 @@ export default function NewDocket() {
 
   return (
     <div className="p-4 md:p-8">
-      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-foreground">New Docket Entry</h1>
@@ -1281,15 +1320,22 @@ export default function NewDocket() {
                           {columnParticipants.map((person) => (
                             <div key={person.id} className="rounded-md border bg-background p-3 shadow-sm">
                               <div className="flex items-start justify-between gap-3">
-                                <div><p className="font-medium">{person.participantKind === 'ORGANIZATION' ? (cleanString(person.organizationName) || 'Unnamed organization') : buildLegalNamePreview(person)}</p><p className="text-xs text-muted-foreground">{person.participantKind === 'ORGANIZATION' ? 'Organization participant' : 'Person participant'}</p></div>
-                                <Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => setPersons((current) => current.filter((item) => item.id !== person.id))}><X className="h-4 w-4" /></Button>
+                                <div className="min-w-0 flex-1 space-y-1">
+                                  <p className="break-words font-medium">{formatParticipantPreviewName(person)}</p>
+                                  {person.participantKind === 'PERSON' ? <p className="text-xs text-muted-foreground">{[person.gender, person.age ? `Age ${person.age}` : null, person.birthDate, formatParticipantFlags(person)].filter(Boolean).join(' | ')}</p> : <p className="text-xs text-muted-foreground">{[person.contactPerson, person.email, person.contactNumber].filter(Boolean).join(' | ') || 'Organization participant'}</p>}
+                                  {(person.contactInformations ?? []).length ? <div className="text-xs text-muted-foreground">{(person.contactInformations ?? []).map((contact) => <p key={contact.id}>{[contact.label, contact.contactValue].filter(Boolean).join(': ') || contact.contactType}</p>)}</div> : null}
+                                  {(person.addresses ?? []).length ? <div className="text-xs text-muted-foreground">{(person.addresses ?? []).map((address, index) => <p key={address.id}>Address {index + 1}: {formatAddressLike(address) || address.selectedExistingLabel || 'Unspecified address'}</p>)}</div> : null}
+                                </div>
+                                <div className="flex shrink-0 items-center gap-1">
+                                  <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="sm"><Settings2 className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => setParticipantEditDialog({ personId: person.id, mode: 'attributes' })}>Edit person attributes</DropdownMenuItem><DropdownMenuItem onClick={() => setParticipantEditDialog({ personId: person.id, mode: 'addresses' })}>Edit address</DropdownMenuItem><DropdownMenuItem onClick={() => setParticipantEditDialog({ personId: person.id, mode: 'contacts' })}>Edit contact info</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+                                  <Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => setPersons((current) => current.filter((item) => item.id !== person.id))}><X className="h-4 w-4" /></Button>
+                                </div>
                               </div>
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                <Button type="button" variant="outline" size="sm" onClick={() => openAddOnDialog(person.id, 'alias')}>Add Alias</Button>
-                                <Button type="button" variant="outline" size="sm" onClick={() => openAddOnDialog(person.id, 'address')}>Add Address</Button>
-                                <Button type="button" variant="outline" size="sm" onClick={() => openAddOnDialog(person.id, 'contact')}>Add Contact Info</Button>
+                              <div className="mt-3 flex flex-nowrap gap-2 overflow-x-auto">
+                                <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => openAddOnDialog(person.id, 'alias')}><Plus className="mr-1 h-3 w-3" /> Add Alias</Button>
+                                <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => openAddOnDialog(person.id, 'address')}><Plus className="mr-1 h-3 w-3" /> Add Address</Button>
+                                <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => openAddOnDialog(person.id, 'contact')}><Plus className="mr-1 h-3 w-3" /> Add Contact Info</Button>
                               </div>
-                              {(person.aliases?.length || person.addresses?.length || person.contactInformations?.length) ? <p className="mt-2 text-xs text-muted-foreground">{person.aliases?.length ?? 0} aliases · {person.addresses?.length ?? 0} addresses · {person.contactInformations?.length ?? 0} contacts</p> : null}
                             </div>
                           ))}
                         </div>
@@ -1320,6 +1366,14 @@ export default function NewDocket() {
                     {addOnDialog && addOnDialog.step > 0 ? <Button type="button" variant="outline" onClick={() => setAddOnDialog((current) => current ? { ...current, step: current.step - 1 } : current)}>Back</Button> : null}
                     {addOnDialog && addOnDialog.step >= (addOnDialog.kind === 'alias' ? aliasWorkflowSteps : addOnDialog.kind === 'address' ? addressWorkflowSteps : contactWorkflowSteps).length - 1 ? <Button type="button" onClick={saveAddOnDialog}>OK</Button> : <Button type="button" onClick={() => setAddOnDialog((current) => current ? { ...current, step: current.step + 1 } : current)}>Next / Skip</Button>}
                   </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
+              <Dialog open={Boolean(participantEditDialog)} onOpenChange={(open) => !open && setParticipantEditDialog(null)}>
+                <DialogContent className="sm:max-w-3xl">
+                  <DialogHeader><DialogTitle>{participantEditDialog?.mode === 'attributes' ? 'Edit person attributes' : participantEditDialog?.mode === 'addresses' ? 'Edit addresses' : 'Edit contact info'}</DialogTitle><DialogDescription>Edit saved participant details directly, then save.</DialogDescription></DialogHeader>
+                  {renderParticipantEditDialog()}
+                  <DialogFooter><Button type="button" onClick={() => setParticipantEditDialog(null)}>Save</Button></DialogFooter>
                 </DialogContent>
               </Dialog>
 
