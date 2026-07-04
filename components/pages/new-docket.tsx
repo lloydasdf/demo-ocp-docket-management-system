@@ -334,7 +334,9 @@ export default function NewDocket() {
       const comboBox = dialog.querySelector('[role="combobox"]') as HTMLElement | null;
       if (comboBox) {
         comboBox.focus();
-        comboBox.click();
+        if (caseModal?.kind !== 'docket' && caseModal?.kind !== 'assignment') {
+          comboBox.click();
+        }
         return;
       }
 
@@ -1473,17 +1475,39 @@ export default function NewDocket() {
             </TabsContent>
 
             <TabsContent value="review" className="space-y-4">
-              <Card className="bg-muted/20">
-                <CardHeader>
-                  <CardTitle className="text-base">Review before submission</CardTitle>
-                  <CardDescription>Preview only: the official docket number is returned by the database after save.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  <p><strong>Preview docket:</strong> {generatedDocketNumber}</p>
-                  <p><strong>Case:</strong> Received {dateReceived}; region {regionCode || '—'}; month {docketMonthCode}; prosecutor {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? 'Not assigned'}</p>
-                  <div><strong>Participants:</strong>{persons.length ? persons.map((person) => <div key={person.id}>• {person.participantKind === 'ORGANIZATION' ? (person.existingOrganizationId ? `Existing organization #${person.existingOrganizationId}: ${person.selectedExistingOrganizationName}` : `New organization: ${person.organizationName || 'Unnamed'}${(person.organizationDetails ?? []).some((detail) => detail.fieldTitle.trim() || detail.fieldValue.trim()) ? ' (custom details included)' : ''}`) : (person.existingPersonId ? `Existing person #${person.existingPersonId}: ${person.selectedExistingName}` : `New person: ${buildPersonFullName(person)}`)}</div>) : ' none'}</div>
-                  <div><strong>Places of commission:</strong>{placesOfCommission.length ? placesOfCommission.map((placeOfCommission) => <div key={placeOfCommission.id}>• {placeOfCommission.existingAddressId ? `Existing #${placeOfCommission.existingAddressId}: ${placeOfCommission.selectedExistingLabel}` : ['New', placeOfCommission.line1, placeOfCommission.barangay, placeOfCommission.city].filter(Boolean).join(' — ')}</div>) : ' none'}</div>
-                  <div><strong>Violations:</strong>{violations.length ? violations.map((violation) => <div key={violation.id}>• {violation.existingViolationId ? `Existing #${violation.existingViolationId}: ${violation.selectedExistingTitle}` : `New: ${violation.newViolationTitle || violation.searchText || 'Untitled'}`}</div>) : ' none'}</div>
+              <Card className="bg-background">
+                <CardContent className="space-y-6 p-6 text-sm">
+                  <div className="grid grid-cols-1 gap-x-12 gap-y-3 md:grid-cols-2">
+                    <p className="text-lg"><span className="font-medium">NPS DOCKET NO.</span> {generatedDocketNumber}</p>
+                    <p className="text-lg"><span className="font-medium">Assigned to:</span> <span className="inline-block min-w-48 border-b border-foreground px-2">{selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? ''}</span></p>
+                    <p className="text-base"><span className="font-medium">DATE RECEIVED:</span> {dateReceived}</p>
+                    <p className="text-base"><span className="font-medium">Date Assigned:</span> <span className="inline-block min-w-48 border-b border-foreground px-2">{assignedProsecutorId ? assignmentDate : ''}</span></p>
+                  </div>
+
+                  {isSummaryProcedure ? <div className="space-y-2"><p>Falls Under Summary Procedure</p><p>Summary Remarks: {remarks || '____________________________'}</p></div> : null}
+                  <p>Case Classification: {selectedCaseClassification?.display_label ?? ''}</p>
+                  <div className="border-t-2 border-foreground" />
+
+                  <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <h3 className="font-bold uppercase">COMPLAINANT/s:</h3>
+                      {participantsByColumn('Complainant').length ? participantsByColumn('Complainant').map((person) => <div key={person.id} className="leading-tight"><p className="font-serif text-base">{formatParticipantPreviewName(person)}</p>{person.participantKind === 'PERSON' ? <p>{[person.gender, person.age ? `Age ${person.age}` : null, formatBirthdatePreview(person.birthDate), formatParticipantFlags(person), cleanString(person.remarks)].filter(Boolean).join(' | ')}</p> : null}{(person.contactInformations ?? []).map((contact) => <p key={contact.id}>{contact.contactValue}</p>)}{(person.addresses ?? []).map((address, index) => <p key={address.id}>Address {index + 1}: {formatAddressLike(address) || address.selectedExistingLabel || ''}</p>)}</div>) : <div className="space-y-2">{Array.from({ length: 4 }).map((_, index) => <div key={index} className="border-b border-foreground">&nbsp;</div>)}</div>}
+                    </div>
+                    <div className="space-y-2">
+                      <h3 className="font-bold uppercase">RESPONDENT/s:</h3>
+                      {participantsByColumn('Respondent').length ? participantsByColumn('Respondent').map((person) => <div key={person.id} className="leading-tight"><p className="font-serif text-base">{formatParticipantPreviewName(person)}</p>{person.participantKind === 'PERSON' ? <p>{[person.gender, person.age ? `Age ${person.age}` : null, formatBirthdatePreview(person.birthDate), formatParticipantFlags(person), cleanString(person.remarks)].filter(Boolean).join(' | ')}</p> : null}{(person.contactInformations ?? []).map((contact) => <p key={contact.id}>{contact.contactValue}</p>)}{(person.addresses ?? []).map((address, index) => <p key={address.id}>Address {index + 1}: {formatAddressLike(address) || address.selectedExistingLabel || ''}</p>)}</div>) : <div className="space-y-2">{Array.from({ length: 4 }).map((_, index) => <div key={index} className="border-b border-foreground">&nbsp;</div>)}</div>}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
+                    <div className="space-y-2"><h3 className="font-bold uppercase">VIOLATIONS/s:</h3>{violations.length ? violations.map((violation) => <p key={violation.id} className="border-b border-foreground">{violation.existingViolationId ? violation.selectedExistingTitle : (violation.newViolationTitle || violation.searchText || 'Untitled')}</p>) : Array.from({ length: 4 }).map((_, index) => <div key={index} className="border-b border-foreground">&nbsp;</div>)}</div>
+                    <div className="space-y-2"><h3 className="font-bold uppercase">WITNESS/es:</h3>{Array.from({ length: 4 }).map((_, index) => <div key={index} className="border-b border-foreground">&nbsp;</div>)}</div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
+                    <div className="space-y-2"><h3 className="font-bold uppercase">DATE &amp; TIME of COMMISSION:</h3>{Array.from({ length: 2 }).map((_, index) => <div key={index} className="border-b border-foreground">&nbsp;</div>)}</div>
+                    <div className="space-y-2"><h3 className="font-bold uppercase">PLACE of COMMISION:</h3>{placesOfCommission.length ? placesOfCommission.map((place) => <p key={place.id} className="border-b border-foreground">{formatAddressLike(place) || place.selectedExistingLabel || ''}</p>) : Array.from({ length: 2 }).map((_, index) => <div key={index} className="border-b border-foreground">&nbsp;</div>)}</div>
+                  </div>
                 </CardContent>
               </Card>
 
