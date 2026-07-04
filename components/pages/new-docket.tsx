@@ -1482,19 +1482,19 @@ export default function NewDocket() {
 
             <TabsContent value="review" className="space-y-4">
               <Card className="bg-background">
-                <CardContent className="space-y-6 p-6 text-sm">
-                  <div className="grid grid-cols-1 gap-x-12 gap-y-4 md:grid-cols-2">
+                <CardContent className="relative space-y-6 p-6 text-sm">
+                  <div className="grid grid-cols-1 gap-x-8 gap-y-4 md:grid-cols-[minmax(0,1fr)_max-content]">
                     <div className="space-y-3">
-                      <p className="text-2xl font-bold uppercase"><span>NPS DOCKET NO.</span> {generatedDocketNumber}</p>
+                      <p className="whitespace-nowrap text-base uppercase"><span>NPS DOCKET NO.</span> <span className="font-bold">{generatedDocketNumber}</span></p>
                       <p className="text-base"><span className="font-medium uppercase">DATE RECEIVED:</span> {dateReceived}</p>
                     </div>
-                    <div className="space-y-3 text-base">
+                    <div className="space-y-3 text-base md:min-w-96">
                       <p><span className="font-medium">Assigned to:</span> {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? ''}</p>
                       <p><span className="font-medium">Date Assigned:</span> {assignedProsecutorId ? assignmentDate : ''}</p>
-                      <div className="flex justify-center pt-6">
-                        <div className={`rotate-[-6deg] rounded-md border-4 px-6 py-2 text-2xl font-black uppercase tracking-widest ${reviewDocketStamp.className}`}>{reviewDocketStamp.text}</div>
-                      </div>
                     </div>
+                  </div>
+                  <div className="pointer-events-none absolute right-40 top-32 hidden md:flex">
+                    <div className={`rotate-[-6deg] rounded-md border-4 px-6 py-2 text-2xl font-black uppercase tracking-widest ${reviewDocketStamp.className}`}>{reviewDocketStamp.text}</div>
                   </div>
 
                   <div className="space-y-2 text-base">
