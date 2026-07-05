@@ -824,7 +824,7 @@ export function CaseTimeline({
     }
     setIsAddDialogOpen(false);
     await onChanged?.();
-    if (isReassignment || isResolved) {
+    if (isReassignment) {
       onUpdateStatus?.();
     }
   };
