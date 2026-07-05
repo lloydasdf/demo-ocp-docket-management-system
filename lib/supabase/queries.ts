@@ -1638,6 +1638,42 @@ export async function manageCaseParticipants(
 }
 
 
+
+export type CaseParticipantCorrectionRecord = {
+  id: number;
+  case_id: number;
+  case_participant_id: number;
+  old_person_id: number;
+  new_person_id: number;
+  old_snapshot_json: Json | null;
+  new_snapshot_json: Json | null;
+  reason: string | null;
+  corrected_by_user_id: number | null;
+  corrected_by_display: string | null;
+  corrected_at: string | null;
+};
+
+export async function getCaseParticipantCorrections(
+  caseParticipantId: number,
+): Promise<SupabaseQueryResult<CaseParticipantCorrectionRecord[]>> {
+  return runSupabaseQuery(
+    "getCaseParticipantCorrections",
+    "v_case_participant_corrections" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return (await supabase
+        .from("v_case_participant_corrections" as never)
+        .select("*" as never)
+        .eq("case_participant_id" as never, caseParticipantId)
+        .order("corrected_at" as never, { ascending: false })) as unknown as {
+        data: CaseParticipantCorrectionRecord[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
 export async function getCaseOverviewChangeHistory(
   caseId: number,
 ): Promise<SupabaseQueryResult<CaseOverviewChangeHistoryRecord[]>> {

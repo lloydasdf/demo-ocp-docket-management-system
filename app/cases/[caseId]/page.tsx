@@ -52,6 +52,7 @@ import {
   getCaseTimelineEvents,
   getCaseManagedNotes,
   getCaseManagedViolations,
+  getCaseParticipantCorrections,
   getCaseOverviewChangeHistory,
   getCasePlaces,
   getViolations,
@@ -68,6 +69,7 @@ import {
   type CasePetitionForReviewRecord,
   type CaseTimelineEventRecord,
   type CaseOverviewChangeHistoryRecord,
+  type CaseParticipantCorrectionRecord,
   type CaseOverviewEditSection,
   type CaseNoteManagementRecord,
   type CasePlaceRecord,
@@ -229,6 +231,11 @@ function participantName(participant: CaseParticipantRecord) {
     participant.display_name_snapshot ??
     "Unnamed participant"
   );
+}
+
+function isVoidedPersonParticipant(participant: CaseParticipantRecord) {
+  const persons = participant.persons as Record<string, unknown> | null | undefined;
+  return persons?.is_voided === true;
 }
 
 function participantProfileHref(participant: CaseParticipantRecord) {
@@ -1139,6 +1146,9 @@ function ManageParticipantsDialog({ addressTypes, caseId, onOpenChange, onSaved,
   const [error, setError] = useState<string | null>(null);
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [correctionHistoryOpen, setCorrectionHistoryOpen] = useState(false);
+  const [correctionHistory, setCorrectionHistory] = useState<CaseParticipantCorrectionRecord[]>([]);
+  const [correctionHistoryError, setCorrectionHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -1151,6 +1161,23 @@ function ManageParticipantsDialog({ addressTypes, caseId, onOpenChange, onSaved,
     setError(null);
     setReasonError(null);
   }, [open, participants]);
+
+  useEffect(() => {
+    if (!open || !selectedId) {
+      setCorrectionHistory([]);
+      setCorrectionHistoryError(null);
+      return;
+    }
+    void getCaseParticipantCorrections(selectedId).then((result) => {
+      if (result.error) {
+        setCorrectionHistoryError(result.error.message);
+        setCorrectionHistory([]);
+        return;
+      }
+      setCorrectionHistory(result.data ?? []);
+      setCorrectionHistoryError(null);
+    });
+  }, [open, selectedId]);
 
   const selected = participants.find((participant) => participant.id === selectedId) ?? null;
   const aliases = selected?.participant_kind === "ORGANIZATION" ? participantArray(selected.organizations?.organization_aliases) : participantArray(selected?.persons?.person_aliases);
@@ -1238,6 +1265,24 @@ function ManageParticipantsDialog({ addressTypes, caseId, onOpenChange, onSaved,
     setReason("");
     setReasonError(null);
     await onSaved();
+    if (selected?.id) {
+      const historyResult = await getCaseParticipantCorrections(selected.id);
+      if (!historyResult.error) setCorrectionHistory(historyResult.data ?? []);
+    }
+  }
+
+  function openCorrectionHistory() {
+    if (!selected) return;
+    setCorrectionHistoryOpen(true);
+    void getCaseParticipantCorrections(selected.id).then((result) => {
+      if (result.error) {
+        setCorrectionHistoryError(result.error.message);
+        setCorrectionHistory([]);
+        return;
+      }
+      setCorrectionHistory(result.data ?? []);
+      setCorrectionHistoryError(null);
+    });
   }
 
 
@@ -1262,17 +1307,31 @@ function ManageParticipantsDialog({ addressTypes, caseId, onOpenChange, onSaved,
   const detailListMaxHeight = mode ? "max-h-40" : "max-h-72";
   const renderEditor = () => mode ? <div className="space-y-3 rounded-lg border p-4"><h3 className="font-semibold">{mode === "main" ? "Participant name and details" : mode === "alias" ? "Alias" : mode === "address" ? "Address" : "Contact info"}</h3>{selected?.participant_kind !== "ORGANIZATION" && mode === "main" && legacyFullNameOnly ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.useStructuredName)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("useStructuredName", checked === true)} /> Convert legacy full name to structured name</label> : null}<div className="grid gap-3 sm:grid-cols-2">{mode === "main" && selected?.participant_kind === "ORGANIZATION" ? <><FieldInput label="Organization Name" value={String(formData.organizationName ?? "")} onChange={(v) => setValue("organizationName", v)} /><FieldInput label="Contact Person" value={String(formData.contactPerson ?? "")} onChange={(v) => setValue("contactPerson", v)} /><FieldInput label="Contact Number" value={String(formData.contactNumber ?? "")} onChange={(v) => setValue("contactNumber", v)} /><FieldInput label="Email" value={String(formData.email ?? "")} onChange={(v) => setValue("email", v)} /></> : null}{mode === "main" && selected?.participant_kind !== "ORGANIZATION" ? (formData.useStructuredName ? <><FieldInput label="First Name" value={String(formData.firstName ?? "")} onChange={(v) => setValue("firstName", v)} /><FieldInput label="Middle Name" value={String(formData.middleName ?? "")} onChange={(v) => setValue("middleName", v)} /><FieldInput label="Last Name" value={String(formData.lastName ?? "")} onChange={(v) => setValue("lastName", v)} /><FieldInput label="Suffix" value={String(formData.suffix ?? "")} onChange={(v) => setValue("suffix", v)} /></> : <FieldInput label="Full Name" value={String(formData.fullName ?? "")} onChange={(v) => setValue("fullName", v)} className="sm:col-span-2" />) : null}{mode === "main" ? <><FieldInput label="Gender" value={String(formData.gender ?? "")} onChange={(v) => setValue("gender", v)} /><FieldInput label="Birthdate" type="date" value={String(formData.birthDate ?? "")} onChange={(v) => setValue("birthDate", v)} /><FieldInput label="Age" value={String(formData.age ?? "")} onChange={(v) => setValue("age", v)} /><FieldInput label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} /><div className="flex flex-wrap items-center gap-4 pt-2 sm:col-span-2"><label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isMinorAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isMinorAtCase", checked === true)} /> Minor</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isSeniorAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isSeniorAtCase", checked === true)} /> Senior</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isPwdAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isPwdAtCase", checked === true)} /> PWD</label></div></> : null}{mode === "alias" ? <FieldInput label="Alias" value={String(formData.aliasName ?? "")} onChange={(v) => setValue("aliasName", v)} className="sm:col-span-2" /> : null}{mode === "address" ? <><FieldSelect label="Address type" value={String(formData.addressTypeId ?? "")} onChange={(v) => setValue("addressTypeId", v)} options={addressTypes} optionLabel={(option) => option.display_label ?? option.code ?? String(option.id)} /><FieldInput label="Line 1" value={String(formData.line1 ?? "")} onChange={(v) => setValue("line1", v)} /><FieldInput label="Line 2" value={String(formData.line2 ?? "")} onChange={(v) => setValue("line2", v)} /><FieldInput label="Barangay" value={String(formData.barangay ?? "")} onChange={(v) => setValue("barangay", v)} /><FieldInput label="City" value={String(formData.city ?? "")} onChange={(v) => setValue("city", v)} /><FieldInput label="Province" value={String(formData.province ?? "")} onChange={(v) => setValue("province", v)} /><FieldInput label="Country" value={String(formData.country ?? "")} onChange={(v) => setValue("country", v)} /></> : null}{mode === "contact" ? <><FieldSelect label="Type" value={String(formData.contactType ?? "PHONE")} onChange={(v) => setValue("contactType", v)} options={[{id:1,code:"PHONE",display_label:"Phone"},{id:2,code:"EMAIL",display_label:"Email"},{id:3,code:"OTHER",display_label:"Other"}]} valueKey="code" optionLabel={(option) => option.display_label ?? String(option.id)} /><FieldInput label="Value" value={String(formData.contactValue ?? "")} onChange={(v) => setValue("contactValue", v)} /><FieldInput label="Label" value={String(formData.label ?? "")} onChange={(v) => setValue("label", v)} /></> : null}{mode === "main" ? <div className="sm:col-span-2"><Label>Reason</Label><Textarea value={reason} onChange={(event) => { setReason(event.target.value); setReasonError(null); }} className={reasonError ? "border-destructive" : undefined} />{reasonError ? <p className="mt-1 text-sm text-destructive">{reasonError}</p> : null}</div> : null}</div>{error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}<div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setMode(null)}>Cancel</Button><Button type="button" onClick={() => save()} disabled={isSaving}>{isSaving ? "Saving..." : "Save"}</Button></div></div> : null;
   const contactHref = (contact: Record<string, unknown>) => String(contact.contact_type).toUpperCase() === "EMAIL" ? `mailto:${String(contact.contact_value ?? "")}` : String(contact.contact_type).toUpperCase() === "PHONE" ? `tel:${String(contact.contact_value ?? "")}` : undefined;
+  const correctionSnapshot = (snapshot: unknown, key: "person" | "attributes") => typeof snapshot === "object" && snapshot && !Array.isArray(snapshot) && key in snapshot ? (snapshot as Record<string, unknown>)[key] : null;
 
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="flex max-h-[90vh] flex-col overflow-hidden sm:max-w-5xl"><DialogHeader className="shrink-0"><DialogTitle>Manage Participants</DialogTitle><DialogDescription>Select a participant, then edit main details, aliases, addresses, or contact information.</DialogDescription></DialogHeader>
     <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
       <div className="min-h-0 overflow-y-auto pr-2"><div className="grid gap-4 md:grid-cols-2 lg:grid-cols-1"><div><h3 className="mb-2 font-semibold">Complainants</h3><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">{complainants.length ? complainants.map(participantButton) : <SectionEmpty>No complainants.</SectionEmpty>}</div></div><div><h3 className="mb-2 font-semibold">Respondents</h3><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">{respondents.length ? respondents.map(participantButton) : <SectionEmpty>No respondents.</SectionEmpty>}</div></div>{others.length ? <div className="md:col-span-2 lg:col-span-1"><h3 className="mb-2 font-semibold">Other Participants</h3><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">{others.map(participantButton)}</div></div> : null}</div></div>
-      <div className="min-w-0 space-y-4 rounded-lg border p-4">{selected ? <><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 className="break-words text-lg font-semibold">{participantName(selected)}</h3><p className="text-sm text-muted-foreground">{roleLabel(selected)} • {selected.participant_kind ?? "PERSON"}</p>{legacyFullNameOnly ? <Badge variant="outline" className="mt-2">Legacy full-name only</Badge> : null}</div><Button type="button" size="sm" onClick={() => openEditor("main")}>Edit Main Details</Button></div>
+      <div className="min-w-0 space-y-4 rounded-lg border p-4">{selected ? <><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 className="break-words text-lg font-semibold">{participantName(selected)}</h3><p className="text-sm text-muted-foreground">{roleLabel(selected)} • {selected.participant_kind ?? "PERSON"}</p><div className="mt-2 flex flex-wrap gap-2">{legacyFullNameOnly ? <Badge variant="outline">Legacy full-name only</Badge> : null}{correctionHistory.length ? <button type="button" onClick={openCorrectionHistory}><Badge variant="secondary" className="cursor-pointer">Corrected</Badge></button> : null}</div></div><Button type="button" size="sm" onClick={() => openEditor("main")}>Correct Identity</Button></div>
         <div className="grid gap-3 sm:grid-cols-3"><div className={`flex ${detailListMaxHeight} min-h-0 flex-col rounded-md border p-3`}><div className="mb-2 flex shrink-0 items-center justify-between gap-2"><p className="font-medium">Aliases</p><Button type="button" size="sm" variant="outline" onClick={() => openEditor("alias")}>Add</Button></div>{aliases.length ? <div className="min-h-0 flex-1 divide-y overflow-y-auto pr-1">{aliases.map((alias) => <div key={String(alias.id)} className="space-y-2 py-2 text-sm"><p className="break-words">{String(alias.alias_name ?? "")}</p><div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="ghost" onClick={() => openEditor("alias", alias)}>Edit</Button><Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => { setMode("alias"); setEditingRecord(alias); openDelete("remove_alias", alias, "alias") }}>Remove</Button></div></div>)}</div> : <p className="text-sm text-muted-foreground">No aliases.</p>}</div>
         <div className={`flex ${detailListMaxHeight} min-h-0 flex-col rounded-md border p-3`}><div className="mb-2 flex shrink-0 items-center justify-between gap-2"><p className="font-medium">Addresses</p><Button type="button" size="sm" variant="outline" onClick={() => openEditor("address")}>Add</Button></div>{addresses.length ? <div className="min-h-0 flex-1 divide-y overflow-y-auto pr-1">{addresses.map((address) => <div key={String(address.id)} className="space-y-2 py-2"><p className="break-words text-sm">{formatAddress((address.addresses ?? {}) as never) || "Address"}</p><div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="ghost" onClick={() => openEditor("address", address)}>Edit</Button><Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => { setMode("address"); setEditingRecord(address); openDelete("remove_address", address, "address") }}>Remove</Button></div></div>)}</div> : <p className="text-sm text-muted-foreground">No addresses.</p>}</div>
         <div className={`flex ${detailListMaxHeight} min-h-0 flex-col rounded-md border p-3`}><div className="mb-2 flex shrink-0 items-center justify-between gap-2"><p className="font-medium">Contacts</p><Button type="button" size="sm" variant="outline" onClick={() => openEditor("contact")}>Add</Button></div>{contacts.length ? <div className="min-h-0 flex-1 divide-y overflow-y-auto pr-1">{contacts.map((contact) => <div key={String(contact.participant_contact_information_id ?? contact.id)} className="space-y-2 py-2"><p className="text-xs font-medium uppercase text-muted-foreground">{String(contact.contact_type)}</p>{contactHref(contact as never) ? <a className="block break-all text-sm text-primary hover:underline" href={contactHref(contact as never)}>{String(contact.contact_value)}</a> : <p className="break-all text-sm">{String(contact.contact_value)}</p>}<div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="ghost" onClick={() => openEditor("contact", contact as never)}>Edit</Button><Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => { setMode("contact"); setEditingRecord(contact as never); openDelete("remove_contact", contact as never, "contact info") }}>Remove</Button></div></div>)}</div> : <p className="text-sm text-muted-foreground">No contacts.</p>}</div></div>{pendingDelete ? <div className="space-y-3 rounded-lg border p-4"><h3 className="font-semibold">Remove {pendingDelete.label}</h3><p className="text-sm text-muted-foreground">Enter a reason before removing this {pendingDelete.label}.</p><div><Label>Reason</Label><Textarea value={reason} onChange={(event) => { setReason(event.target.value); setReasonError(null); }} className={reasonError ? "border-destructive" : undefined} />{reasonError ? <p className="mt-1 text-sm text-destructive">{reasonError}</p> : null}</div><div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => { setPendingDelete(null); setReason(""); setReasonError(null); }}>Cancel</Button><Button type="button" variant="destructive" onClick={confirmDelete} disabled={isSaving}>{isSaving ? "Removing..." : "Remove"}</Button></div></div> : renderEditor()}</> : <SectionEmpty>No participant selected.</SectionEmpty>}
       </div>
     </div>
-    <DialogFooter className="shrink-0"><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Close</Button></DialogFooter></DialogContent></Dialog>;
+    <DialogFooter className="shrink-0"><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Close</Button></DialogFooter></DialogContent>
+    <Dialog open={correctionHistoryOpen} onOpenChange={setCorrectionHistoryOpen}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+        <DialogHeader><DialogTitle>Correction History</DialogTitle><DialogDescription>Prior voided person details are shown only in this correction history.</DialogDescription></DialogHeader>
+        {correctionHistoryError ? <Alert variant="destructive"><AlertDescription>{correctionHistoryError}</AlertDescription></Alert> : null}
+        <div className="space-y-3">{correctionHistory.length === 0 ? <SectionEmpty>No participant corrections recorded.</SectionEmpty> : correctionHistory.map((entry) => <div key={entry.id} className="rounded-lg border p-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Correction</Badge><span className="text-muted-foreground">{formatDate(entry.corrected_at)}</span><span className="text-muted-foreground">by {entry.corrected_by_display ?? (entry.corrected_by_user_id ? `User #${entry.corrected_by_user_id}` : "—")}</span></div>
+          <p className="mt-2 text-muted-foreground">Reason: {entry.reason ?? "—"}</p>
+          <div className="mt-3 grid gap-3 md:grid-cols-2"><div><p className="mb-1 font-medium">Old name/details</p><pre className="overflow-auto rounded-md bg-muted p-2 text-xs">{formatJsonPreview(correctionSnapshot(entry.old_snapshot_json, "person"))}</pre></div><div><p className="mb-1 font-medium">New name/details</p><pre className="overflow-auto rounded-md bg-muted p-2 text-xs">{formatJsonPreview(correctionSnapshot(entry.new_snapshot_json, "person"))}</pre></div><div><p className="mb-1 font-medium">Old attributes</p><pre className="overflow-auto rounded-md bg-muted p-2 text-xs">{formatJsonPreview(correctionSnapshot(entry.old_snapshot_json, "attributes"))}</pre></div><div><p className="mb-1 font-medium">New attributes</p><pre className="overflow-auto rounded-md bg-muted p-2 text-xs">{formatJsonPreview(correctionSnapshot(entry.new_snapshot_json, "attributes"))}</pre></div></div>
+        </div>)}</div>
+        <DialogFooter><Button type="button" onClick={() => setCorrectionHistoryOpen(false)}>Close</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  </Dialog>;
 }
 
 function OverviewHistoryDialog({ caseId, open, onOpenChange }: { caseId: number; open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -1388,6 +1447,7 @@ export default function CaseDetailsPage() {
     const grouped = new Map<string, CaseParticipantRecord[]>();
 
     for (const participant of data?.participants ?? []) {
+      if (isVoidedPersonParticipant(participant)) continue;
       const role = roleLabel(participant);
       grouped.set(role, [...(grouped.get(role) ?? []), participant]);
     }
@@ -1604,7 +1664,7 @@ export default function CaseDetailsPage() {
                 }
                 onSaved={loadCase}
                 open={activeOverviewEditor === "participants"}
-                participants={data.participants}
+                participants={data.participants.filter((participant) => !isVoidedPersonParticipant(participant))}
               />
               <OverviewHistoryDialog
                 caseId={caseId}
