@@ -577,86 +577,118 @@ function ChargeEntries({
   title: string;
   violations: TableRow<"violations">[];
 }) {
+  const [databasePickerIndex, setDatabasePickerIndex] = useState<number | null>(null);
+  const [violationSearch, setViolationSearch] = useState("");
+
   const updateCharge = (index: number, charge: CaseResolutionChargeInput) => {
     onChange(charges.map((item, itemIndex) => itemIndex === index ? charge : item));
   };
+
+  const filteredViolations = violations.filter((violation) => {
+    const searchText = violationSearch.trim().toLowerCase();
+    if (!searchText) return true;
+
+    return [violation.title, violation.short_label, violation.reference_code, violation.law_reference, violation.description]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(searchText));
+  }).slice(0, 25);
 
   return (
     <div className="space-y-3 rounded-md border bg-muted/20 p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
           <Label>{title}</Label>
-          <p className="text-xs text-muted-foreground">Select an existing case violation or type the prosecutor-recommended violation.</p>
+          <p className="text-xs text-muted-foreground">Type a charge or choose from this case's current violations.</p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={() => onChange([...charges, emptyResolutionCharge()])}>Add charge</Button>
       </div>
       <div className="space-y-3">
-        {charges.map((charge, index) => (
-          <div key={index} className="space-y-2 rounded-md border bg-background p-3">
-            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-              <div className="space-y-2">
-                <Label htmlFor={`${title}-${index}-case-violation`}>Current case violation</Label>
-                <select
-                  id={`${title}-${index}-case-violation`}
-                  className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm"
-                  value={charge.caseViolationId ?? ""}
-                  onChange={(event) => {
-                    const selected = caseViolations.find((caseViolation) => Number(caseViolation.id) === Number(event.target.value));
-                    updateCharge(index, {
-                      chargeText: selected ? caseViolationChargeText(selected) : "",
-                      caseViolationId: selected?.id ?? null,
-                      violationId: selected?.violation_id ?? selected?.violations?.id ?? null,
-                    });
-                  }}
+        {charges.map((charge, index) => {
+          const caseViolationListId = `${title}-${index}-case-violations`;
+
+          return (
+            <div key={index} className="space-y-2 rounded-md border bg-background p-3">
+              <div className="flex gap-2">
+                <div className="flex-1 space-y-2">
+                  <Label htmlFor={`${title}-${index}-charge-text`}>Charge</Label>
+                  <Input
+                    id={`${title}-${index}-charge-text`}
+                    value={charge.chargeText}
+                    list={caseViolationListId}
+                    placeholder="Type charge or select a current case violation"
+                    onBlur={(event) => {
+                      const selected = caseViolations.find((caseViolation) => caseViolationChargeText(caseViolation) === event.target.value.trim());
+                      if (selected) {
+                        updateCharge(index, {
+                          chargeText: caseViolationChargeText(selected),
+                          caseViolationId: selected.id,
+                          violationId: selected.violation_id ?? selected.violations?.id ?? null,
+                        });
+                      }
+                    }}
+                    onChange={(event) => updateCharge(index, { ...charge, chargeText: event.target.value, caseViolationId: null, violationId: null })}
+                  />
+                  <datalist id={caseViolationListId}>
+                    {caseViolations.map((caseViolation) => (
+                      <option key={caseViolation.id} value={caseViolationChargeText(caseViolation)} />
+                    ))}
+                  </datalist>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="self-end"
+                  onClick={() => onChange(charges.length === 1 ? [emptyResolutionCharge()] : charges.filter((_, itemIndex) => itemIndex !== index))}
                 >
-                  <option value="">Type/select specific violation instead</option>
-                  {caseViolations.map((caseViolation) => (
-                    <option key={caseViolation.id} value={caseViolation.id}>{caseViolationChargeText(caseViolation)}</option>
-                  ))}
-                </select>
+                  Remove
+                </Button>
               </div>
-              <Button
+              <button
                 type="button"
-                variant="outline"
-                size="sm"
-                className="self-end"
-                onClick={() => onChange(charges.length === 1 ? [emptyResolutionCharge()] : charges.filter((_, itemIndex) => itemIndex !== index))}
+                className="text-xs font-medium text-primary underline-offset-4 hover:underline"
+                onClick={() => {
+                  setDatabasePickerIndex(databasePickerIndex === index ? null : index);
+                  setViolationSearch("");
+                }}
               >
-                Remove
-              </Button>
+                Find Violation in Database
+              </button>
+              {databasePickerIndex === index ? (
+                <div className="space-y-2 rounded-md border bg-muted/30 p-2">
+                  <Input
+                    value={violationSearch}
+                    placeholder="Search violations..."
+                    onChange={(event) => setViolationSearch(event.target.value)}
+                  />
+                  <div className="max-h-48 space-y-1 overflow-y-auto">
+                    {filteredViolations.length === 0 ? (
+                      <p className="px-2 py-1 text-xs text-muted-foreground">No violations found.</p>
+                    ) : null}
+                    {filteredViolations.map((violation) => (
+                      <button
+                        key={violation.id}
+                        type="button"
+                        className="block w-full rounded-sm px-2 py-1 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                        onClick={() => {
+                          updateCharge(index, {
+                            chargeText: violationOptionText(violation),
+                            caseViolationId: null,
+                            violationId: violation.id,
+                          });
+                          setDatabasePickerIndex(null);
+                          setViolationSearch("");
+                        }}
+                      >
+                        {violationOptionText(violation)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor={`${title}-${index}-specific-violation`}>Specific violation</Label>
-                <select
-                  id={`${title}-${index}-specific-violation`}
-                  className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm"
-                  value={charge.caseViolationId ? "" : charge.violationId ?? ""}
-                  onChange={(event) => {
-                    const selected = violations.find((violation) => Number(violation.id) === Number(event.target.value));
-                    updateCharge(index, {
-                      chargeText: selected ? violationOptionText(selected) : "",
-                      caseViolationId: null,
-                      violationId: selected?.id ?? null,
-                    });
-                  }}
-                >
-                  <option value="">No reference violation selected</option>
-                  {violations.map((violation) => <option key={violation.id} value={violation.id}>{violationOptionText(violation)}</option>)}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor={`${title}-${index}-charge-text`}>Recommended charge text</Label>
-                <Input
-                  id={`${title}-${index}-charge-text`}
-                  value={charge.chargeText}
-                  placeholder="Type violation recommended by the prosecutor"
-                  onChange={(event) => updateCharge(index, { ...charge, chargeText: event.target.value, caseViolationId: null })}
-                />
-              </div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
