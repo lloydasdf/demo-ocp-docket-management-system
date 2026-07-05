@@ -35,10 +35,13 @@ import {
   type CasePetitionForReviewRecord,
   type CaseTimelineEventRecord,
   type CaseEventTypeReference,
+  type CaseAssignmentRecord,
   createCaseEvent,
+  getCaseAssignments,
   getProsecutors,
   getStaff,
   recordCaseAssignmentEvent,
+  recordCaseReassignmentEvent,
   editCaseEvent,
   getCaseEventTypes,
   voidCaseEvent,
@@ -160,7 +163,7 @@ function stringDetail(value: unknown) {
 
 
 function isAssignmentEvent(event: CaseTimelineEventRecord) {
-  return eventSourceTable(event) === "case_assignments" || event.event_type_code === "CASE_ASSIGNMENT";
+  return eventSourceTable(event) === "case_assignments" || event.event_type_code === "CASE_ASSIGNMENT" || event.event_type_code === "CASE_REASSIGNMENT";
 }
 
 function assignmentEventDetails(event: CaseTimelineEventRecord) {
@@ -513,7 +516,8 @@ export function CaseTimeline({
   const [eventTypesError, setEventTypesError] = useState<string | null>(null);
   const [prosecutors, setProsecutors] = useState<TableRow<"prosecutors">[]>([]);
   const [staffMembers, setStaffMembers] = useState<TableRow<"staff">[]>([]);
-  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "" });
+  const [assignments, setAssignments] = useState<CaseAssignmentRecord[]>([]);
+  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "" });
   const [editForm, setEditForm] = useState({ eventDate: "", title: "", description: "", editReason: "" });
   const [voidReason, setVoidReason] = useState("");
   const [voidConfirmed, setVoidConfirmed] = useState(false);
@@ -524,7 +528,7 @@ export function CaseTimeline({
   const openAddDialog = async () => {
     setActionError(null);
     setEventTypesError(null);
-    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "" });
+    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "" });
     setIsAddDialogOpen(true);
 
     if (eventTypes.length === 0) {
@@ -548,13 +552,18 @@ export function CaseTimeline({
       const result = await getStaff(250);
       if (!result.error) setStaffMembers(result.data);
     }
+
+    const assignmentResult = await getCaseAssignments(caseId);
+    if (!assignmentResult.error) setAssignments(assignmentResult.data);
   };
 
   const handleAddSave = async () => {
     const isAssignment = addForm.eventTypeCode === "CASE_ASSIGNMENT";
+    const isReassignment = addForm.eventTypeCode === "CASE_REASSIGNMENT";
     if (!addForm.eventTypeCode || !addForm.eventDate) return;
-    if (isAssignment && !addForm.prosecutorId) return;
-    if (!isAssignment && !addForm.title.trim()) return;
+    if ((isAssignment || isReassignment) && !addForm.prosecutorId) return;
+    if (isReassignment && !addForm.reason.trim()) return;
+    if (!isAssignment && !isReassignment && !addForm.title.trim()) return;
     setIsSaving(true);
     setActionError(null);
     const result = isAssignment
@@ -566,7 +575,17 @@ export function CaseTimeline({
         staffId: addForm.staffId ? Number(addForm.staffId) : null,
         remarks: addForm.description,
       })
-      : await createCaseEvent({
+      : isReassignment
+        ? await recordCaseReassignmentEvent({
+          caseId,
+          prosecutorId: Number(addForm.prosecutorId),
+          reassignmentDate: addForm.eventDate,
+          reassignmentTime: addForm.eventTime || null,
+          staffId: addForm.staffId ? Number(addForm.staffId) : null,
+          reason: addForm.reason,
+          remarks: addForm.description,
+        })
+        : await createCaseEvent({
         caseId,
         eventTypeCode: addForm.eventTypeCode,
         eventDate: addForm.eventDate,
@@ -581,6 +600,9 @@ export function CaseTimeline({
     }
     setIsAddDialogOpen(false);
     await onChanged?.();
+    if (isReassignment) {
+      onUpdateStatus?.();
+    }
   };
 
   const openEditDialog = (event: CaseTimelineEventRecord) => {
@@ -643,6 +665,9 @@ export function CaseTimeline({
   };
 
   const isAddingAssignment = addForm.eventTypeCode === "CASE_ASSIGNMENT";
+  const isAddingReassignment = addForm.eventTypeCode === "CASE_REASSIGNMENT";
+  const isAddingAssignmentLike = isAddingAssignment || isAddingReassignment;
+  const currentAssignment = assignments.find((assignment) => !assignment.unassigned_at && ("is_voided" in assignment ? assignment.is_voided === false : true)) ?? null;
   const selectedEventTypeLabel = eventTypes.find((eventType) => eventType.code === addForm.eventTypeCode)?.display_label ?? "";
 
   const visibleEvents = useMemo(() => events.filter((event) => showVoided || !event.is_voided), [events, showVoided]);
@@ -794,7 +819,7 @@ export function CaseTimeline({
             {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
             <div className="space-y-2">
               <Label htmlFor="add-event-type">Event Type</Label>
-              <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : form.title }))}>
+              <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : form.title }))}>
                 {eventTypes.map((eventType) => <option key={eventType.code} value={eventType.code}>{eventType.display_label}</option>)}
               </select>
             </div>
@@ -803,11 +828,22 @@ export function CaseTimeline({
                 Assigning this case to a prosecutor will automatically change the case status to Pending.
               </div>
             ) : null}
-            {isAddingAssignment ? (
+            {isAddingReassignment ? (
+              <div className="rounded-md border bg-muted/40 p-3 text-sm">
+                <p className="mb-2 font-medium">Current assignment</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <OptionalDetailItem label="Current Prosecutor" value={currentAssignment?.prosecutors?.short_name ?? currentAssignment?.prosecutors?.full_name} />
+                  <OptionalDetailItem label="Current Staff" value={currentAssignment?.staff?.short_name ?? currentAssignment?.staff?.full_name} />
+                </div>
+                {!currentAssignment ? <p className="text-muted-foreground">No active assignment found.</p> : null}
+              </div>
+            ) : null}
+            {isAddingAssignmentLike ? (
               <>
-                <div className="space-y-2"><Label htmlFor="add-assigned-prosecutor">Assigned Prosecutor</Label><select id="add-assigned-prosecutor" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.prosecutorId} onChange={(e) => setAddForm((form) => ({ ...form, prosecutorId: e.target.value }))}><option value="">Select prosecutor</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select></div>
-                <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="add-assignment-date">Assignment Date</Label><Input id="add-assignment-date" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="add-assignment-time">Assignment Time</Label><Input id="add-assignment-time" type="time" value={addForm.eventTime} onChange={(e) => setAddForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
-                <div className="space-y-2"><Label htmlFor="add-assigned-staff">Assigned Staff</Label><select id="add-assigned-staff" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.staffId} onChange={(e) => setAddForm((form) => ({ ...form, staffId: e.target.value }))}><option value="">No staff selected</option>{staffMembers.map((staff) => <option key={staff.id} value={staff.id}>{staff.short_name ?? staff.full_name}</option>)}</select></div>
+                <div className="space-y-2"><Label htmlFor="add-assigned-prosecutor">{isAddingReassignment ? "New Prosecutor" : "Assigned Prosecutor"}</Label><select id="add-assigned-prosecutor" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.prosecutorId} onChange={(e) => setAddForm((form) => ({ ...form, prosecutorId: e.target.value }))}><option value="">Select prosecutor</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select></div>
+                <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="add-assignment-date">{isAddingReassignment ? "Reassignment Date" : "Assignment Date"}</Label><Input id="add-assignment-date" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="add-assignment-time">{isAddingReassignment ? "Reassignment Time" : "Assignment Time"}</Label><Input id="add-assignment-time" type="time" value={addForm.eventTime} onChange={(e) => setAddForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
+                <div className="space-y-2"><Label htmlFor="add-assigned-staff">{isAddingReassignment ? "New Staff" : "Assigned Staff"}</Label><select id="add-assigned-staff" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.staffId} onChange={(e) => setAddForm((form) => ({ ...form, staffId: e.target.value }))}><option value="">No staff selected</option>{staffMembers.map((staff) => <option key={staff.id} value={staff.id}>{staff.short_name ?? staff.full_name}</option>)}</select></div>
+                {isAddingReassignment ? <div className="space-y-2"><Label htmlFor="add-reassignment-reason">Reason</Label><Textarea id="add-reassignment-reason" required value={addForm.reason} onChange={(e) => setAddForm((form) => ({ ...form, reason: e.target.value }))} /></div> : null}
                 <div className="space-y-2"><Label htmlFor="add-assignment-remarks">Remarks</Label><Textarea id="add-assignment-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
               </>
             ) : (
@@ -820,7 +856,7 @@ export function CaseTimeline({
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
-            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignment ? !addForm.prosecutorId : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingAssignment ? "Confirm Assignment" : "Add event"}</Button>
+            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : "Add event"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
