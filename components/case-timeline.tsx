@@ -449,6 +449,25 @@ function DetailItem({
   );
 }
 
+const ADD_EVENT_TYPE_CODES = new Set([
+  "CASE_ASSIGNMENT",
+  "CASE_REASSIGNMENT",
+  "CASE_RESOLVED",
+  "CASE_DECISION_APPROVED",
+  "COURT_FILING",
+  "COURT_STATUS_UPDATE",
+  "MOTION_RECEIVED",
+  "MOTION_RESOLVED",
+  "MOTION_DECISION_APPROVED",
+  "PETITION_FOR_REVIEW",
+  "CUSTOM_EVENT",
+  "ADD_EVENT_TYPE",
+]);
+
+function addableEventTypes(eventTypes: CaseEventTypeReference[]) {
+  return eventTypes.filter((eventType) => ADD_EVENT_TYPE_CODES.has(eventType.code));
+}
+
 export function CaseTimeline({
   caseId,
   courts = [],
@@ -476,7 +495,7 @@ export function CaseTimeline({
   const openAddDialog = async () => {
     setActionError(null);
     setEventTypesError(null);
-    setAddForm({ eventTypeCode: eventTypes[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), title: "", description: "" });
+    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), title: "", description: "" });
     setIsAddDialogOpen(true);
 
     if (eventTypes.length === 0) {
@@ -486,8 +505,9 @@ export function CaseTimeline({
         return;
       }
 
-      setEventTypes(result.data);
-      setAddForm((form) => ({ ...form, eventTypeCode: form.eventTypeCode || result.data[0]?.code || "" }));
+      const filteredEventTypes = addableEventTypes(result.data);
+      setEventTypes(filteredEventTypes);
+      setAddForm((form) => ({ ...form, eventTypeCode: form.eventTypeCode || filteredEventTypes[0]?.code || "" }));
     }
   };
 
