@@ -158,8 +158,13 @@ function stringDetail(value: unknown) {
   return String(value);
 }
 
+
+function isAssignmentEvent(event: CaseTimelineEventRecord) {
+  return eventSourceTable(event) === "case_assignments" || event.event_type_code === "CASE_ASSIGNMENT";
+}
+
 function assignmentEventDetails(event: CaseTimelineEventRecord) {
-  if (eventSourceTable(event) !== "case_assignments") {
+  if (!isAssignmentEvent(event)) {
     return null;
   }
 
@@ -629,8 +634,12 @@ export function CaseTimeline({
       setActionError(result.error.message);
       return;
     }
+    const shouldPromptStatusUpdate = isAssignmentEvent(voidingEvent);
     setVoidingEvent(null);
     await onChanged?.();
+    if (shouldPromptStatusUpdate) {
+      onUpdateStatus?.();
+    }
   };
 
   const isAddingAssignment = addForm.eventTypeCode === "CASE_ASSIGNMENT";
