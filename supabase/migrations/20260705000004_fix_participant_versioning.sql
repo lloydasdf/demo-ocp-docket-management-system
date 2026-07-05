@@ -29,7 +29,9 @@ ALTER TABLE public.participant_contact_informations
   ADD COLUMN IF NOT EXISTS deactivated_by_user_id bigint,
   ADD COLUMN IF NOT EXISTS deactivation_reason text;
 
-CREATE OR REPLACE VIEW public.v_case_participant_corrections AS
+DROP VIEW IF EXISTS public.v_case_participant_corrections;
+
+CREATE VIEW public.v_case_participant_corrections AS
 SELECT c.id,
        c.case_id,
        c.case_participant_id,
@@ -47,6 +49,9 @@ FROM public.case_participant_corrections c
 LEFT JOIN public.users u ON u.id = c.corrected_by_user_id
 LEFT JOIN public.staff s ON s.id = u.staff_id
 LEFT JOIN public.prosecutors p ON p.id = u.prosecutor_id;
+
+GRANT SELECT ON public.v_case_participant_corrections TO anon, authenticated, service_role;
+
 CREATE OR REPLACE VIEW public.v_case_participants_detail AS
  SELECT cp.id,
     cp.case_id,
