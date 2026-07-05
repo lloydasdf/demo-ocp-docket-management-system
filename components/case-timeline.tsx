@@ -594,23 +594,23 @@ function ChargeEntries({
   }).slice(0, 25);
 
   return (
-    <div className="space-y-3 rounded-md border bg-muted/20 p-3">
-      <div className="flex items-center justify-between gap-3">
+    <div className="space-y-2 rounded-md border bg-muted/20 p-2">
+      <div className="flex items-start justify-between gap-3">
         <div>
           <Label>{title}</Label>
-          <p className="text-xs text-muted-foreground">Type a charge or choose from this case's current violations.</p>
+          <p className="text-xs leading-tight text-muted-foreground">Type or choose from current case violations.</p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={() => onChange([...charges, emptyResolutionCharge()])}>Add charge</Button>
       </div>
-      <div className="space-y-3">
+      <div className="space-y-2">
         {charges.map((charge, index) => {
           const caseViolationListId = `${title}-${index}-case-violations`;
 
           return (
-            <div key={index} className="space-y-2 rounded-md border bg-background p-3">
-              <div className="flex gap-2">
-                <div className="flex-1 space-y-2">
-                  <Label htmlFor={`${title}-${index}-charge-text`}>Charge</Label>
+            <div key={index} className="space-y-1.5 rounded-md border bg-background p-2">
+              <div className="flex items-end gap-2">
+                <div className="flex-1 space-y-1">
+                  <Label className="sr-only" htmlFor={`${title}-${index}-charge-text`}>Charge</Label>
                   <Input
                     id={`${title}-${index}-charge-text`}
                     value={charge.chargeText}
@@ -646,7 +646,7 @@ function ChargeEntries({
               </div>
               <button
                 type="button"
-                className="text-xs font-medium text-primary underline-offset-4 hover:underline"
+                className="text-xs font-medium leading-none text-primary underline-offset-4 hover:underline"
                 onClick={() => {
                   setDatabasePickerIndex(databasePickerIndex === index ? null : index);
                   setViolationSearch("");
@@ -655,13 +655,13 @@ function ChargeEntries({
                 Find Violation in Database
               </button>
               {databasePickerIndex === index ? (
-                <div className="space-y-2 rounded-md border bg-muted/30 p-2">
+                <div className="space-y-1.5 rounded-md border bg-muted/30 p-2">
                   <Input
                     value={violationSearch}
                     placeholder="Search violations..."
                     onChange={(event) => setViolationSearch(event.target.value)}
                   />
-                  <div className="max-h-48 space-y-1 overflow-y-auto">
+                  <div className="max-h-40 space-y-1 overflow-y-auto">
                     {filteredViolations.length === 0 ? (
                       <p className="px-2 py-1 text-xs text-muted-foreground">No violations found.</p>
                     ) : null}
@@ -1074,12 +1074,12 @@ export function CaseTimeline({
       </CardContent>
 
       <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="grid max-h-[calc(100vh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] gap-3 p-5 sm:max-w-xl">
+          <DialogHeader className="gap-1">
             <DialogTitle>Add event</DialogTitle>
             <DialogDescription>Add a new activity to this case timeline.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="min-h-0 space-y-3 overflow-y-auto pr-1">
             {eventTypesError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{eventTypesError}</p> : null}
             {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
             <div className="space-y-2">
@@ -1114,10 +1114,10 @@ export function CaseTimeline({
             ) : isAddingResolved ? (
               <>
                 <div className="space-y-2"><Label htmlFor="add-resolution-recommendation">Recommendation</Label><select id="add-resolution-recommendation" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.recommendationCode} onChange={(e) => setAddForm((form) => ({ ...form, recommendationCode: e.target.value }))}><option value="">Select recommendation</option><option value="CASE_FOR_FILING">Case for Filing</option><option value="CASE_DISMISSAL">Case Dismissal</option><option value="MIXED_RESULT">Mixed Result</option></select></div>
-                <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="add-date-resolved">Date Resolved</Label><Input id="add-date-resolved" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="add-time-resolved">Time Resolved</Label><Input id="add-time-resolved" type="time" value={addForm.eventTime} onChange={(e) => setAddForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-date-resolved">Date Resolved</Label><Input id="add-date-resolved" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-1"><Label htmlFor="add-time-resolved">Time Resolved</Label><Input id="add-time-resolved" type="time" value={addForm.eventTime} onChange={(e) => setAddForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
                 {showChargesForFiling ? <ChargeEntries title="Charges for Filing" charges={addForm.chargesForFiling} caseViolations={caseViolations} violations={violations} onChange={(charges) => setAddForm((form) => ({ ...form, chargesForFiling: charges }))} /> : null}
                 {showChargesForDismissal ? <ChargeEntries title="Charges for Dismissal" charges={addForm.chargesForDismissal} caseViolations={caseViolations} violations={violations} onChange={(charges) => setAddForm((form) => ({ ...form, chargesForDismissal: charges }))} /> : null}
-                <div className="space-y-2"><Label htmlFor="add-resolution-remarks">Remarks</Label><Textarea id="add-resolution-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
+                <div className="space-y-1"><Label htmlFor="add-resolution-remarks">Remarks</Label><Textarea id="add-resolution-remarks" className="min-h-20" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
               </>
             ) : (
               <>
@@ -1127,7 +1127,7 @@ export function CaseTimeline({
               </>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="border-t pt-3">
             <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
             <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : "Add event"}</Button>
           </DialogFooter>
