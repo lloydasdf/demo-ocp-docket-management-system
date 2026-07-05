@@ -74,6 +74,26 @@ function formatDate(value: string | null | undefined) {
   return parsedDate.toLocaleDateString();
 }
 
+function formatTime(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const [hours, minutes] = value.split(":");
+  if (!hours || !minutes) {
+    return value;
+  }
+
+  const parsedDate = new Date();
+  parsedDate.setHours(Number(hours), Number(minutes), 0, 0);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return value;
+  }
+
+  return parsedDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 function formatOptionalDate(
   value: string | null | undefined,
   rawValue?: string | null,
@@ -148,9 +168,9 @@ function assignmentEventDetails(event: CaseTimelineEventRecord) {
     : {};
 
   return [
-    { label: "Previous Prosecutor", value: stringDetail(details.previous_prosecutor_name) },
-    { label: "New Prosecutor", value: stringDetail(details.new_prosecutor_name) ?? event.prosecutor_short_name },
-    { label: "Reason", value: stringDetail(details.reason) },
+    { label: "Assignment date", value: formatDate(event.event_date) },
+    { label: "Assignment time", value: formatTime(event.event_time) },
+    { label: "Assigned staff", value: stringDetail(details.staff_name) ?? event.staff_short_name },
     { label: "Remarks", value: stringDetail(details.remarks) ?? event.description },
   ];
 }
@@ -181,10 +201,7 @@ function timelineDetailItems(event: CaseTimelineEventRecord) {
 
   const assignmentDetails = assignmentEventDetails(event);
   if (assignmentDetails) {
-    return [
-      { label: "Date", value: formatDate(event.event_date) },
-      ...assignmentDetails,
-    ];
+    return assignmentDetails;
   }
 
   if (isMotionForReconsideration(event)) {
@@ -212,7 +229,7 @@ function visibleEventDetails(event: CaseTimelineEventRecord) {
   const hiddenKeys = event.event_type_code === "CASE_RECEIVED"
     ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
     : eventSourceTable(event) === "case_assignments"
-      ? new Set(["action", "previous_assignment_id", "new_assignment_id", "previous_prosecutor_id", "new_prosecutor_id", "previous_prosecutor_name", "new_prosecutor_name", "voided_assignment_id", "voided_event_id", "reason", "remarks"])
+      ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
       : isMotionForReconsideration(event)
         ? new Set(["status", "status_label", "prosecutor", "prosecutor_short_name", "court", "court_name"])
         : new Set<string>();
@@ -347,10 +364,10 @@ function timelineSubtitle(
   petition: CasePetitionForReviewRecord | null,
 ) {
   if (isPetitionForReviewEvent(event)) {
-    return petitionSubtitle(petition) ?? event.description ?? "Petition for Review";
+    return petitionSubtitle(petition) ?? event.description ?? null;
   }
 
-  return event.description ?? "No description provided.";
+  return event.description;
 }
 
 function PetitionForReviewEventDetails({
@@ -664,6 +681,7 @@ export function CaseTimeline({
                       petitionsForReview,
                     );
                     const detailItems = timelineDetailItems(event);
+                    const subtitle = timelineSubtitle(event, petitionDetails);
 
                     return (
                       <div key={event.case_event_id} className="relative">
@@ -684,25 +702,22 @@ export function CaseTimeline({
                                   {timelineTitle(event, petitionDetails)}
                                   {event.is_voided ? <Badge variant="destructive" className="ml-2">VOIDED</Badge> : null}
                                 </p>
-                                <p className="line-clamp-2 text-xs text-muted-foreground">
-                                  {timelineSubtitle(event, petitionDetails)}
-                                </p>
+                                {subtitle ? (
+                                  <p className="line-clamp-2 text-xs text-muted-foreground">
+                                    {subtitle}
+                                  </p>
+                                ) : null}
                               </div>
                             </div>
                           </AccordionTrigger>
                           <AccordionContent className="space-y-3 pb-3">
-                            {!event.is_voided ? (
-                              <div className="flex gap-2">
-                                <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button>
-                                <Button type="button" variant="destructive" size="sm" onClick={() => openVoidDialog(event)}>Void</Button>
-                              </div>
-                            ) : (
+                            {event.is_voided ? (
                               <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
                                 <p className="font-medium text-destructive">VOIDED</p>
                                 <p className="text-muted-foreground">Reason: {event.void_reason ?? "—"}</p>
                                 <p className="text-muted-foreground">Voided: {formatDate(event.voided_at)} by {event.voided_by_email ?? "—"}</p>
                               </div>
-                            )}
+                            ) : null}
                             {detailItems.length > 0 ? (
                               <div className="grid gap-3 sm:grid-cols-2">
                                 {detailItems.map((detail) => (
@@ -734,6 +749,12 @@ export function CaseTimeline({
                             {motionDetails ? <MotionEventDetails motion={motionDetails} /> : null}
                             {petitionDetails ? (
                               <PetitionForReviewEventDetails petition={petitionDetails} />
+                            ) : null}
+                            {!event.is_voided ? (
+                              <div className="flex gap-2 border-t pt-3">
+                                <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button>
+                                <Button type="button" variant="destructive" size="sm" onClick={() => openVoidDialog(event)}>Void</Button>
+                              </div>
                             ) : null}
                           </AccordionContent>
                         </AccordionItem>
