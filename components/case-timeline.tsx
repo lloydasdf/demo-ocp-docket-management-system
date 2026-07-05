@@ -577,6 +577,7 @@ function ChargeEntries({
   title: string;
   violations: TableRow<"violations">[];
 }) {
+  const [caseViolationPickerIndex, setCaseViolationPickerIndex] = useState<number | null>(null);
   const [databasePickerIndex, setDatabasePickerIndex] = useState<number | null>(null);
   const [violationSearch, setViolationSearch] = useState("");
 
@@ -604,35 +605,53 @@ function ChargeEntries({
       </div>
       <div className="space-y-2">
         {charges.map((charge, index) => {
-          const caseViolationListId = `${title}-${index}-case-violations`;
-
           return (
             <div key={index} className="space-y-1.5 rounded-md border bg-background p-2">
               <div className="flex items-end gap-2">
-                <div className="flex-1 space-y-1">
+                <div className="min-w-0 flex-1 space-y-1">
                   <Label className="sr-only" htmlFor={`${title}-${index}-charge-text`}>Charge</Label>
-                  <Input
-                    id={`${title}-${index}-charge-text`}
-                    value={charge.chargeText}
-                    list={caseViolationListId}
-                    placeholder="Type charge or select a current case violation"
-                    onBlur={(event) => {
-                      const selected = caseViolations.find((caseViolation) => caseViolationChargeText(caseViolation) === event.target.value.trim());
-                      if (selected) {
-                        updateCharge(index, {
-                          chargeText: caseViolationChargeText(selected),
-                          caseViolationId: selected.id,
-                          violationId: selected.violation_id ?? selected.violations?.id ?? null,
-                        });
-                      }
-                    }}
-                    onChange={(event) => updateCharge(index, { ...charge, chargeText: event.target.value, caseViolationId: null, violationId: null })}
-                  />
-                  <datalist id={caseViolationListId}>
-                    {caseViolations.map((caseViolation) => (
-                      <option key={caseViolation.id} value={caseViolationChargeText(caseViolation)} />
-                    ))}
-                  </datalist>
+                  <div className="flex rounded-md shadow-sm">
+                    <Input
+                      id={`${title}-${index}-charge-text`}
+                      value={charge.chargeText}
+                      className="rounded-r-none"
+                      placeholder="Type charge or select a current case violation"
+                      onChange={(event) => updateCharge(index, { ...charge, chargeText: event.target.value, caseViolationId: null, violationId: null })}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="rounded-l-none border-l-0 px-3"
+                      aria-label="Show current case violations"
+                      onClick={() => setCaseViolationPickerIndex(caseViolationPickerIndex === index ? null : index)}
+                    >
+                      ▼
+                    </Button>
+                  </div>
+                  {caseViolationPickerIndex === index ? (
+                    <div className="max-h-40 overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
+                      {caseViolations.length === 0 ? (
+                        <p className="px-2 py-1 text-xs text-muted-foreground">No current case violations found.</p>
+                      ) : null}
+                      {caseViolations.map((caseViolation) => (
+                        <button
+                          key={caseViolation.id}
+                          type="button"
+                          className="block w-full rounded-sm px-2 py-1 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                          onClick={() => {
+                            updateCharge(index, {
+                              chargeText: caseViolationChargeText(caseViolation),
+                              caseViolationId: caseViolation.id,
+                              violationId: caseViolation.violation_id ?? caseViolation.violations?.id ?? null,
+                            });
+                            setCaseViolationPickerIndex(null);
+                          }}
+                        >
+                          {caseViolationChargeText(caseViolation)}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
                 <Button
                   type="button"
@@ -648,6 +667,7 @@ function ChargeEntries({
                 type="button"
                 className="text-xs font-medium leading-none text-primary underline-offset-4 hover:underline"
                 onClick={() => {
+                  setCaseViolationPickerIndex(null);
                   setDatabasePickerIndex(databasePickerIndex === index ? null : index);
                   setViolationSearch("");
                 }}
