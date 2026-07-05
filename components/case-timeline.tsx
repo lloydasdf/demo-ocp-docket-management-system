@@ -34,16 +34,22 @@ import {
   type CaseMotionRecord,
   type CasePetitionForReviewRecord,
   type CaseTimelineEventRecord,
+  type CaseEventTypeReference,
+  createCaseEvent,
   editCaseEvent,
+  getCaseEventTypes,
   voidCaseEvent,
 } from "@/lib/supabase/queries";
 
 export type CaseTimelineProps = {
+  caseId: number;
   events: CaseTimelineEventRecord[];
   courts?: CaseCourtRecord[];
   motions?: CaseMotionRecord[];
   petitionsForReview?: CasePetitionForReviewRecord[];
   onChanged?: () => void | Promise<void>;
+  onAssignReassign?: () => void;
+  onUpdateStatus?: () => void;
 };
 
 function toDateInputValue(value: string | null | undefined) {
@@ -444,20 +450,67 @@ function DetailItem({
 }
 
 export function CaseTimeline({
+  caseId,
   courts = [],
   events,
   motions = [],
+  onAssignReassign,
   onChanged,
+  onUpdateStatus,
   petitionsForReview = [],
 }: CaseTimelineProps) {
   const [showVoided, setShowVoided] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CaseTimelineEventRecord | null>(null);
   const [voidingEvent, setVoidingEvent] = useState<CaseTimelineEventRecord | null>(null);
+  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [eventTypes, setEventTypes] = useState<CaseEventTypeReference[]>([]);
+  const [eventTypesError, setEventTypesError] = useState<string | null>(null);
+  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: new Date().toISOString().slice(0, 10), title: "", description: "" });
   const [editForm, setEditForm] = useState({ eventDate: "", title: "", description: "", editReason: "" });
   const [voidReason, setVoidReason] = useState("");
   const [voidConfirmed, setVoidConfirmed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+
+  const openAddDialog = async () => {
+    setActionError(null);
+    setEventTypesError(null);
+    setAddForm({ eventTypeCode: eventTypes[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), title: "", description: "" });
+    setIsAddDialogOpen(true);
+
+    if (eventTypes.length === 0) {
+      const result = await getCaseEventTypes();
+      if (result.error) {
+        setEventTypesError(result.error.message);
+        return;
+      }
+
+      setEventTypes(result.data);
+      setAddForm((form) => ({ ...form, eventTypeCode: form.eventTypeCode || result.data[0]?.code || "" }));
+    }
+  };
+
+  const handleAddSave = async () => {
+    if (!addForm.eventTypeCode || !addForm.eventDate || !addForm.title.trim()) return;
+    setIsSaving(true);
+    setActionError(null);
+    const result = await createCaseEvent({
+      caseId,
+      eventTypeCode: addForm.eventTypeCode,
+      eventDate: addForm.eventDate,
+      title: addForm.title,
+      description: addForm.description,
+      detailsJson: {},
+    });
+    setIsSaving(false);
+    if (result.error) {
+      setActionError(result.error.message);
+      return;
+    }
+    setIsAddDialogOpen(false);
+    await onChanged?.();
+  };
 
   const openEditDialog = (event: CaseTimelineEventRecord) => {
     if (event.is_voided) return;
@@ -641,7 +694,38 @@ export function CaseTimeline({
             ))}
           </div>
         )}
+        <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+          <Button type="button" variant="outline" onClick={onUpdateStatus}>Update Status</Button>
+          <Button type="button" variant="outline" onClick={onAssignReassign}>Assign / Reassign</Button>
+          <Button type="button" onClick={openAddDialog}>Add Event</Button>
+        </div>
       </CardContent>
+
+      <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add event</DialogTitle>
+            <DialogDescription>Add a new activity to this case timeline.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {eventTypesError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{eventTypesError}</p> : null}
+            {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
+            <div className="space-y-2">
+              <Label htmlFor="add-event-type">Event Type</Label>
+              <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value }))}>
+                {eventTypes.map((eventType) => <option key={eventType.code} value={eventType.code}>{eventType.display_label}</option>)}
+              </select>
+            </div>
+            <div className="space-y-2"><Label htmlFor="add-event-date">Event Date</Label><Input id="add-event-date" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div>
+            <div className="space-y-2"><Label htmlFor="add-event-title">Title</Label><Input id="add-event-title" value={addForm.title} onChange={(e) => setAddForm((form) => ({ ...form, title: e.target.value }))} /></div>
+            <div className="space-y-2"><Label htmlFor="add-event-description">Description / Remarks</Label><Textarea id="add-event-description" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
+            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || !addForm.title.trim()}>{isSaving ? "Saving..." : "Add event"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={Boolean(editingEvent)} onOpenChange={(open) => !open && setEditingEvent(null)}>
         <DialogContent>
           <DialogHeader>

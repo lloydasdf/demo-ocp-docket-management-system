@@ -1308,8 +1308,6 @@ export default function CaseDetailsPage() {
                       <DropdownMenuContent align="end" className="w-56">
                         <DropdownMenuItem onSelect={() => openOverviewEditor("docket_info")}>Edit Docket Info</DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => openOverviewEditor("case_details")}>Edit Case Details</DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => openOverviewEditor("status")}>Update Status</DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => openOverviewEditor("assignment")}>Assign / Reassign</DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => openOverviewEditor("places")}>Manage Places of Commission</DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => openOverviewEditor("violations")}>Manage Violations</DropdownMenuItem>
                         <DropdownMenuItem onSelect={() => openOverviewEditor("notes")}>Manage Notes</DropdownMenuItem>
@@ -1525,10 +1523,13 @@ export default function CaseDetailsPage() {
 
 
                 <CaseTimeline
+                  caseId={caseId}
                   courts={data.courts}
                   events={data.timeline}
                   motions={data.motions}
+                  onAssignReassign={() => openOverviewEditor("assignment")}
                   onChanged={loadCase}
+                  onUpdateStatus={() => openOverviewEditor("status")}
                   petitionsForReview={data.petitionsForReview}
                 />
 
