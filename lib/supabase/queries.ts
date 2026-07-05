@@ -233,6 +233,17 @@ export interface ClearanceSearchResult {
   matchDetails: string;
   matchType: "exact" | "alias" | "variant" | "fuzzy" | "phonetic";
   roleLabel: string;
+  isVoided: boolean;
+  isCorrected: boolean;
+  replacedByPersonId: number | null;
+  activePersonId: number | null;
+  correctionReason: string | null;
+  correctedAt: string | null;
+  correctedBy: string | null;
+  oldSnapshotJson: Json | null;
+  newSnapshotJson: Json | null;
+  resultGroup: "active" | "inactive";
+  matchSource: "active_name" | "voided_previous_name";
 }
 
 type ClearanceRpcRow = {
@@ -252,6 +263,17 @@ type ClearanceRpcRow = {
   match_details: string | null;
   match_type: ClearanceSearchResult["matchType"] | null;
   role_label: string | null;
+  is_voided?: boolean | null;
+  is_corrected?: boolean | null;
+  replaced_by_person_id?: number | null;
+  active_person_id?: number | null;
+  correction_reason?: string | null;
+  corrected_at?: string | null;
+  corrected_by?: string | null;
+  old_snapshot_json?: Json | null;
+  new_snapshot_json?: Json | null;
+  result_group?: "active" | "inactive" | null;
+  match_source?: "active_name" | "voided_previous_name" | null;
 };
 
 function normalizeClearanceSearchRow(
@@ -262,7 +284,7 @@ function normalizeClearanceSearchRow(
   const caseNumber = row.case_number ?? docketNumber;
 
   return {
-    id: `${row.case_id}-${row.participant_kind ?? "PERSON"}-${row.person_id ?? row.organization_id}`,
+    id: `${row.result_group ?? "active"}-${row.match_source ?? "active_name"}-${row.case_id}-${row.participant_kind ?? "PERSON"}-${row.person_id ?? row.organization_id}`,
     personId: row.person_id,
     organizationId: row.organization_id ?? null,
     participantKind: row.participant_kind ?? (row.organization_id ? "ORGANIZATION" : "PERSON"),
@@ -279,6 +301,17 @@ function normalizeClearanceSearchRow(
     matchDetails: row.match_details ?? "Exact normalized match",
     matchType: row.match_type ?? "exact",
     roleLabel: row.role_label ?? "Participant",
+    isVoided: row.is_voided === true,
+    isCorrected: row.is_corrected === true,
+    replacedByPersonId: row.replaced_by_person_id ?? null,
+    activePersonId: row.active_person_id ?? null,
+    correctionReason: row.correction_reason ?? null,
+    correctedAt: row.corrected_at ?? null,
+    correctedBy: row.corrected_by ?? null,
+    oldSnapshotJson: row.old_snapshot_json ?? null,
+    newSnapshotJson: row.new_snapshot_json ?? null,
+    resultGroup: row.result_group ?? (row.is_voided ? "inactive" : "active"),
+    matchSource: row.match_source ?? (row.is_voided ? "voided_previous_name" : "active_name"),
   };
 }
 

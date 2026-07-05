@@ -24,6 +24,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuLabel,
@@ -155,6 +163,43 @@ function filterResultsByParticipantRole(
   });
 }
 
+function isInactiveClearanceResult(result: ClearanceSearchResult) {
+  return result.resultGroup === "inactive" || result.isVoided;
+}
+
+function activeClearanceResults(results: ClearanceSearchResult[]) {
+  return results.filter((result) => result.resultGroup !== "inactive" && !result.isVoided);
+}
+
+function inactiveClearanceResults(results: ClearanceSearchResult[]) {
+  return results.filter(isInactiveClearanceResult);
+}
+
+function getSnapshotValue(snapshot: unknown, key: "person" | "attributes") {
+  return typeof snapshot === "object" && snapshot && !Array.isArray(snapshot) && key in snapshot ? (snapshot as Record<string, unknown>)[key] : null;
+}
+
+function formatCorrectionDate(value: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function getInactiveBadgeLabel(result: ClearanceSearchResult) {
+  if (result.isCorrected) return "Corrected";
+  if (result.isVoided) return "Voided";
+  return "Inactive";
+}
+
+function getCorrectedPersonName(result: ClearanceSearchResult) {
+  const person = getSnapshotValue(result.newSnapshotJson, "person");
+  if (typeof person === "object" && person && !Array.isArray(person)) {
+    const fullName = (person as Record<string, unknown>).full_name;
+    if (typeof fullName === "string" && fullName.trim()) return fullName;
+  }
+  return result.activePersonId ? `Person #${result.activePersonId}` : "—";
+}
+
 function getResultNameKey(result: ClearanceSearchResult) {
   return result.respondentName.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -207,12 +252,14 @@ interface ResultGroupProps {
   label: keyof typeof confidenceGroups;
   results: ClearanceSearchResult[];
   confidenceTone?: "standard" | "phonetic";
+  onInactiveSelect?: (result: ClearanceSearchResult) => void;
 }
 
 function ResultGroup({
   label,
   results,
   confidenceTone = "standard",
+  onInactiveSelect,
 }: ResultGroupProps) {
   if (results.length === 0) {
     return null;
@@ -235,12 +282,9 @@ function ResultGroup({
         {results.map((result) => {
           const matchDetails = result.matchDetails;
 
-          return (
-            <Link
-              key={result.id}
-              href={result.participantKind === "ORGANIZATION" && result.organizationId ? `/organizations/${result.organizationId}` : `/persons/${result.personId}`}
-              className={`block p-4 bg-white border rounded-lg transition-colors ${config.itemClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
-            >
+          const isInactive = isInactiveClearanceResult(result);
+          const cardClassName = `block p-4 bg-white border rounded-lg transition-colors ${config.itemClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`;
+          const content = (<>
               <div className="flex items-start justify-between gap-4 mb-2">
                 <div className="flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -258,6 +302,11 @@ function ResultGroup({
                     <Badge variant="secondary" className="text-xs capitalize">
                       {result.matchType}
                     </Badge>
+                    {isInactive ? (
+                      <Badge variant="destructive" className="text-xs">
+                        {getInactiveBadgeLabel(result)}
+                      </Badge>
+                    ) : null}
                     {matchDetails ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -278,6 +327,7 @@ function ResultGroup({
                   <p className="text-xs text-muted-foreground">
                     Violations: {result.violations || "—"} | Docket:{" "}
                     {result.docketNumber} | Status: {result.status || "—"}
+                    {isInactive ? ` | Corrected to: ${getCorrectedPersonName(result)}` : ""}
                   </p>
                 </div>
                 <Badge className={`${config.badgeClass} font-bold text-white`}>
@@ -287,6 +337,16 @@ function ResultGroup({
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusBadge status={result.status} size="sm" />
+                  {isInactive && result.correctionReason ? (
+                    <Badge variant="outline" className="text-xs">
+                      Reason: {result.correctionReason}
+                    </Badge>
+                  ) : null}
+                  {isInactive && result.correctedBy ? (
+                    <Badge variant="outline" className="text-xs">
+                      By: {result.correctedBy}
+                    </Badge>
+                  ) : null}
                   {result.respondentAliases.length > 0 && (
                     <Badge variant="outline" className="text-xs">
                       Aliases: {result.respondentAliases.slice(0, 3).join(", ")}
@@ -295,9 +355,31 @@ function ResultGroup({
                   )}
                 </div>
                 <span className="text-sm font-medium text-primary">
-                  View {result.participantKind === "ORGANIZATION" ? "organization" : "person"} details
+                  {isInactive ? "View correction details" : `View ${result.participantKind === "ORGANIZATION" ? "organization" : "person"} details`}
                 </span>
               </div>
+            </>);
+
+          if (isInactive) {
+            return (
+              <button
+                key={result.id}
+                type="button"
+                onClick={() => onInactiveSelect?.(result)}
+                className={`${cardClassName} w-full text-left`}
+              >
+                {content}
+              </button>
+            );
+          }
+
+          return (
+            <Link
+              key={result.id}
+              href={result.participantKind === "ORGANIZATION" && result.organizationId ? `/organizations/${result.organizationId}` : `/persons/${result.personId}`}
+              className={cardClassName}
+            >
+              {content}
             </Link>
           );
         })}
@@ -338,6 +420,8 @@ export default function ClearanceSearch() {
     useState(false);
   const [hasLoadedStoredSearchPreferences, setHasLoadedStoredSearchPreferences] =
     useState(false);
+  const [selectedInactiveResult, setSelectedInactiveResult] =
+    useState<ClearanceSearchResult | null>(null);
   const possibleMatchSearchIdRef = useRef(0);
   const lastSearchedQueryRef = useRef("");
 
@@ -650,18 +734,37 @@ export default function ClearanceSearch() {
     participantRoleFilter,
     phoneticMatchResults,
   ]);
+  const activeSearchResults = useMemo(() => activeClearanceResults(filteredSearchResults), [filteredSearchResults]);
+  const inactiveSearchResults = useMemo(() => inactiveClearanceResults(filteredSearchResults), [filteredSearchResults]);
+  const activePossibleMatchResults = useMemo(() => activeClearanceResults(filteredPossibleMatchResults), [filteredPossibleMatchResults]);
+  const inactivePossibleMatchResults = useMemo(() => inactiveClearanceResults(filteredPossibleMatchResults), [filteredPossibleMatchResults]);
+  const activePhoneticMatchResults = useMemo(() => activeClearanceResults(filteredPhoneticMatchResults), [filteredPhoneticMatchResults]);
+  const inactivePhoneticMatchResults = useMemo(() => inactiveClearanceResults(filteredPhoneticMatchResults), [filteredPhoneticMatchResults]);
   const groupedResults = useMemo(
-    () => groupResults(filteredSearchResults),
-    [filteredSearchResults],
+    () => groupResults(activeSearchResults),
+    [activeSearchResults],
+  );
+  const groupedInactiveResults = useMemo(
+    () => groupResults(inactiveSearchResults),
+    [inactiveSearchResults],
   );
   const groupedPossibleMatchResults = useMemo(
-    () => groupResults(filteredPossibleMatchResults),
-    [filteredPossibleMatchResults],
+    () => groupResults(activePossibleMatchResults),
+    [activePossibleMatchResults],
+  );
+  const groupedInactivePossibleMatchResults = useMemo(
+    () => groupResults(inactivePossibleMatchResults),
+    [inactivePossibleMatchResults],
   );
   const groupedPhoneticMatchResults = useMemo(
-    () => groupResults(filteredPhoneticMatchResults),
-    [filteredPhoneticMatchResults],
+    () => groupResults(activePhoneticMatchResults),
+    [activePhoneticMatchResults],
   );
+  const groupedInactivePhoneticMatchResults = useMemo(
+    () => groupResults(inactivePhoneticMatchResults),
+    [inactivePhoneticMatchResults],
+  );
+  const hasInactiveMatches = inactiveSearchResults.length > 0 || inactivePossibleMatchResults.length > 0 || inactivePhoneticMatchResults.length > 0;
   const roleFilterSummary = getRoleFilterSummary(participantRoleFilter);
   const trimmedSearchQuery = searchQuery.trim();
   const canRunPhoneticSearch = getSearchTokens(trimmedSearchQuery).length > 1;
@@ -813,9 +916,22 @@ export default function ClearanceSearch() {
 
           {!isSearching && !searchError && (
             <>
-              <ResultGroup label="High" results={groupedResults.High} />
-              <ResultGroup label="Medium" results={groupedResults.Medium} />
-              <ResultGroup label="Low" results={groupedResults.Low} />
+              <div className={hasInactiveMatches ? "grid gap-6 lg:grid-cols-2" : "space-y-6"}>
+                <section className="space-y-6">
+                  {hasInactiveMatches ? <h2 className="text-2xl font-semibold">Active / Official Matches</h2> : null}
+                  <ResultGroup label="High" results={groupedResults.High} />
+                  <ResultGroup label="Medium" results={groupedResults.Medium} />
+                  <ResultGroup label="Low" results={groupedResults.Low} />
+                </section>
+                {hasInactiveMatches ? (
+                  <section className="space-y-6">
+                    <h2 className="text-2xl font-semibold">Voided / Corrected / Inactive Matches</h2>
+                    <ResultGroup label="High" results={groupedInactiveResults.High} onInactiveSelect={setSelectedInactiveResult} />
+                    <ResultGroup label="Medium" results={groupedInactiveResults.Medium} onInactiveSelect={setSelectedInactiveResult} />
+                    <ResultGroup label="Low" results={groupedInactiveResults.Low} onInactiveSelect={setSelectedInactiveResult} />
+                  </section>
+                ) : null}
+              </div>
 
               {filteredSearchResults.length === 0 && (
                 <Card>
@@ -876,20 +992,22 @@ export default function ClearanceSearch() {
                   )}
 
                   {filteredPossibleMatchResults.length > 0 ? (
-                    <>
-                      <ResultGroup
-                        label="High"
-                        results={groupedPossibleMatchResults.High}
-                      />
-                      <ResultGroup
-                        label="Medium"
-                        results={groupedPossibleMatchResults.Medium}
-                      />
-                      <ResultGroup
-                        label="Low"
-                        results={groupedPossibleMatchResults.Low}
-                      />
-                    </>
+                    <div className={inactivePossibleMatchResults.length ? "grid gap-6 lg:grid-cols-2" : "space-y-6"}>
+                      <section className="space-y-6">
+                        {inactivePossibleMatchResults.length ? <h3 className="text-xl font-semibold">Active / Official Matches</h3> : null}
+                        <ResultGroup label="High" results={groupedPossibleMatchResults.High} />
+                        <ResultGroup label="Medium" results={groupedPossibleMatchResults.Medium} />
+                        <ResultGroup label="Low" results={groupedPossibleMatchResults.Low} />
+                      </section>
+                      {inactivePossibleMatchResults.length ? (
+                        <section className="space-y-6">
+                          <h3 className="text-xl font-semibold">Voided / Corrected / Inactive Matches</h3>
+                          <ResultGroup label="High" results={groupedInactivePossibleMatchResults.High} onInactiveSelect={setSelectedInactiveResult} />
+                          <ResultGroup label="Medium" results={groupedInactivePossibleMatchResults.Medium} onInactiveSelect={setSelectedInactiveResult} />
+                          <ResultGroup label="Low" results={groupedInactivePossibleMatchResults.Low} onInactiveSelect={setSelectedInactiveResult} />
+                        </section>
+                      ) : null}
+                    </div>
                   ) : (
                     hasSearchedPossibleMatches &&
                     !possibleMatchError && (
@@ -954,23 +1072,22 @@ export default function ClearanceSearch() {
                   )}
 
                   {filteredPhoneticMatchResults.length > 0 ? (
-                    <>
-                      <ResultGroup
-                        label="High"
-                        results={groupedPhoneticMatchResults.High}
-                        confidenceTone="phonetic"
-                      />
-                      <ResultGroup
-                        label="Medium"
-                        results={groupedPhoneticMatchResults.Medium}
-                        confidenceTone="phonetic"
-                      />
-                      <ResultGroup
-                        label="Low"
-                        results={groupedPhoneticMatchResults.Low}
-                        confidenceTone="phonetic"
-                      />
-                    </>
+                    <div className={inactivePhoneticMatchResults.length ? "grid gap-6 lg:grid-cols-2" : "space-y-6"}>
+                      <section className="space-y-6">
+                        {inactivePhoneticMatchResults.length ? <h3 className="text-xl font-semibold">Active / Official Matches</h3> : null}
+                        <ResultGroup label="High" results={groupedPhoneticMatchResults.High} confidenceTone="phonetic" />
+                        <ResultGroup label="Medium" results={groupedPhoneticMatchResults.Medium} confidenceTone="phonetic" />
+                        <ResultGroup label="Low" results={groupedPhoneticMatchResults.Low} confidenceTone="phonetic" />
+                      </section>
+                      {inactivePhoneticMatchResults.length ? (
+                        <section className="space-y-6">
+                          <h3 className="text-xl font-semibold">Voided / Corrected / Inactive Matches</h3>
+                          <ResultGroup label="High" results={groupedInactivePhoneticMatchResults.High} confidenceTone="phonetic" onInactiveSelect={setSelectedInactiveResult} />
+                          <ResultGroup label="Medium" results={groupedInactivePhoneticMatchResults.Medium} confidenceTone="phonetic" onInactiveSelect={setSelectedInactiveResult} />
+                          <ResultGroup label="Low" results={groupedInactivePhoneticMatchResults.Low} confidenceTone="phonetic" onInactiveSelect={setSelectedInactiveResult} />
+                        </section>
+                      ) : null}
+                    </div>
                   ) : (
                     hasSearchedPhoneticMatches &&
                     !phoneticMatchError && (
@@ -990,6 +1107,58 @@ export default function ClearanceSearch() {
           )}
         </div>
       )}
+
+      <Dialog open={Boolean(selectedInactiveResult)} onOpenChange={(open) => !open && setSelectedInactiveResult(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Inactive / Corrected Match Details</DialogTitle>
+            <DialogDescription>Old voided details are shown here only for correction-history review.</DialogDescription>
+          </DialogHeader>
+          {selectedInactiveResult ? (
+            <div className="space-y-4 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="destructive">{getInactiveBadgeLabel(selectedInactiveResult)}</Badge>
+                <Badge variant="outline">Docket: {selectedInactiveResult.docketNumber}</Badge>
+                <Badge variant="outline">{selectedInactiveResult.roleLabel}</Badge>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg border p-3">
+                  <p className="font-medium">Old person details</p>
+                  <pre className="mt-2 overflow-auto rounded-md bg-muted p-2 text-xs">
+                    {JSON.stringify(getSnapshotValue(selectedInactiveResult.oldSnapshotJson, "person") ?? { full_name: selectedInactiveResult.respondentName, person_id: selectedInactiveResult.personId }, null, 2)}
+                  </pre>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="font-medium">New corrected person details</p>
+                  <pre className="mt-2 overflow-auto rounded-md bg-muted p-2 text-xs">
+                    {JSON.stringify(getSnapshotValue(selectedInactiveResult.newSnapshotJson, "person") ?? { active_person_id: selectedInactiveResult.activePersonId }, null, 2)}
+                  </pre>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="font-medium">Old attributes</p>
+                  <pre className="mt-2 overflow-auto rounded-md bg-muted p-2 text-xs">
+                    {JSON.stringify(getSnapshotValue(selectedInactiveResult.oldSnapshotJson, "attributes"), null, 2)}
+                  </pre>
+                </div>
+                <div className="rounded-lg border p-3">
+                  <p className="font-medium">New attributes</p>
+                  <pre className="mt-2 overflow-auto rounded-md bg-muted p-2 text-xs">
+                    {JSON.stringify(getSnapshotValue(selectedInactiveResult.newSnapshotJson, "attributes"), null, 2)}
+                  </pre>
+                </div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <p><span className="font-medium">Correction reason:</span> {selectedInactiveResult.correctionReason ?? "—"}</p>
+                <p><span className="font-medium">Corrected by:</span> {selectedInactiveResult.correctedBy ?? "—"}</p>
+                <p><span className="font-medium">Corrected date/time:</span> {formatCorrectionDate(selectedInactiveResult.correctedAt)}</p>
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" onClick={() => setSelectedInactiveResult(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
