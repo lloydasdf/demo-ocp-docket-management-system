@@ -86,6 +86,16 @@ BEGIN
   FROM public.staff
   WHERE id = p_staff_id;
 
+  IF EXISTS (
+    SELECT 1
+    FROM public.case_assignments ca
+    WHERE ca.case_id = p_case_id
+      AND ca.unassigned_at IS NULL
+      AND ca.is_voided IS FALSE
+  ) THEN
+    RAISE EXCEPTION 'This case already has an active assignment. Void or reassign the current assignment first.';
+  END IF;
+
   INSERT INTO public.case_events (
     case_id, event_type_id, event_date, event_time, title, description,
     prosecutor_id, staff_id, details_jsonb, source, created_by_user_id, updated_by_user_id
