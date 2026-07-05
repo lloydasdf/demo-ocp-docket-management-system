@@ -1951,6 +1951,61 @@ export async function getCaseTimelineEvents(
   );
 }
 
+
+export interface RecordCaseAssignmentEventInput {
+  caseId: number;
+  prosecutorId: number;
+  assignmentDate: string;
+  assignmentTime?: string | null;
+  staffId?: number | null;
+  remarks?: string | null;
+}
+
+export async function recordCaseAssignmentEvent(
+  input: RecordCaseAssignmentEventInput,
+): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) {
+    return fail({
+      message: "Supabase is not configured.",
+      table: "case_assignments",
+      operation: "recordCaseAssignmentEvent",
+    });
+  }
+
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(
+        toQueryError(
+          currentUserQuery.error ?? new Error("No active user available."),
+          "recordCaseAssignmentEvent",
+          "users",
+        ),
+      );
+    }
+
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("record_case_assignment_event" as never, {
+      p_case_id: input.caseId,
+      p_prosecutor_id: input.prosecutorId,
+      p_assignment_date: input.assignmentDate,
+      p_assignment_time: input.assignmentTime?.trim() || null,
+      p_staff_id: input.staffId ?? null,
+      p_remarks: input.remarks?.trim() || null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+
+    if (error) {
+      return fail(toQueryError(error, "recordCaseAssignmentEvent", "case_assignments"));
+    }
+
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "recordCaseAssignmentEvent", "case_assignments"));
+  }
+}
+
 export interface CreateCaseEventInput {
   caseId: number;
   eventTypeCode: string;
