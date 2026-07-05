@@ -175,7 +175,7 @@ function inactiveClearanceResults(results: ClearanceSearchResult[]) {
   return results.filter(isInactiveClearanceResult);
 }
 
-function getSnapshotValue(snapshot: unknown, key: "person" | "attributes") {
+function getSnapshotValue(snapshot: unknown, key: "person" | "organization" | "attributes") {
   return typeof snapshot === "object" && snapshot && !Array.isArray(snapshot) && key in snapshot ? (snapshot as Record<string, unknown>)[key] : null;
 }
 
@@ -197,6 +197,13 @@ function getCorrectedPersonName(result: ClearanceSearchResult) {
     const fullName = (person as Record<string, unknown>).full_name;
     if (typeof fullName === "string" && fullName.trim()) return fullName;
   }
+
+  const organization = getSnapshotValue(result.newSnapshotJson, "organization");
+  if (typeof organization === "object" && organization && !Array.isArray(organization)) {
+    const organizationName = (organization as Record<string, unknown>).organization_name;
+    if (typeof organizationName === "string" && organizationName.trim()) return organizationName;
+  }
+
   return result.activePersonId ? `Person #${result.activePersonId}` : "—";
 }
 
@@ -1125,13 +1132,13 @@ export default function ClearanceSearch() {
                 <div className="rounded-lg border p-3">
                   <p className="font-medium">Old person details</p>
                   <pre className="mt-2 overflow-auto rounded-md bg-muted p-2 text-xs">
-                    {JSON.stringify(getSnapshotValue(selectedInactiveResult.oldSnapshotJson, "person") ?? { full_name: selectedInactiveResult.respondentName, person_id: selectedInactiveResult.personId }, null, 2)}
+                    {JSON.stringify(getSnapshotValue(selectedInactiveResult.oldSnapshotJson, "person") ?? getSnapshotValue(selectedInactiveResult.oldSnapshotJson, "organization") ?? { full_name: selectedInactiveResult.respondentName, person_id: selectedInactiveResult.personId, organization_id: selectedInactiveResult.organizationId }, null, 2)}
                   </pre>
                 </div>
                 <div className="rounded-lg border p-3">
                   <p className="font-medium">New corrected person details</p>
                   <pre className="mt-2 overflow-auto rounded-md bg-muted p-2 text-xs">
-                    {JSON.stringify(getSnapshotValue(selectedInactiveResult.newSnapshotJson, "person") ?? { active_person_id: selectedInactiveResult.activePersonId }, null, 2)}
+                    {JSON.stringify(getSnapshotValue(selectedInactiveResult.newSnapshotJson, "person") ?? getSnapshotValue(selectedInactiveResult.newSnapshotJson, "organization") ?? { active_person_id: selectedInactiveResult.activePersonId }, null, 2)}
                   </pre>
                 </div>
                 <div className="rounded-lg border p-3">

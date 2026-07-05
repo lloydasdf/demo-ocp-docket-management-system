@@ -1676,8 +1676,10 @@ export type CaseParticipantCorrectionRecord = {
   id: number;
   case_id: number;
   case_participant_id: number;
-  old_person_id: number;
-  new_person_id: number;
+  old_person_id: number | null;
+  new_person_id: number | null;
+  old_organization_id?: number | null;
+  new_organization_id?: number | null;
   old_snapshot_json: Json | null;
   new_snapshot_json: Json | null;
   reason: string | null;
