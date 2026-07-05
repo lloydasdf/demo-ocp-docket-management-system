@@ -32,6 +32,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -57,6 +58,7 @@ import {
   getProsecutors,
   getStaff,
   manageCaseNotes,
+  manageCaseParticipants,
   manageCasePlaces,
   manageCaseViolations,
   type CaseCourtRecord,
@@ -614,7 +616,7 @@ function getOverviewInitialData(
   return {};
 }
 
-type OverviewAction = CaseOverviewEditSection | "history";
+type OverviewAction = CaseOverviewEditSection | "participants" | "history";
 
 type RefOption = { id: number; display_label?: string | null; name?: string | null; prefix?: string | null; code?: string | null; full_name?: string | null; short_name?: string | null };
 type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; prosecutors: RefOption[]; staff: RefOption[]; addressTypes: RefOption[] };
@@ -1111,6 +1113,138 @@ function ManageNotesDialog({ caseId, open, onOpenChange, onSaved }: { caseId: nu
   );
 }
 
+
+type ParticipantEditorMode = "main" | "alias" | "address" | "contact";
+
+function participantArray<T = Record<string, unknown>>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function participantAddressRows(participant: CaseParticipantRecord) {
+  return participant.participant_kind === "ORGANIZATION"
+    ? participantArray(participant.organizations?.organization_addresses)
+    : participantArray(participant.persons?.person_addresses);
+}
+
+function ManageParticipantsDialog({ addressTypes, caseId, onOpenChange, onSaved, open, participants }: { addressTypes: RefOption[]; caseId: number; onOpenChange: (open: boolean) => void; onSaved: () => Promise<void>; open: boolean; participants: CaseParticipantRecord[] }) {
+  const complainants = participants.filter((participant) => roleLabel(participant).toLowerCase().includes("complainant"));
+  const respondents = participants.filter((participant) => roleLabel(participant).toLowerCase().includes("respondent"));
+  const others = participants.filter((participant) => !complainants.includes(participant) && !respondents.includes(participant));
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [mode, setMode] = useState<ParticipantEditorMode | null>(null);
+  const [editingRecord, setEditingRecord] = useState<Record<string, unknown> | null>(null);
+  const [formData, setFormData] = useState<Record<string, string | boolean>>({});
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setSelectedId((current) => current && participants.some((participant) => participant.id === current) ? current : participants[0]?.id ?? null);
+    setMode(null);
+    setEditingRecord(null);
+    setFormData({});
+    setReason("");
+    setError(null);
+  }, [open, participants]);
+
+  const selected = participants.find((participant) => participant.id === selectedId) ?? null;
+  const aliases = selected?.participant_kind === "ORGANIZATION" ? participantArray(selected.organizations?.organization_aliases) : participantArray(selected?.persons?.person_aliases);
+  const addresses = selected ? participantAddressRows(selected) : [];
+  const contacts = participantArray(selected?.contact_informations);
+  const legacyFullNameOnly = Boolean(selected?.persons && !selected.persons.first_name && !selected.persons.middle_name && !selected.persons.last_name && selected.persons.full_name);
+
+  const setValue = (key: string, value: string | boolean) => setFormData((current) => ({ ...current, [key]: value }));
+
+  function openEditor(nextMode: ParticipantEditorMode, record?: Record<string, unknown>) {
+    if (!selected) return;
+    setMode(nextMode);
+    setEditingRecord(record ?? null);
+    setReason("");
+    setError(null);
+    if (nextMode === "main") {
+      setFormData(selected.participant_kind === "ORGANIZATION" ? {
+        organizationName: selected.organizations?.organization_name ?? "",
+        contactPerson: selected.organizations?.contact_person ?? "",
+        contactNumber: selected.organizations?.contact_number ?? "",
+        email: selected.organizations?.email ?? "",
+        remarks: selected.remarks ?? "",
+        sourceDetail: selected.case_participant_private_details?.source_detail ?? "",
+      } : {
+        useStructuredName: !legacyFullNameOnly,
+        fullName: selected.persons?.full_name ?? selected.display_name_snapshot ?? "",
+        firstName: selected.persons?.first_name ?? "",
+        middleName: selected.persons?.middle_name ?? "",
+        lastName: selected.persons?.last_name ?? "",
+        suffix: selected.persons?.suffix ?? "",
+        gender: selected.persons?.gender ?? selected.case_participant_attributes?.gender_text ?? "",
+        birthDate: selected.persons?.birth_date ?? "",
+        age: selected.persons?.age ?? selected.case_participant_attributes?.age_text ?? "",
+        personDescriptor: selected.persons?.person_descriptor ?? "",
+        notes: selected.persons?.notes ?? "",
+        remarks: selected.remarks ?? "",
+        sourceDetail: selected.case_participant_private_details?.source_detail ?? "",
+        isMinorAtCase: selected.case_participant_attributes?.is_minor_at_case === true,
+        isSeniorAtCase: selected.case_participant_attributes?.is_senior_at_case === true,
+        isPwdAtCase: selected.case_participant_attributes?.is_pwd_at_case === true,
+      });
+    } else if (nextMode === "alias") {
+      setFormData({ aliasName: String(record?.alias_name ?? "") });
+    } else if (nextMode === "address") {
+      const address = record?.addresses as Record<string, unknown> | undefined;
+      setFormData({
+        addressTypeId: String(record?.address_type_id ?? addressTypes[0]?.id ?? ""),
+        line1: String(address?.line1 ?? ""), line2: String(address?.line2 ?? ""), barangay: String(address?.barangay ?? ""), city: String(address?.city ?? ""), province: String(address?.province ?? ""), region: String(address?.region ?? ""), zipCode: String(address?.zip_code ?? ""), country: String(address?.country ?? "Philippines"), remarks: String(record?.remarks ?? ""), isPrimary: record?.is_primary === true,
+      });
+    } else {
+      setFormData({ contactType: String(record?.contact_type ?? "PHONE"), contactValue: String(record?.contact_value ?? ""), label: String(record?.label ?? ""), remarks: String(record?.remarks ?? ""), isPrimary: record?.is_primary === true });
+    }
+  }
+
+  async function save(action?: "remove_alias" | "remove_address" | "remove_contact", reasonOverride?: string, recordOverride?: Record<string, unknown>) {
+    if (!selected) return;
+    const nextAction = action ?? (mode === "main" ? "edit_main_details" : mode === "alias" ? (editingRecord ? "edit_alias" : "add_alias") : mode === "address" ? (editingRecord ? "edit_address" : "add_address") : mode === "contact" ? (editingRecord ? "edit_contact" : "add_contact") : null);
+    if (!nextAction) return;
+    const effectiveReason = reasonOverride ?? reason;
+    if (!effectiveReason.trim()) { setError("Reason is required."); return; }
+    setIsSaving(true);
+    setError(null);
+    const targetRecord = recordOverride ?? editingRecord;
+    const payload = {
+      ...formData,
+      id: selected.id,
+      aliasId: targetRecord?.id,
+      addressRelationId: targetRecord?.id,
+      addressId: targetRecord?.address_id,
+      participantContactInformationId: targetRecord?.participant_contact_information_id,
+      contactInformationId: targetRecord?.id,
+    };
+    const result = await manageCaseParticipants({ caseId, action: nextAction, reason: effectiveReason.trim(), participant: payload });
+    setIsSaving(false);
+    if (result.error) { setError(result.error.message); return; }
+    setMode(null);
+    setEditingRecord(null);
+    setReason("");
+    await onSaved();
+  }
+
+  function participantButton(participant: CaseParticipantRecord) {
+    return <button key={participant.id} type="button" className={`rounded-lg border p-3 text-left text-sm ${selectedId === participant.id ? "border-primary bg-primary/5" : "hover:bg-muted"}`} onClick={() => setSelectedId(participant.id)}><span className="font-medium">{participantName(participant)}</span><span className="mt-1 block text-xs text-muted-foreground">{roleLabel(participant)}</span></button>;
+  }
+
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl"><DialogHeader><DialogTitle>Manage Participants</DialogTitle><DialogDescription>Select a participant, then edit main details, aliases, addresses, or contact information.</DialogDescription></DialogHeader>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-1"><div><h3 className="mb-2 font-semibold">Complainants</h3><div className="space-y-2">{complainants.length ? complainants.map(participantButton) : <SectionEmpty>No complainants.</SectionEmpty>}</div></div><div><h3 className="mb-2 font-semibold">Respondents</h3><div className="space-y-2">{respondents.length ? respondents.map(participantButton) : <SectionEmpty>No respondents.</SectionEmpty>}</div></div>{others.length ? <div className="md:col-span-2 lg:col-span-1"><h3 className="mb-2 font-semibold">Other Participants</h3><div className="space-y-2">{others.map(participantButton)}</div></div> : null}</div>
+      <div className="space-y-4 rounded-lg border p-4">{selected ? <><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-lg font-semibold">{participantName(selected)}</h3><p className="text-sm text-muted-foreground">{roleLabel(selected)} • {selected.participant_kind ?? "PERSON"}</p>{legacyFullNameOnly ? <Badge variant="outline" className="mt-2">Legacy full-name only</Badge> : null}</div><Button type="button" size="sm" onClick={() => openEditor("main")}>Edit Main Details</Button></div>
+        <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-md border p-3"><div className="mb-2 flex items-center justify-between"><p className="font-medium">Aliases</p><Button type="button" size="sm" variant="outline" onClick={() => openEditor("alias")}>Add</Button></div>{aliases.length ? aliases.map((alias) => <div key={String(alias.id)} className="flex items-center justify-between gap-2 text-sm"><span>{String(alias.alias_name ?? "")}</span><span className="shrink-0"><Button type="button" size="sm" variant="ghost" onClick={() => openEditor("alias", alias)}>Edit</Button><Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => { setMode("alias"); setEditingRecord(alias); void save("remove_alias", "Remove alias", alias); }}>Remove</Button></span></div>) : <p className="text-sm text-muted-foreground">No aliases.</p>}</div>
+        <div className="rounded-md border p-3"><div className="mb-2 flex items-center justify-between"><p className="font-medium">Addresses</p><Button type="button" size="sm" variant="outline" onClick={() => openEditor("address")}>Add</Button></div>{addresses.length ? addresses.map((address) => <div key={String(address.id)} className="space-y-1 border-t py-2 first:border-t-0"><p className="text-sm">{formatAddress((address.addresses ?? {}) as never) || "Address"}</p><div><Button type="button" size="sm" variant="ghost" onClick={() => openEditor("address", address)}>Edit</Button><Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => { setMode("address"); setEditingRecord(address); void save("remove_address", "Remove address", address); }}>Remove</Button></div></div>) : <p className="text-sm text-muted-foreground">No addresses.</p>}</div>
+        <div className="rounded-md border p-3"><div className="mb-2 flex items-center justify-between"><p className="font-medium">Contacts</p><Button type="button" size="sm" variant="outline" onClick={() => openEditor("contact")}>Add</Button></div>{contacts.length ? contacts.map((contact) => <div key={String(contact.participant_contact_information_id ?? contact.id)} className="space-y-1 border-t py-2 first:border-t-0"><p className="text-sm">{String(contact.contact_type)}: {String(contact.contact_value)}</p><div><Button type="button" size="sm" variant="ghost" onClick={() => openEditor("contact", contact as never)}>Edit</Button><Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => { setMode("contact"); setEditingRecord(contact as never); void save("remove_contact", "Remove contact", contact as never); }}>Remove</Button></div></div>) : <p className="text-sm text-muted-foreground">No contacts.</p>}</div></div></> : <SectionEmpty>No participant selected.</SectionEmpty>}
+      </div>
+    </div>
+    {mode ? <div className="space-y-3 rounded-lg border p-4"><h3 className="font-semibold">{mode === "main" ? "Participant name and details" : mode === "alias" ? "Alias" : mode === "address" ? "Address" : "Contact info"}</h3>{selected?.participant_kind !== "ORGANIZATION" && mode === "main" && legacyFullNameOnly ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.useStructuredName)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("useStructuredName", checked === true)} /> Convert legacy full name to structured name</label> : null}<div className="grid gap-3 sm:grid-cols-2">{mode === "main" && selected?.participant_kind === "ORGANIZATION" ? <><FieldInput label="Organization Name" value={String(formData.organizationName ?? "")} onChange={(v) => setValue("organizationName", v)} /><FieldInput label="Contact Person" value={String(formData.contactPerson ?? "")} onChange={(v) => setValue("contactPerson", v)} /><FieldInput label="Contact Number" value={String(formData.contactNumber ?? "")} onChange={(v) => setValue("contactNumber", v)} /><FieldInput label="Email" value={String(formData.email ?? "")} onChange={(v) => setValue("email", v)} /></> : null}{mode === "main" && selected?.participant_kind !== "ORGANIZATION" ? (formData.useStructuredName ? <><FieldInput label="First Name" value={String(formData.firstName ?? "")} onChange={(v) => setValue("firstName", v)} /><FieldInput label="Middle Name" value={String(formData.middleName ?? "")} onChange={(v) => setValue("middleName", v)} /><FieldInput label="Last Name" value={String(formData.lastName ?? "")} onChange={(v) => setValue("lastName", v)} /><FieldInput label="Suffix" value={String(formData.suffix ?? "")} onChange={(v) => setValue("suffix", v)} /></> : <FieldInput label="Full Name" value={String(formData.fullName ?? "")} onChange={(v) => setValue("fullName", v)} className="sm:col-span-2" />) : null}{mode === "main" ? <><FieldInput label="Gender" value={String(formData.gender ?? "")} onChange={(v) => setValue("gender", v)} /><FieldInput label="Birthdate" type="date" value={String(formData.birthDate ?? "")} onChange={(v) => setValue("birthDate", v)} /><FieldInput label="Age" value={String(formData.age ?? "")} onChange={(v) => setValue("age", v)} /><FieldInput label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} /></> : null}{mode === "alias" ? <FieldInput label="Alias" value={String(formData.aliasName ?? "")} onChange={(v) => setValue("aliasName", v)} className="sm:col-span-2" /> : null}{mode === "address" ? <><FieldSelect label="Address type" value={String(formData.addressTypeId ?? "")} onChange={(v) => setValue("addressTypeId", v)} options={addressTypes} optionLabel={(option) => option.display_label ?? option.code ?? String(option.id)} /><FieldInput label="Line 1" value={String(formData.line1 ?? "")} onChange={(v) => setValue("line1", v)} /><FieldInput label="Line 2" value={String(formData.line2 ?? "")} onChange={(v) => setValue("line2", v)} /><FieldInput label="Barangay" value={String(formData.barangay ?? "")} onChange={(v) => setValue("barangay", v)} /><FieldInput label="City" value={String(formData.city ?? "")} onChange={(v) => setValue("city", v)} /><FieldInput label="Province" value={String(formData.province ?? "")} onChange={(v) => setValue("province", v)} /><FieldInput label="Country" value={String(formData.country ?? "")} onChange={(v) => setValue("country", v)} /></> : null}{mode === "contact" ? <><FieldSelect label="Type" value={String(formData.contactType ?? "PHONE")} onChange={(v) => setValue("contactType", v)} options={[{id:1,code:"PHONE",display_label:"Phone"},{id:2,code:"EMAIL",display_label:"Email"},{id:3,code:"OTHER",display_label:"Other"}]} valueKey="code" optionLabel={(option) => option.display_label ?? String(option.id)} /><FieldInput label="Value" value={String(formData.contactValue ?? "")} onChange={(v) => setValue("contactValue", v)} /><FieldInput label="Label" value={String(formData.label ?? "")} onChange={(v) => setValue("label", v)} /></> : null}<FieldTextarea label="Reason" value={reason} onChange={setReason} className="sm:col-span-2" /></div>{error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}<div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setMode(null)}>Cancel</Button><Button type="button" onClick={() => save()} disabled={isSaving}>{isSaving ? "Saving..." : "Save"}</Button></div></div> : null}
+    <DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Close</Button></DialogFooter></DialogContent></Dialog>;
+}
+
 function OverviewHistoryDialog({ caseId, open, onOpenChange }: { caseId: number; open: boolean; onOpenChange: (open: boolean) => void }) {
   const [history, setHistory] = useState<CaseOverviewChangeHistoryRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -1232,7 +1366,7 @@ export default function CaseDetailsPage() {
   }, [data?.participants]);
 
   const activeSectionEditor =
-    activeOverviewEditor && activeOverviewEditor !== "history"
+    activeOverviewEditor && activeOverviewEditor !== "history" && activeOverviewEditor !== "participants"
       ? activeOverviewEditor
       : null;
   const activeEditorCopy = activeSectionEditor
@@ -1432,6 +1566,16 @@ export default function CaseDetailsPage() {
                 onSaved={loadCase}
                 open={activeOverviewEditor === "notes"}
               />
+              <ManageParticipantsDialog
+                addressTypes={refs.addressTypes}
+                caseId={caseId}
+                onOpenChange={(open) =>
+                  setActiveOverviewEditor(open ? "participants" : null)
+                }
+                onSaved={loadCase}
+                open={activeOverviewEditor === "participants"}
+                participants={data.participants}
+              />
               <OverviewHistoryDialog
                 caseId={caseId}
                 onOpenChange={(open) =>
@@ -1443,7 +1587,10 @@ export default function CaseDetailsPage() {
               <div className="space-y-6">
                 <Card>
                   <CardHeader className="p-4 sm:p-6">
-                    <CardTitle>Parties</CardTitle>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <CardTitle>Parties</CardTitle>
+                      <Button type="button" variant="outline" onClick={() => openOverviewEditor("participants")}>Manage Participants</Button>
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">
                     {partiesByRole.length === 0 ? (

@@ -1591,6 +1591,52 @@ export async function manageCaseNotes(
     return fail(toQueryError(error, "manageCaseNotes", "cases"));
   }
 }
+export type ManageCaseParticipantAction =
+  | "edit_main_details"
+  | "add_alias"
+  | "edit_alias"
+  | "remove_alias"
+  | "add_address"
+  | "edit_address"
+  | "remove_address"
+  | "add_contact"
+  | "edit_contact"
+  | "remove_contact";
+
+export interface ManageCaseParticipantsInput {
+  caseId: number;
+  action: ManageCaseParticipantAction;
+  reason: string;
+  participant: Record<string, unknown>;
+}
+
+export async function manageCaseParticipants(
+  input: ManageCaseParticipantsInput,
+): Promise<SupabaseQueryResult<number>> {
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "manageCaseParticipants", "users"));
+    }
+
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("manage_case_participants" as never, {
+      p_payload: {
+        caseId: input.caseId,
+        action: input.action,
+        reason: input.reason,
+        userId: currentUserQuery.data.id,
+        participant: input.participant,
+      },
+    } as never);
+
+    if (error) return fail(toQueryError(error, "manageCaseParticipants", "case_participants"));
+    return ok(Number(data ?? input.caseId));
+  } catch (error) {
+    return fail(toQueryError(error, "manageCaseParticipants", "case_participants"));
+  }
+}
+
 
 export async function getCaseOverviewChangeHistory(
   caseId: number,
