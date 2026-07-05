@@ -168,10 +168,11 @@ function assignmentEventDetails(event: CaseTimelineEventRecord) {
     : {};
 
   return [
+    { label: "Assigned prosecutor", value: stringDetail(details.new_prosecutor_name) ?? event.prosecutor_short_name },
     { label: "Assignment date", value: formatDate(event.event_date) },
     { label: "Assignment time", value: formatTime(event.event_time) },
     { label: "Assigned staff", value: stringDetail(details.staff_name) ?? event.staff_short_name },
-    { label: "Remarks", value: stringDetail(details.remarks) ?? event.description },
+    { label: "Remarks", value: stringDetail(details.remarks) },
   ];
 }
 

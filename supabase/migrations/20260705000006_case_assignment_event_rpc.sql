@@ -100,8 +100,14 @@ BEGIN
     case_id, event_type_id, event_date, event_time, title, description,
     prosecutor_id, staff_id, details_jsonb, source, created_by_user_id, updated_by_user_id
   ) VALUES (
-    p_case_id, v_event_type_id, p_assignment_date, p_assignment_time, 'Case Assignment', NULLIF(btrim(COALESCE(p_remarks, '')), ''),
-    p_prosecutor_id, p_staff_id,
+    p_case_id,
+    v_event_type_id,
+    p_assignment_date,
+    p_assignment_time,
+    'Case Assignment',
+    'Assigned to Prosec ' || COALESCE(v_prosecutor_name, p_prosecutor_id::text) || ' on ' || to_char(p_assignment_date, 'Mon DD, YYYY'),
+    p_prosecutor_id,
+    p_staff_id,
     jsonb_build_object(
       'action', 'case_assignment',
       'new_prosecutor_id', p_prosecutor_id,
