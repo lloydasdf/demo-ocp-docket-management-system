@@ -1,7 +1,7 @@
 "use client";
 
 import type React from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   Accordion,
@@ -75,6 +75,23 @@ function formatDate(value: string | null | undefined) {
   }
 
   return parsedDate.toLocaleDateString();
+}
+
+function formatDateTimeDate(value: string | null | undefined) {
+  return value ? formatDate(value) : null;
+}
+
+function formatDateTimeTime(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  return parsedDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function formatTime(value: string | null | undefined) {
@@ -166,7 +183,7 @@ function isAssignmentEvent(event: CaseTimelineEventRecord) {
   return eventSourceTable(event) === "case_assignments" || event.event_type_code === "CASE_ASSIGNMENT" || event.event_type_code === "CASE_REASSIGNMENT";
 }
 
-function assignmentEventDetails(event: CaseTimelineEventRecord) {
+function assignmentEventDetails(event: CaseTimelineEventRecord, assignment?: CaseAssignmentRecord | null) {
   if (!isAssignmentEvent(event)) {
     return null;
   }
@@ -175,11 +192,18 @@ function assignmentEventDetails(event: CaseTimelineEventRecord) {
     ? event.details_jsonb as Record<string, unknown>
     : {};
 
+  const unassignmentReason = assignment && "unassignment_reason" in assignment
+    ? stringDetail(assignment.unassignment_reason)
+    : null;
+
   return [
     { label: "Assigned prosecutor", value: stringDetail(details.new_prosecutor_name) ?? event.prosecutor_short_name },
     { label: "Assignment date", value: formatDate(event.event_date) },
     { label: "Assignment time", value: formatTime(event.event_time) },
     { label: "Assigned staff", value: stringDetail(details.staff_name) ?? event.staff_short_name },
+    { label: "Unassigned date", value: formatDateTimeDate(assignment?.unassigned_at) },
+    { label: "Unassigned time", value: formatDateTimeTime(assignment?.unassigned_at) },
+    { label: "Unassignment reason", value: unassignmentReason },
     { label: "Remarks", value: stringDetail(details.remarks) },
   ];
 }
@@ -199,7 +223,7 @@ function isPetitionForReviewSourceEvent(event: CaseTimelineEventRecord) {
   );
 }
 
-function timelineDetailItems(event: CaseTimelineEventRecord) {
+function timelineDetailItems(event: CaseTimelineEventRecord, assignment?: CaseAssignmentRecord | null) {
   if (isPetitionForReviewEvent(event)) {
     return [];
   }
@@ -208,7 +232,7 @@ function timelineDetailItems(event: CaseTimelineEventRecord) {
     return [{ label: "Date", value: formatDate(event.event_date) }];
   }
 
-  const assignmentDetails = assignmentEventDetails(event);
+  const assignmentDetails = assignmentEventDetails(event, assignment);
   if (assignmentDetails) {
     return assignmentDetails;
   }
@@ -524,6 +548,19 @@ export function CaseTimeline({
   const [isSaving, setIsSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  useEffect(() => {
+    let isActive = true;
+
+    getCaseAssignments(caseId).then((result) => {
+      if (isActive && !result.error) {
+        setAssignments(result.data);
+      }
+    });
+
+    return () => {
+      isActive = false;
+    };
+  }, [caseId, events]);
 
   const openAddDialog = async () => {
     setActionError(null);
@@ -563,6 +600,10 @@ export function CaseTimeline({
     if (!addForm.eventTypeCode || !addForm.eventDate) return;
     if ((isAssignment || isReassignment) && !addForm.prosecutorId) return;
     if (isReassignment && !addForm.reason.trim()) return;
+    if (isReassignment && currentAssignment?.prosecutor_id === Number(addForm.prosecutorId)) {
+      setActionError("The selected prosecutor is already assigned to this case.");
+      return;
+    }
     if (!isAssignment && !isReassignment && !addForm.title.trim()) return;
     setIsSaving(true);
     setActionError(null);
@@ -715,7 +756,13 @@ export function CaseTimeline({
                       event,
                       petitionsForReview,
                     );
-                    const detailItems = timelineDetailItems(event);
+                    const assignmentDetails = isAssignmentEvent(event)
+                      ? assignments.find((assignment) =>
+                        (("case_event_id" in assignment && Number(assignment.case_event_id) === Number(event.case_event_id)) ||
+                        Number(assignment.id) === Number(event.source_id)),
+                      ) ?? null
+                      : null;
+                    const detailItems = timelineDetailItems(event, assignmentDetails);
                     const subtitle = timelineSubtitle(event, petitionDetails);
 
                     return (
