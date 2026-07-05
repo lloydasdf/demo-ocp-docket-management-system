@@ -2063,6 +2063,70 @@ export async function recordCaseReassignmentEvent(
   }
 }
 
+
+export interface RecordCaseResolvedEventInput {
+  caseId: number;
+  recommendationCode: "CASE_FOR_FILING" | "CASE_DISMISSAL" | "MIXED_RESULT";
+  dateResolved: string;
+  timeResolved?: string | null;
+  remarks?: string | null;
+  chargesForFiling?: string[];
+  chargesForDismissal?: string[];
+}
+
+function chargeTextsToRpcPayload(charges: string[] | undefined) {
+  return (charges ?? [])
+    .map((chargeText) => chargeText.trim())
+    .filter(Boolean)
+    .map((chargeText) => ({ charge_text: chargeText }));
+}
+
+export async function recordCaseResolvedEvent(
+  input: RecordCaseResolvedEventInput,
+): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) {
+    return fail({
+      message: "Supabase is not configured.",
+      table: "case_resolutions" as RelationName,
+      operation: "recordCaseResolvedEvent",
+    });
+  }
+
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(
+        toQueryError(
+          currentUserQuery.error ?? new Error("No active user available."),
+          "recordCaseResolvedEvent",
+          "users",
+        ),
+      );
+    }
+
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("record_case_resolved_event" as never, {
+      p_case_id: input.caseId,
+      p_recommendation_code: input.recommendationCode,
+      p_date_resolved: input.dateResolved,
+      p_time_resolved: input.timeResolved?.trim() || null,
+      p_remarks: input.remarks?.trim() || null,
+      p_charges_for_filing: chargeTextsToRpcPayload(input.chargesForFiling),
+      p_charges_for_dismissal: chargeTextsToRpcPayload(input.chargesForDismissal),
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+
+    if (error) {
+      return fail(toQueryError(error, "recordCaseResolvedEvent", "case_resolutions" as RelationName));
+    }
+
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "recordCaseResolvedEvent", "case_resolutions" as RelationName));
+  }
+}
+
 export interface CreateCaseEventInput {
   caseId: number;
   eventTypeCode: string;
