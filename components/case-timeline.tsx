@@ -36,8 +36,12 @@ import {
   type CaseTimelineEventRecord,
   type CaseEventTypeReference,
   type CaseAssignmentRecord,
+  type CaseResolutionChargeInput,
+  type CaseViolationManagementRecord,
   createCaseEvent,
   getCaseAssignments,
+  getCaseManagedViolations,
+  getViolations,
   getProsecutors,
   getStaff,
   recordCaseAssignmentEvent,
@@ -541,37 +545,116 @@ function DetailItem({
   );
 }
 
+function emptyResolutionCharge(): CaseResolutionChargeInput {
+  return { chargeText: "", caseViolationId: null, violationId: null };
+}
+
+function caseViolationChargeText(caseViolation: CaseViolationManagementRecord) {
+  return firstDisplayValue(
+    caseViolation.raw_violation_text,
+    caseViolation.violations?.short_label,
+    caseViolation.violations?.title,
+    caseViolation.violations?.description,
+  )?.toString() ?? "";
+}
+
+function violationOptionText(violation: Pick<TableRow<"violations">, "title" | "short_label" | "reference_code" | "law_reference">) {
+  return [violation.short_label ?? violation.title, violation.reference_code ?? violation.law_reference]
+    .filter(Boolean)
+    .join(" • ");
+}
+
 function ChargeEntries({
+  caseViolations,
   charges,
   onChange,
   title,
+  violations,
 }: {
-  charges: string[];
-  onChange: (charges: string[]) => void;
+  caseViolations: CaseViolationManagementRecord[];
+  charges: CaseResolutionChargeInput[];
+  onChange: (charges: CaseResolutionChargeInput[]) => void;
   title: string;
+  violations: TableRow<"violations">[];
 }) {
+  const updateCharge = (index: number, charge: CaseResolutionChargeInput) => {
+    onChange(charges.map((item, itemIndex) => itemIndex === index ? charge : item));
+  };
+
   return (
-    <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+    <div className="space-y-3 rounded-md border bg-muted/20 p-3">
       <div className="flex items-center justify-between gap-3">
-        <Label>{title}</Label>
-        <Button type="button" variant="outline" size="sm" onClick={() => onChange([...charges, ""])}>Add charge</Button>
+        <div>
+          <Label>{title}</Label>
+          <p className="text-xs text-muted-foreground">Select an existing case violation or type the prosecutor-recommended violation.</p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={() => onChange([...charges, emptyResolutionCharge()])}>Add charge</Button>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-3">
         {charges.map((charge, index) => (
-          <div key={index} className="flex gap-2">
-            <Input
-              value={charge}
-              placeholder={`Charge ${index + 1}`}
-              onChange={(event) => onChange(charges.map((item, itemIndex) => itemIndex === index ? event.target.value : item))}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => onChange(charges.length === 1 ? [""] : charges.filter((_, itemIndex) => itemIndex !== index))}
-            >
-              Remove
-            </Button>
+          <div key={index} className="space-y-2 rounded-md border bg-background p-3">
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+              <div className="space-y-2">
+                <Label htmlFor={`${title}-${index}-case-violation`}>Current case violation</Label>
+                <select
+                  id={`${title}-${index}-case-violation`}
+                  className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+                  value={charge.caseViolationId ?? ""}
+                  onChange={(event) => {
+                    const selected = caseViolations.find((caseViolation) => Number(caseViolation.id) === Number(event.target.value));
+                    updateCharge(index, {
+                      chargeText: selected ? caseViolationChargeText(selected) : "",
+                      caseViolationId: selected?.id ?? null,
+                      violationId: selected?.violation_id ?? selected?.violations?.id ?? null,
+                    });
+                  }}
+                >
+                  <option value="">Type/select specific violation instead</option>
+                  {caseViolations.map((caseViolation) => (
+                    <option key={caseViolation.id} value={caseViolation.id}>{caseViolationChargeText(caseViolation)}</option>
+                  ))}
+                </select>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="self-end"
+                onClick={() => onChange(charges.length === 1 ? [emptyResolutionCharge()] : charges.filter((_, itemIndex) => itemIndex !== index))}
+              >
+                Remove
+              </Button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor={`${title}-${index}-specific-violation`}>Specific violation</Label>
+                <select
+                  id={`${title}-${index}-specific-violation`}
+                  className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm"
+                  value={charge.caseViolationId ? "" : charge.violationId ?? ""}
+                  onChange={(event) => {
+                    const selected = violations.find((violation) => Number(violation.id) === Number(event.target.value));
+                    updateCharge(index, {
+                      chargeText: selected ? violationOptionText(selected) : "",
+                      caseViolationId: null,
+                      violationId: selected?.id ?? null,
+                    });
+                  }}
+                >
+                  <option value="">No reference violation selected</option>
+                  {violations.map((violation) => <option key={violation.id} value={violation.id}>{violationOptionText(violation)}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor={`${title}-${index}-charge-text`}>Recommended charge text</Label>
+                <Input
+                  id={`${title}-${index}-charge-text`}
+                  value={charge.chargeText}
+                  placeholder="Type violation recommended by the prosecutor"
+                  onChange={(event) => updateCharge(index, { ...charge, chargeText: event.target.value, caseViolationId: null })}
+                />
+              </div>
+            </div>
           </div>
         ))}
       </div>
@@ -616,8 +699,10 @@ export function CaseTimeline({
   const [eventTypesError, setEventTypesError] = useState<string | null>(null);
   const [prosecutors, setProsecutors] = useState<TableRow<"prosecutors">[]>([]);
   const [staffMembers, setStaffMembers] = useState<TableRow<"staff">[]>([]);
+  const [caseViolations, setCaseViolations] = useState<CaseViolationManagementRecord[]>([]);
+  const [violations, setViolations] = useState<TableRow<"violations">[]>([]);
   const [assignments, setAssignments] = useState<CaseAssignmentRecord[]>([]);
-  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", chargesForFiling: [""], chargesForDismissal: [""] });
+  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()] });
   const [editForm, setEditForm] = useState({ eventDate: "", title: "", description: "", editReason: "" });
   const [voidReason, setVoidReason] = useState("");
   const [voidConfirmed, setVoidConfirmed] = useState(false);
@@ -641,7 +726,7 @@ export function CaseTimeline({
   const openAddDialog = async () => {
     setActionError(null);
     setEventTypesError(null);
-    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", chargesForFiling: [""], chargesForDismissal: [""] });
+    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()] });
     setIsAddDialogOpen(true);
 
     if (eventTypes.length === 0) {
@@ -664,6 +749,16 @@ export function CaseTimeline({
     if (staffMembers.length === 0) {
       const result = await getStaff(250);
       if (!result.error) setStaffMembers(result.data);
+    }
+
+    if (caseViolations.length === 0) {
+      const result = await getCaseManagedViolations(caseId);
+      if (!result.error) setCaseViolations(result.data);
+    }
+
+    if (violations.length === 0) {
+      const result = await getViolations(250);
+      if (!result.error) setViolations(result.data);
     }
 
     const assignmentResult = await getCaseAssignments(caseId);
@@ -988,8 +1083,8 @@ export function CaseTimeline({
               <>
                 <div className="space-y-2"><Label htmlFor="add-resolution-recommendation">Recommendation</Label><select id="add-resolution-recommendation" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.recommendationCode} onChange={(e) => setAddForm((form) => ({ ...form, recommendationCode: e.target.value }))}><option value="">Select recommendation</option><option value="CASE_FOR_FILING">Case for Filing</option><option value="CASE_DISMISSAL">Case Dismissal</option><option value="MIXED_RESULT">Mixed Result</option></select></div>
                 <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="add-date-resolved">Date Resolved</Label><Input id="add-date-resolved" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="add-time-resolved">Time Resolved</Label><Input id="add-time-resolved" type="time" value={addForm.eventTime} onChange={(e) => setAddForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
-                {showChargesForFiling ? <ChargeEntries title="Charges for Filing" charges={addForm.chargesForFiling} onChange={(charges) => setAddForm((form) => ({ ...form, chargesForFiling: charges }))} /> : null}
-                {showChargesForDismissal ? <ChargeEntries title="Charges for Dismissal" charges={addForm.chargesForDismissal} onChange={(charges) => setAddForm((form) => ({ ...form, chargesForDismissal: charges }))} /> : null}
+                {showChargesForFiling ? <ChargeEntries title="Charges for Filing" charges={addForm.chargesForFiling} caseViolations={caseViolations} violations={violations} onChange={(charges) => setAddForm((form) => ({ ...form, chargesForFiling: charges }))} /> : null}
+                {showChargesForDismissal ? <ChargeEntries title="Charges for Dismissal" charges={addForm.chargesForDismissal} caseViolations={caseViolations} violations={violations} onChange={(charges) => setAddForm((form) => ({ ...form, chargesForDismissal: charges }))} /> : null}
                 <div className="space-y-2"><Label htmlFor="add-resolution-remarks">Remarks</Label><Textarea id="add-resolution-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
               </>
             ) : (

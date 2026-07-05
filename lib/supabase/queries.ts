@@ -2064,21 +2064,30 @@ export async function recordCaseReassignmentEvent(
 }
 
 
+export type CaseResolutionChargeInput = {
+  chargeText: string;
+  caseViolationId?: number | null;
+  violationId?: number | null;
+};
+
 export interface RecordCaseResolvedEventInput {
   caseId: number;
   recommendationCode: "CASE_FOR_FILING" | "CASE_DISMISSAL" | "MIXED_RESULT";
   dateResolved: string;
   timeResolved?: string | null;
   remarks?: string | null;
-  chargesForFiling?: string[];
-  chargesForDismissal?: string[];
+  chargesForFiling?: CaseResolutionChargeInput[];
+  chargesForDismissal?: CaseResolutionChargeInput[];
 }
 
-function chargeTextsToRpcPayload(charges: string[] | undefined) {
+function chargesToRpcPayload(charges: CaseResolutionChargeInput[] | undefined) {
   return (charges ?? [])
-    .map((chargeText) => chargeText.trim())
-    .filter(Boolean)
-    .map((chargeText) => ({ charge_text: chargeText }));
+    .map((charge) => ({
+      charge_text: charge.chargeText.trim(),
+      case_violation_id: charge.caseViolationId ?? null,
+      violation_id: charge.violationId ?? null,
+    }))
+    .filter((charge) => charge.charge_text);
 }
 
 export async function recordCaseResolvedEvent(
@@ -2112,8 +2121,8 @@ export async function recordCaseResolvedEvent(
       p_date_resolved: input.dateResolved,
       p_time_resolved: input.timeResolved?.trim() || null,
       p_remarks: input.remarks?.trim() || null,
-      p_charges_for_filing: chargeTextsToRpcPayload(input.chargesForFiling),
-      p_charges_for_dismissal: chargeTextsToRpcPayload(input.chargesForDismissal),
+      p_charges_for_filing: chargesToRpcPayload(input.chargesForFiling),
+      p_charges_for_dismissal: chargesToRpcPayload(input.chargesForDismissal),
       p_user_id: currentUserQuery.data.id,
     } as never);
 
