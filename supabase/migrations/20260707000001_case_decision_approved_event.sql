@@ -142,6 +142,8 @@ DECLARE
   v_total_for_filing_count integer;
   v_total_dismissal_count integer;
   v_total_action_count integer;
+  v_pending_unapproved_resolution_count integer;
+  v_active_assignment_count integer;
   v_display_order integer := 0;
 BEGIN
   IF p_case_id IS NULL THEN RAISE EXCEPTION 'Case id is required'; END IF;
@@ -209,8 +211,34 @@ BEGIN
   v_total_dismissal_count := COALESCE(v_existing_dismissal_count, 0) + COALESCE(v_dismissal_count, 0);
   v_total_action_count := v_total_for_filing_count + v_total_dismissal_count;
 
-  IF v_total_action_count < 1 THEN
-    RAISE EXCEPTION 'At least one approval action is required';
+  SELECT count(*)
+  INTO v_pending_unapproved_resolution_count
+  FROM public.case_resolutions cr
+  WHERE cr.case_id = p_case_id
+    AND cr.id <> p_case_resolution_id
+    AND cr.is_voided = false
+    AND NOT EXISTS (
+      SELECT 1
+      FROM public.case_resolution_approvals a
+      WHERE a.case_resolution_id = cr.id
+        AND a.is_voided = false
+    );
+
+  IF COALESCE(v_pending_unapproved_resolution_count, 0) > 0 THEN
+    v_case_final_status_code := 'RESO_FOR_APPROVAL';
+  ELSIF v_total_action_count < 1 THEN
+    SELECT count(*)
+    INTO v_active_assignment_count
+    FROM public.case_assignments ca
+    WHERE ca.case_id = p_case_id
+      AND ca.unassigned_at IS NULL
+      AND ca.is_voided IS FALSE;
+
+    IF COALESCE(v_active_assignment_count, 0) > 0 THEN
+      v_case_final_status_code := 'PENDING';
+    ELSE
+      RAISE EXCEPTION 'At least one approval action is required';
+    END IF;
   ELSIF v_total_for_filing_count > 0 AND v_total_dismissal_count > 0 THEN
     v_case_final_status_code := 'MIXED_RESULT';
   ELSIF v_total_for_filing_count > 0 THEN
@@ -219,7 +247,7 @@ BEGIN
     v_case_final_status_code := 'DISMISSED';
   END IF;
 
-  v_case_final_status_label := CASE v_case_final_status_code WHEN 'FOR_FILING' THEN 'For Filing' WHEN 'DISMISSED' THEN 'Dismissed' ELSE 'Mixed Result' END;
+  v_case_final_status_label := CASE v_case_final_status_code WHEN 'PENDING' THEN 'Pending' WHEN 'RESO_FOR_APPROVAL' THEN 'Reso for Approval' WHEN 'FOR_FILING' THEN 'For Filing' WHEN 'DISMISSED' THEN 'Dismissed' ELSE 'Mixed Result' END;
 
   INSERT INTO public.case_event_types (code, display_label, category, description, sort_order, is_system, is_active)
   VALUES ('CASE_DECISION_APPROVED', 'Case Decision Approved', 'CASE', 'Manual timeline event for approving a prosecutor recommendation or final case decision.', 130, true, true)
@@ -227,8 +255,8 @@ BEGIN
   RETURNING id INTO v_event_type_id;
 
   INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active)
-  VALUES (v_case_final_status_code, v_case_final_status_label, CASE v_case_final_status_code WHEN 'FOR_FILING' THEN 90 WHEN 'DISMISSED' THEN 100 ELSE 110 END, true, true, true)
-  ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, is_final = true, is_milestone = true, is_active = true
+  VALUES (v_case_final_status_code, v_case_final_status_label, CASE v_case_final_status_code WHEN 'PENDING' THEN 20 WHEN 'RESO_FOR_APPROVAL' THEN 80 WHEN 'FOR_FILING' THEN 90 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_case_final_status_code NOT IN ('PENDING', 'RESO_FOR_APPROVAL'), v_case_final_status_code <> 'PENDING', true)
+  ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, is_final = EXCLUDED.is_final, is_milestone = EXCLUDED.is_milestone, is_active = true
   RETURNING id INTO v_status_id;
 
   SELECT cpd.current_status_id, to_jsonb(cpd) INTO v_previous_status_id, v_old_details
@@ -462,34 +490,40 @@ BEGIN
       FROM public.case_resolutions cr
       WHERE cr.id = v_resolution_id;
 
-      SELECT
-        count(*) FILTER (WHERE aa.decision_code = 'FOR_FILING'),
-        count(*) FILTER (WHERE aa.decision_code = 'DISMISSAL')
-      INTO v_remaining_for_filing_count, v_remaining_dismissal_count
-      FROM public.case_resolution_approval_actions aa
-      JOIN public.case_resolution_approvals a ON a.id = aa.approval_id
-      WHERE aa.case_id = v_case_id
-        AND a.is_voided = false;
+      SELECT count(*)
+      INTO v_remaining_resolution_count
+      FROM public.case_resolutions cr
+      WHERE cr.case_id = v_case_id
+        AND cr.is_voided = false
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.case_resolution_approvals a
+          WHERE a.case_resolution_id = cr.id
+            AND a.is_voided = false
+        );
 
-      IF COALESCE(v_remaining_for_filing_count, 0) > 0 AND COALESCE(v_remaining_dismissal_count, 0) > 0 THEN
-        v_recomputed_status_code := 'MIXED_RESULT';
-        v_recomputed_status_label := 'Mixed Result';
-      ELSIF COALESCE(v_remaining_for_filing_count, 0) > 0 THEN
-        v_recomputed_status_code := 'FOR_FILING';
-        v_recomputed_status_label := 'For Filing';
-      ELSIF COALESCE(v_remaining_dismissal_count, 0) > 0 THEN
-        v_recomputed_status_code := 'DISMISSED';
-        v_recomputed_status_label := 'Dismissed';
+      IF COALESCE(v_remaining_resolution_count, 0) > 0 THEN
+        v_recomputed_status_code := 'RESO_FOR_APPROVAL';
+        v_recomputed_status_label := 'Reso for Approval';
       ELSE
-        SELECT count(*)
-        INTO v_remaining_resolution_count
-        FROM public.case_resolutions cr
-        WHERE cr.case_id = v_case_id
-          AND cr.is_voided = false;
+        SELECT
+          count(*) FILTER (WHERE aa.decision_code = 'FOR_FILING'),
+          count(*) FILTER (WHERE aa.decision_code = 'DISMISSAL')
+        INTO v_remaining_for_filing_count, v_remaining_dismissal_count
+        FROM public.case_resolution_approval_actions aa
+        JOIN public.case_resolution_approvals a ON a.id = aa.approval_id
+        WHERE aa.case_id = v_case_id
+          AND a.is_voided = false;
 
-        IF COALESCE(v_remaining_resolution_count, 0) > 0 THEN
-          v_recomputed_status_code := 'RESO_FOR_APPROVAL';
-          v_recomputed_status_label := 'Reso for Approval';
+        IF COALESCE(v_remaining_for_filing_count, 0) > 0 AND COALESCE(v_remaining_dismissal_count, 0) > 0 THEN
+          v_recomputed_status_code := 'MIXED_RESULT';
+          v_recomputed_status_label := 'Mixed Result';
+        ELSIF COALESCE(v_remaining_for_filing_count, 0) > 0 THEN
+          v_recomputed_status_code := 'FOR_FILING';
+          v_recomputed_status_label := 'For Filing';
+        ELSIF COALESCE(v_remaining_dismissal_count, 0) > 0 THEN
+          v_recomputed_status_code := 'DISMISSED';
+          v_recomputed_status_label := 'Dismissed';
         ELSE
           SELECT count(*)
           INTO v_active_assignment_count
@@ -574,50 +608,78 @@ BEGIN
 
       v_recompute_remarks := 'Case decision approval voided. Status recomputed from remaining approvals.';
 
-      SELECT
-        count(*) FILTER (WHERE aa.decision_code = 'FOR_FILING'),
-        count(*) FILTER (WHERE aa.decision_code = 'DISMISSAL')
-      INTO v_remaining_for_filing_count, v_remaining_dismissal_count
-      FROM public.case_resolution_approval_actions aa
-      JOIN public.case_resolution_approvals a ON a.id = aa.approval_id
-      WHERE aa.case_id = v_case_id
-        AND a.is_voided = false;
+      SELECT count(*)
+      INTO v_remaining_resolution_count
+      FROM public.case_resolutions cr
+      WHERE cr.case_id = v_case_id
+        AND cr.is_voided = false
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.case_resolution_approvals a
+          WHERE a.case_resolution_id = cr.id
+            AND a.is_voided = false
+        );
 
-      IF COALESCE(v_remaining_for_filing_count, 0) > 0 AND COALESCE(v_remaining_dismissal_count, 0) > 0 THEN
-        v_recomputed_status_code := 'MIXED_RESULT';
-        v_recomputed_status_label := 'Mixed Result';
-      ELSIF COALESCE(v_remaining_for_filing_count, 0) > 0 THEN
-        v_recomputed_status_code := 'FOR_FILING';
-        v_recomputed_status_label := 'For Filing';
-      ELSIF COALESCE(v_remaining_dismissal_count, 0) > 0 THEN
-        v_recomputed_status_code := 'DISMISSED';
-        v_recomputed_status_label := 'Dismissed';
-      ELSE
+      IF COALESCE(v_remaining_resolution_count, 0) > 0 THEN
         v_recomputed_status_code := 'RESO_FOR_APPROVAL';
         v_recomputed_status_label := 'Reso for Approval';
+      ELSE
+        SELECT
+          count(*) FILTER (WHERE aa.decision_code = 'FOR_FILING'),
+          count(*) FILTER (WHERE aa.decision_code = 'DISMISSAL')
+        INTO v_remaining_for_filing_count, v_remaining_dismissal_count
+        FROM public.case_resolution_approval_actions aa
+        JOIN public.case_resolution_approvals a ON a.id = aa.approval_id
+        WHERE aa.case_id = v_case_id
+          AND a.is_voided = false;
+
+        IF COALESCE(v_remaining_for_filing_count, 0) > 0 AND COALESCE(v_remaining_dismissal_count, 0) > 0 THEN
+          v_recomputed_status_code := 'MIXED_RESULT';
+          v_recomputed_status_label := 'Mixed Result';
+        ELSIF COALESCE(v_remaining_for_filing_count, 0) > 0 THEN
+          v_recomputed_status_code := 'FOR_FILING';
+          v_recomputed_status_label := 'For Filing';
+        ELSIF COALESCE(v_remaining_dismissal_count, 0) > 0 THEN
+          v_recomputed_status_code := 'DISMISSED';
+          v_recomputed_status_label := 'Dismissed';
+        ELSE
+          SELECT count(*)
+          INTO v_active_assignment_count
+          FROM public.case_assignments ca
+          WHERE ca.case_id = v_case_id
+            AND ca.unassigned_at IS NULL
+            AND ca.is_voided IS FALSE;
+
+          IF COALESCE(v_active_assignment_count, 0) > 0 THEN
+            v_recomputed_status_code := 'PENDING';
+            v_recomputed_status_label := 'Pending';
+          END IF;
+        END IF;
       END IF;
 
-      INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active)
-      VALUES (v_recomputed_status_code, v_recomputed_status_label, CASE v_recomputed_status_code WHEN 'RESO_FOR_APPROVAL' THEN 80 WHEN 'FOR_FILING' THEN 90 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_recomputed_status_code <> 'RESO_FOR_APPROVAL', true, true)
-      ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, is_final = EXCLUDED.is_final, is_milestone = true, is_active = true
-      RETURNING id INTO v_recomputed_status_id;
+      IF v_recomputed_status_code IS NOT NULL THEN
+        INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active)
+        VALUES (v_recomputed_status_code, v_recomputed_status_label, CASE v_recomputed_status_code WHEN 'PENDING' THEN 20 WHEN 'RESO_FOR_APPROVAL' THEN 80 WHEN 'FOR_FILING' THEN 90 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_recomputed_status_code NOT IN ('PENDING', 'RESO_FOR_APPROVAL'), v_recomputed_status_code <> 'PENDING', true)
+        ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, is_final = EXCLUDED.is_final, is_milestone = EXCLUDED.is_milestone, is_active = true
+        RETURNING id INTO v_recomputed_status_id;
 
-      INSERT INTO public.case_private_details (case_id, current_status_id, current_status_date, current_status_remarks, updated_at)
-      VALUES (v_case_id, v_recomputed_status_id, CURRENT_DATE, v_recompute_remarks, now())
-      ON CONFLICT (case_id) DO UPDATE SET
-        current_status_id = EXCLUDED.current_status_id,
-        current_status_date = EXCLUDED.current_status_date,
-        current_status_remarks = EXCLUDED.current_status_remarks,
-        updated_at = now();
+        INSERT INTO public.case_private_details (case_id, current_status_id, current_status_date, current_status_remarks, updated_at)
+        VALUES (v_case_id, v_recomputed_status_id, CURRENT_DATE, v_recompute_remarks, now())
+        ON CONFLICT (case_id) DO UPDATE SET
+          current_status_id = EXCLUDED.current_status_id,
+          current_status_date = EXCLUDED.current_status_date,
+          current_status_remarks = EXCLUDED.current_status_remarks,
+          updated_at = now();
 
-      INSERT INTO public.case_status_history (case_id, from_status_id, to_status_id, changed_by_user_id, changed_at, status_date, remarks, case_event_id)
-      VALUES (v_case_id, v_previous_status_id, v_recomputed_status_id, p_voided_by_user_id, now(), CURRENT_DATE, v_recompute_remarks, p_case_event_id)
-      RETURNING id INTO v_status_history_id;
+        INSERT INTO public.case_status_history (case_id, from_status_id, to_status_id, changed_by_user_id, changed_at, status_date, remarks, case_event_id)
+        VALUES (v_case_id, v_previous_status_id, v_recomputed_status_id, p_voided_by_user_id, now(), CURRENT_DATE, v_recompute_remarks, p_case_event_id)
+        RETURNING id INTO v_status_history_id;
 
-      SELECT to_jsonb(cpd)
-      INTO v_new_details
-      FROM public.case_private_details cpd
-      WHERE cpd.case_id = v_case_id;
+        SELECT to_jsonb(cpd)
+        INTO v_new_details
+        FROM public.case_private_details cpd
+        WHERE cpd.case_id = v_case_id;
+      END IF;
 
       INSERT INTO public.audit_logs (
         actor_user_id, entity_name, entity_id, action, old_data, new_data, case_id, summary, metadata
