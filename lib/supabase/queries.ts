@@ -2070,6 +2070,68 @@ export type CaseResolutionChargeInput = {
   violationId?: number | null;
 };
 
+export type CaseResolutionApprovalActionInput = CaseResolutionChargeInput & {
+  decisionCode: "FOR_FILING" | "DISMISSAL";
+  sourceResolutionChargeActionId?: number | null;
+};
+
+export type LatestCaseResolutionActionRecord = {
+  id: number;
+  case_resolution_id: number;
+  case_id: number;
+  case_violation_id: number | null;
+  violation_id: number | null;
+  charge_text: string;
+  action_code: "FOR_FILING" | "DISMISSAL";
+  display_order: number | null;
+  remarks: string | null;
+};
+
+export type LatestCaseResolutionRecord = {
+  id: number;
+  case_id: number;
+  case_event_id: number;
+  recommendation_code: string;
+  date_resolved: string;
+  time_resolved: string | null;
+  remarks: string | null;
+  created_at: string;
+  charge_actions: LatestCaseResolutionActionRecord[];
+};
+
+export async function getLatestCaseResolution(
+  caseId: number,
+): Promise<SupabaseQueryResult<LatestCaseResolutionRecord | null>> {
+  return runSupabaseQuery("getLatestCaseResolution", "case_resolutions" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const resolutionResult = await supabase
+      .from("case_resolutions" as never)
+      .select("*" as never)
+      .eq("case_id" as never, caseId)
+      .order("date_resolved" as never, { ascending: false, nullsFirst: false })
+      .order("created_at" as never, { ascending: false })
+      .limit(1)
+      .maybeSingle() as unknown as { data: Omit<LatestCaseResolutionRecord, "charge_actions"> | null; error: unknown };
+
+    if (resolutionResult.error || !resolutionResult.data) {
+      return { data: resolutionResult.data ? null : null, error: resolutionResult.error };
+    }
+
+    const actionsResult = await supabase
+      .from("case_resolution_charge_actions" as never)
+      .select("*" as never)
+      .eq("case_resolution_id" as never, resolutionResult.data.id)
+      .order("action_code" as never, { ascending: true })
+      .order("display_order" as never, { ascending: true }) as unknown as { data: LatestCaseResolutionActionRecord[] | null; error: unknown };
+
+    if (actionsResult.error) {
+      return { data: null, error: actionsResult.error };
+    }
+
+    return { data: { ...resolutionResult.data, charge_actions: actionsResult.data ?? [] }, error: null };
+  }, null);
+}
+
 export interface RecordCaseResolvedEventInput {
   caseId: number;
   recommendationCode: "CASE_FOR_FILING" | "CASE_DISMISSAL" | "MIXED_RESULT";
@@ -2088,6 +2150,18 @@ function chargesToRpcPayload(charges: CaseResolutionChargeInput[] | undefined) {
       violation_id: charge.violationId ?? null,
     }))
     .filter((charge) => charge.charge_text);
+}
+
+function approvalActionsToRpcPayload(actions: CaseResolutionApprovalActionInput[] | undefined) {
+  return (actions ?? [])
+    .map((action) => ({
+      charge_text: action.chargeText.trim(),
+      case_violation_id: action.caseViolationId ?? null,
+      violation_id: action.violationId ?? null,
+      source_resolution_charge_action_id: action.sourceResolutionChargeActionId ?? null,
+      decision_code: action.decisionCode,
+    }))
+    .filter((action) => action.charge_text && (action.decision_code === "FOR_FILING" || action.decision_code === "DISMISSAL"));
 }
 
 export async function recordCaseResolvedEvent(
@@ -2133,6 +2207,52 @@ export async function recordCaseResolvedEvent(
     return ok(Number(data ?? 0));
   } catch (error) {
     return fail(toQueryError(error, "recordCaseResolvedEvent", "case_resolutions" as RelationName));
+  }
+}
+
+export interface RecordCaseDecisionApprovedEventInput {
+  caseId: number;
+  caseResolutionId?: number | null;
+  approvedByProsecutorId: number;
+  dateApproved: string;
+  timeApproved?: string | null;
+  approvalActions: CaseResolutionApprovalActionInput[];
+  remarks?: string | null;
+}
+
+export async function recordCaseDecisionApprovedEvent(
+  input: RecordCaseDecisionApprovedEventInput,
+): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) {
+    return fail({ message: "Supabase is not configured.", table: "case_resolution_approvals" as RelationName, operation: "recordCaseDecisionApprovedEvent" });
+  }
+
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "recordCaseDecisionApprovedEvent", "users"));
+    }
+
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("record_case_decision_approved_event" as never, {
+      p_case_id: input.caseId,
+      p_case_resolution_id: input.caseResolutionId ?? null,
+      p_approved_by_prosecutor_id: input.approvedByProsecutorId,
+      p_date_approved: input.dateApproved,
+      p_time_approved: input.timeApproved?.trim() || null,
+      p_approval_actions: approvalActionsToRpcPayload(input.approvalActions),
+      p_remarks: input.remarks?.trim() || null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+
+    if (error) {
+      return fail(toQueryError(error, "recordCaseDecisionApprovedEvent", "case_resolution_approvals" as RelationName));
+    }
+
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "recordCaseDecisionApprovedEvent", "case_resolution_approvals" as RelationName));
   }
 }
 

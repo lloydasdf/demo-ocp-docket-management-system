@@ -36,7 +36,9 @@ import {
   type CaseTimelineEventRecord,
   type CaseEventTypeReference,
   type CaseAssignmentRecord,
+  type CaseResolutionApprovalActionInput,
   type CaseResolutionChargeInput,
+  getLatestCaseResolution,
   type CaseViolationManagementRecord,
   createCaseEvent,
   getCaseAssignments,
@@ -47,6 +49,7 @@ import {
   recordCaseAssignmentEvent,
   recordCaseReassignmentEvent,
   recordCaseResolvedEvent,
+  recordCaseDecisionApprovedEvent,
   editCaseEvent,
   getCaseEventTypes,
   voidCaseEvent,
@@ -214,6 +217,37 @@ function resolutionEventDetails(event: CaseTimelineEventRecord) {
   ];
 }
 
+function approvalEventDetails(event: CaseTimelineEventRecord) {
+  if (event.event_type_code !== "CASE_DECISION_APPROVED") {
+    return null;
+  }
+
+  const details = event.details_jsonb && typeof event.details_jsonb === "object"
+    ? event.details_jsonb as Record<string, unknown>
+    : {};
+  const approvalActions = Array.isArray(details.approval_actions) ? details.approval_actions as Record<string, unknown>[] : [];
+  const filingDecisions = approvalActions
+    .filter((action) => action.decision_code === "FOR_FILING")
+    .map((action) => stringDetail(action.charge_text))
+    .filter(Boolean)
+    .join("; ");
+  const dismissedDecisions = approvalActions
+    .filter((action) => action.decision_code === "DISMISSAL")
+    .map((action) => stringDetail(action.charge_text))
+    .filter(Boolean)
+    .join("; ");
+
+  return [
+    { label: "Approved By", value: stringDetail(details.approved_by_name) },
+    { label: "Date Approved", value: formatDate(event.event_date) },
+    { label: "Time Approved", value: formatTime(event.event_time) },
+    { label: "Final Status", value: stringDetail(details.final_status_label) },
+    { label: "Decisions For Filing", value: filingDecisions },
+    { label: "Decisions Dismissed", value: dismissedDecisions },
+    { label: "Remarks", value: stringDetail(details.remarks) },
+  ];
+}
+
 function isAssignmentEvent(event: CaseTimelineEventRecord) {
   return eventSourceTable(event) === "case_assignments" || event.event_type_code === "CASE_ASSIGNMENT" || event.event_type_code === "CASE_REASSIGNMENT";
 }
@@ -272,6 +306,11 @@ function timelineDetailItems(event: CaseTimelineEventRecord, assignment?: CaseAs
     return resolutionDetails;
   }
 
+  const approvalDetails = approvalEventDetails(event);
+  if (approvalDetails) {
+    return approvalDetails;
+  }
+
   const assignmentDetails = assignmentEventDetails(event, assignment);
   if (assignmentDetails) {
     return assignmentDetails;
@@ -301,7 +340,7 @@ function visibleEventDetails(event: CaseTimelineEventRecord) {
 
   const hiddenKeys = event.event_type_code === "CASE_RECEIVED"
     ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
-    : event.event_type_code === "CASE_RESOLVED"
+    : event.event_type_code === "CASE_RESOLVED" || event.event_type_code === "CASE_DECISION_APPROVED"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
       : eventSourceTable(event) === "case_assignments"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
@@ -549,6 +588,10 @@ function emptyResolutionCharge(): CaseResolutionChargeInput {
   return { chargeText: "", caseViolationId: null, violationId: null };
 }
 
+function emptyApprovalAction(): CaseResolutionApprovalActionInput {
+  return { chargeText: "", caseViolationId: null, violationId: null, sourceResolutionChargeActionId: null, decisionCode: "FOR_FILING" };
+}
+
 function caseViolationChargeText(caseViolation: CaseViolationManagementRecord) {
   return firstDisplayValue(
     caseViolation.raw_violation_text,
@@ -714,6 +757,51 @@ function ChargeEntries({
   );
 }
 
+function ApprovalDecisionEntries({
+  actions,
+  onChange,
+}: {
+  actions: CaseResolutionApprovalActionInput[];
+  onChange: (actions: CaseResolutionApprovalActionInput[]) => void;
+}) {
+  const updateAction = (index: number, action: CaseResolutionApprovalActionInput) => {
+    onChange(actions.map((item, itemIndex) => itemIndex === index ? action : item));
+  };
+
+  return (
+    <div className="space-y-2 rounded-md border bg-muted/20 p-2">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <Label>Approved decisions</Label>
+          <p className="text-xs leading-tight text-muted-foreground">Review imported recommendation rows or add a new final decision row.</p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={() => onChange([...actions, emptyApprovalAction()])}>Add decision</Button>
+      </div>
+      <div className="space-y-2">
+        {actions.map((action, index) => (
+          <div key={index} className="space-y-2 rounded-md border bg-background p-2">
+            {action.sourceResolutionChargeActionId ? <Badge variant="secondary">From recommendation</Badge> : null}
+            <div className="grid gap-2 sm:grid-cols-[1fr_10rem_auto]">
+              <div className="space-y-1">
+                <Label htmlFor={`approval-${index}-charge`}>Charge text</Label>
+                <Input id={`approval-${index}-charge`} value={action.chargeText} onChange={(event) => updateAction(index, { ...action, chargeText: event.target.value })} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor={`approval-${index}-decision`}>Decision</Label>
+                <select id={`approval-${index}-decision`} className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={action.decisionCode} onChange={(event) => updateAction(index, { ...action, decisionCode: event.target.value as "FOR_FILING" | "DISMISSAL" })}>
+                  <option value="FOR_FILING">For Filing</option>
+                  <option value="DISMISSAL">Dismissal</option>
+                </select>
+              </div>
+              <Button type="button" variant="outline" size="sm" className="self-end" onClick={() => onChange(actions.length === 1 ? [emptyApprovalAction()] : actions.filter((_, itemIndex) => itemIndex !== index))}>Remove</Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const ADD_EVENT_TYPE_CODES = new Set([
   "CASE_ASSIGNMENT",
   "CASE_REASSIGNMENT",
@@ -754,7 +842,7 @@ export function CaseTimeline({
   const [caseViolations, setCaseViolations] = useState<CaseViolationManagementRecord[]>([]);
   const [violations, setViolations] = useState<TableRow<"violations">[]>([]);
   const [assignments, setAssignments] = useState<CaseAssignmentRecord[]>([]);
-  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()] });
+  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()] });
   const [editForm, setEditForm] = useState({ eventDate: "", title: "", description: "", editReason: "" });
   const [voidReason, setVoidReason] = useState("");
   const [voidConfirmed, setVoidConfirmed] = useState(false);
@@ -778,7 +866,7 @@ export function CaseTimeline({
   const openAddDialog = async () => {
     setActionError(null);
     setEventTypesError(null);
-    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()] });
+    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()] });
     setIsAddDialogOpen(true);
 
     if (eventTypes.length === 0) {
@@ -813,6 +901,21 @@ export function CaseTimeline({
       if (!result.error) setViolations(result.data);
     }
 
+    const latestResolutionResult = await getLatestCaseResolution(caseId);
+    if (!latestResolutionResult.error && latestResolutionResult.data?.charge_actions.length) {
+      setAddForm((form) => ({
+        ...form,
+        caseResolutionId: latestResolutionResult.data?.id ?? null,
+        approvalActions: latestResolutionResult.data?.charge_actions.map((action) => ({
+          chargeText: action.charge_text,
+          caseViolationId: action.case_violation_id,
+          violationId: action.violation_id,
+          sourceResolutionChargeActionId: action.id,
+          decisionCode: action.action_code,
+        })) ?? form.approvalActions,
+      }));
+    }
+
     const assignmentResult = await getCaseAssignments(caseId);
     if (!assignmentResult.error) setAssignments(assignmentResult.data);
   };
@@ -821,15 +924,17 @@ export function CaseTimeline({
     const isAssignment = addForm.eventTypeCode === "CASE_ASSIGNMENT";
     const isReassignment = addForm.eventTypeCode === "CASE_REASSIGNMENT";
     const isResolved = addForm.eventTypeCode === "CASE_RESOLVED";
+    const isDecisionApproved = addForm.eventTypeCode === "CASE_DECISION_APPROVED";
     if (!addForm.eventTypeCode || !addForm.eventDate) return;
     if ((isAssignment || isReassignment) && !addForm.prosecutorId) return;
     if (isReassignment && !addForm.reason.trim()) return;
     if (isResolved && !addForm.recommendationCode) return;
+    if (isDecisionApproved && (!addForm.prosecutorId || !addForm.approvalActions.some((action) => action.chargeText.trim()))) return;
     if (isReassignment && currentAssignment?.prosecutor_id === Number(addForm.prosecutorId)) {
       setActionError("The selected prosecutor is already assigned to this case.");
       return;
     }
-    if (!isAssignment && !isReassignment && !isResolved && !addForm.title.trim()) return;
+    if (!isAssignment && !isReassignment && !isResolved && !isDecisionApproved && !addForm.title.trim()) return;
     setIsSaving(true);
     setActionError(null);
     const result = isAssignment
@@ -861,6 +966,16 @@ export function CaseTimeline({
             chargesForFiling: addForm.chargesForFiling,
             chargesForDismissal: addForm.chargesForDismissal,
           })
+          : isDecisionApproved
+            ? await recordCaseDecisionApprovedEvent({
+              caseId,
+              caseResolutionId: addForm.caseResolutionId,
+              approvedByProsecutorId: Number(addForm.prosecutorId),
+              dateApproved: addForm.eventDate,
+              timeApproved: addForm.eventTime || null,
+              approvalActions: addForm.approvalActions,
+              remarks: addForm.description,
+            })
           : await createCaseEvent({
         caseId,
         eventTypeCode: addForm.eventTypeCode,
@@ -943,6 +1058,8 @@ export function CaseTimeline({
   const isAddingAssignment = addForm.eventTypeCode === "CASE_ASSIGNMENT";
   const isAddingReassignment = addForm.eventTypeCode === "CASE_REASSIGNMENT";
   const isAddingResolved = addForm.eventTypeCode === "CASE_RESOLVED";
+  const isAddingDecisionApproved = addForm.eventTypeCode === "CASE_DECISION_APPROVED";
+  const approvingProsecutors = prosecutors.filter((prosecutor) => ["CHIEF_PROSECUTOR", "DEPUTY_PROSECUTOR"].includes(String((prosecutor as { position_code?: string | null }).position_code ?? "")));
   const showChargesForFiling = addForm.recommendationCode === "CASE_FOR_FILING" || addForm.recommendationCode === "MIXED_RESULT";
   const showChargesForDismissal = addForm.recommendationCode === "CASE_DISMISSAL" || addForm.recommendationCode === "MIXED_RESULT";
   const isAddingAssignmentLike = isAddingAssignment || isAddingReassignment;
@@ -1104,7 +1221,7 @@ export function CaseTimeline({
             {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
             <div className="space-y-2">
               <Label htmlFor="add-event-type">Event Type</Label>
-              <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : form.title }))}>
+              <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : form.title }))}>
                 {eventTypes.map((eventType) => <option key={eventType.code} value={eventType.code}>{eventType.display_label}</option>)}
               </select>
             </div>
@@ -1139,6 +1256,13 @@ export function CaseTimeline({
                 {showChargesForDismissal ? <ChargeEntries title="Charges for Dismissal" charges={addForm.chargesForDismissal} caseViolations={caseViolations} violations={violations} onChange={(charges) => setAddForm((form) => ({ ...form, chargesForDismissal: charges }))} /> : null}
                 <div className="space-y-1"><Label htmlFor="add-resolution-remarks">Remarks</Label><Textarea id="add-resolution-remarks" className="min-h-20" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
               </>
+            ) : isAddingDecisionApproved ? (
+              <>
+                <div className="space-y-2"><Label htmlFor="add-approved-by">Approved By</Label><select id="add-approved-by" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.prosecutorId} onChange={(e) => setAddForm((form) => ({ ...form, prosecutorId: e.target.value }))}><option value="">Select approving prosecutor</option>{approvingProsecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select>{approvingProsecutors.length === 0 ? <p className="text-xs text-muted-foreground">No active Chief Prosecutor or Deputy Prosecutor records found.</p> : null}</div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-date-approved">Date Approved</Label><Input id="add-date-approved" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-1"><Label htmlFor="add-time-approved">Time Approved</Label><Input id="add-time-approved" type="time" value={addForm.eventTime} onChange={(e) => setAddForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
+                <ApprovalDecisionEntries actions={addForm.approvalActions} onChange={(approvalActions) => setAddForm((form) => ({ ...form, approvalActions }))} />
+                <div className="space-y-1"><Label htmlFor="add-approval-remarks">Remarks</Label><Textarea id="add-approval-remarks" className="min-h-20" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
+              </>
             ) : (
               <>
                 <div className="space-y-2"><Label htmlFor="add-event-date">Event Date</Label><Input id="add-event-date" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div>
@@ -1149,7 +1273,7 @@ export function CaseTimeline({
           </div>
           <DialogFooter className="border-t pt-3">
             <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
-            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : "Add event"}</Button>
+            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : "Add event"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
