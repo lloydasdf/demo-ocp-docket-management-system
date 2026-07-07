@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_case_resolution_approval_actions_case_id ON publi
 
 CREATE OR REPLACE FUNCTION public.record_case_decision_approved_event(
   p_case_id bigint,
-  p_case_resolution_id bigint DEFAULT NULL,
+  p_case_resolution_id bigint,
   p_approved_by_prosecutor_id bigint DEFAULT NULL,
   p_date_approved date DEFAULT NULL,
   p_time_approved time without time zone DEFAULT NULL,
@@ -158,7 +158,11 @@ BEGIN
     RAISE EXCEPTION 'Approver must be a Chief Prosecutor or Deputy Prosecutor';
   END IF;
 
-  IF p_case_resolution_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.case_resolutions WHERE id = p_case_resolution_id AND case_id = p_case_id) THEN
+  IF p_case_resolution_id IS NULL THEN
+    RAISE EXCEPTION 'Case resolution id is required';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.case_resolutions WHERE id = p_case_resolution_id AND case_id = p_case_id) THEN
     RAISE EXCEPTION 'Resolution % does not belong to case %', p_case_resolution_id, p_case_id;
   END IF;
 
@@ -232,7 +236,7 @@ BEGIN
         FROM public.case_resolution_charge_actions src
         WHERE src.id = NULLIF(v_action->>'source_resolution_charge_action_id', '')::bigint
           AND src.case_id = p_case_id
-          AND (p_case_resolution_id IS NULL OR src.case_resolution_id = p_case_resolution_id)
+          AND src.case_resolution_id = p_case_resolution_id
       ) THEN
         RAISE EXCEPTION 'Selected recommendation action does not belong to this case resolution.';
       END IF;

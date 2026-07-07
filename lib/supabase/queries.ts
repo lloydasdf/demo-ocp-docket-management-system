@@ -2075,7 +2075,7 @@ export type CaseResolutionApprovalActionInput = CaseResolutionChargeInput & {
   sourceResolutionChargeActionId?: number | null;
 };
 
-export type LatestCaseResolutionActionRecord = {
+export type CaseResolutionActionRecord = {
   id: number;
   case_resolution_id: number;
   case_id: number;
@@ -2087,7 +2087,7 @@ export type LatestCaseResolutionActionRecord = {
   remarks: string | null;
 };
 
-export type LatestCaseResolutionRecord = {
+export type CaseResolutionWithActionsRecord = {
   id: number;
   case_id: number;
   case_event_id: number;
@@ -2096,40 +2096,52 @@ export type LatestCaseResolutionRecord = {
   time_resolved: string | null;
   remarks: string | null;
   created_at: string;
-  charge_actions: LatestCaseResolutionActionRecord[];
+  charge_actions: CaseResolutionActionRecord[];
 };
 
-export async function getLatestCaseResolution(
+export async function getCaseResolutionsWithActions(
   caseId: number,
-): Promise<SupabaseQueryResult<LatestCaseResolutionRecord | null>> {
-  return runSupabaseQuery("getLatestCaseResolution", "case_resolutions" as RelationName, async () => {
+): Promise<SupabaseQueryResult<CaseResolutionWithActionsRecord[]>> {
+  return runSupabaseQuery("getCaseResolutionsWithActions", "case_resolutions" as RelationName, async () => {
     const supabase = await getSupabaseBrowserClient();
-    const resolutionResult = await supabase
+    const resolutionsResult = await supabase
       .from("case_resolutions" as never)
       .select("*" as never)
       .eq("case_id" as never, caseId)
       .order("date_resolved" as never, { ascending: false, nullsFirst: false })
-      .order("created_at" as never, { ascending: false })
-      .limit(1)
-      .maybeSingle() as unknown as { data: Omit<LatestCaseResolutionRecord, "charge_actions"> | null; error: unknown };
+      .order("created_at" as never, { ascending: false }) as unknown as { data: Omit<CaseResolutionWithActionsRecord, "charge_actions">[] | null; error: unknown };
 
-    if (resolutionResult.error || !resolutionResult.data) {
-      return { data: resolutionResult.data ? null : null, error: resolutionResult.error };
+    if (resolutionsResult.error || !resolutionsResult.data?.length) {
+      return { data: [], error: resolutionsResult.error };
     }
 
+    const resolutionIds = resolutionsResult.data.map((resolution) => resolution.id);
     const actionsResult = await supabase
       .from("case_resolution_charge_actions" as never)
       .select("*" as never)
-      .eq("case_resolution_id" as never, resolutionResult.data.id)
+      .in("case_resolution_id" as never, resolutionIds)
       .order("action_code" as never, { ascending: true })
-      .order("display_order" as never, { ascending: true }) as unknown as { data: LatestCaseResolutionActionRecord[] | null; error: unknown };
+      .order("display_order" as never, { ascending: true }) as unknown as { data: CaseResolutionActionRecord[] | null; error: unknown };
 
     if (actionsResult.error) {
-      return { data: null, error: actionsResult.error };
+      return { data: [], error: actionsResult.error };
     }
 
-    return { data: { ...resolutionResult.data, charge_actions: actionsResult.data ?? [] }, error: null };
-  }, null);
+    const actionsByResolutionId = new Map<number, CaseResolutionActionRecord[]>();
+    for (const action of actionsResult.data ?? []) {
+      const currentActions = actionsByResolutionId.get(action.case_resolution_id) ?? [];
+      currentActions.push(action);
+      actionsByResolutionId.set(action.case_resolution_id, currentActions);
+    }
+
+    return {
+      data: resolutionsResult.data.map((resolution) => ({
+        ...resolution,
+        charge_actions: actionsByResolutionId.get(resolution.id) ?? [],
+      })),
+      error: null,
+    };
+  }, []);
 }
 
 export interface RecordCaseResolvedEventInput {
@@ -2212,7 +2224,7 @@ export async function recordCaseResolvedEvent(
 
 export interface RecordCaseDecisionApprovedEventInput {
   caseId: number;
-  caseResolutionId?: number | null;
+  caseResolutionId: number;
   approvedByProsecutorId: number;
   dateApproved: string;
   timeApproved?: string | null;
@@ -2237,7 +2249,7 @@ export async function recordCaseDecisionApprovedEvent(
     const supabase = await getSupabaseBrowserClient();
     const { data, error } = await supabase.rpc("record_case_decision_approved_event" as never, {
       p_case_id: input.caseId,
-      p_case_resolution_id: input.caseResolutionId ?? null,
+      p_case_resolution_id: input.caseResolutionId,
       p_approved_by_prosecutor_id: input.approvedByProsecutorId,
       p_date_approved: input.dateApproved,
       p_time_approved: input.timeApproved?.trim() || null,

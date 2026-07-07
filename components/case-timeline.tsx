@@ -38,7 +38,8 @@ import {
   type CaseAssignmentRecord,
   type CaseResolutionApprovalActionInput,
   type CaseResolutionChargeInput,
-  getLatestCaseResolution,
+  getCaseResolutionsWithActions,
+  type CaseResolutionWithActionsRecord,
   type CaseViolationManagementRecord,
   createCaseEvent,
   getCaseAssignments,
@@ -842,6 +843,7 @@ export function CaseTimeline({
   const [caseViolations, setCaseViolations] = useState<CaseViolationManagementRecord[]>([]);
   const [violations, setViolations] = useState<TableRow<"violations">[]>([]);
   const [assignments, setAssignments] = useState<CaseAssignmentRecord[]>([]);
+  const [caseResolutions, setCaseResolutions] = useState<CaseResolutionWithActionsRecord[]>([]);
   const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()] });
   const [editForm, setEditForm] = useState({ eventDate: "", title: "", description: "", editReason: "" });
   const [voidReason, setVoidReason] = useState("");
@@ -866,6 +868,7 @@ export function CaseTimeline({
   const openAddDialog = async () => {
     setActionError(null);
     setEventTypesError(null);
+    setCaseResolutions([]);
     setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()] });
     setIsAddDialogOpen(true);
 
@@ -901,19 +904,9 @@ export function CaseTimeline({
       if (!result.error) setViolations(result.data);
     }
 
-    const latestResolutionResult = await getLatestCaseResolution(caseId);
-    if (!latestResolutionResult.error && latestResolutionResult.data?.charge_actions.length) {
-      setAddForm((form) => ({
-        ...form,
-        caseResolutionId: latestResolutionResult.data?.id ?? null,
-        approvalActions: latestResolutionResult.data?.charge_actions.map((action) => ({
-          chargeText: action.charge_text,
-          caseViolationId: action.case_violation_id,
-          violationId: action.violation_id,
-          sourceResolutionChargeActionId: action.id,
-          decisionCode: action.action_code,
-        })) ?? form.approvalActions,
-      }));
+    const resolutionsResult = await getCaseResolutionsWithActions(caseId);
+    if (!resolutionsResult.error) {
+      setCaseResolutions(resolutionsResult.data);
     }
 
     const assignmentResult = await getCaseAssignments(caseId);
@@ -929,7 +922,7 @@ export function CaseTimeline({
     if ((isAssignment || isReassignment) && !addForm.prosecutorId) return;
     if (isReassignment && !addForm.reason.trim()) return;
     if (isResolved && !addForm.recommendationCode) return;
-    if (isDecisionApproved && (!addForm.prosecutorId || !addForm.approvalActions.some((action) => action.chargeText.trim()))) return;
+    if (isDecisionApproved && (!addForm.prosecutorId || !addForm.caseResolutionId || !addForm.approvalActions.some((action) => action.chargeText.trim()))) return;
     if (isReassignment && currentAssignment?.prosecutor_id === Number(addForm.prosecutorId)) {
       setActionError("The selected prosecutor is already assigned to this case.");
       return;
@@ -969,7 +962,7 @@ export function CaseTimeline({
           : isDecisionApproved
             ? await recordCaseDecisionApprovedEvent({
               caseId,
-              caseResolutionId: addForm.caseResolutionId,
+              caseResolutionId: Number(addForm.caseResolutionId),
               approvedByProsecutorId: Number(addForm.prosecutorId),
               dateApproved: addForm.eventDate,
               timeApproved: addForm.eventTime || null,
@@ -1068,6 +1061,17 @@ export function CaseTimeline({
   const isAddingAssignmentLike = isAddingAssignment || isAddingReassignment;
   const currentAssignment = assignments.find((assignment) => !assignment.unassigned_at && ("is_voided" in assignment ? assignment.is_voided === false : true)) ?? null;
   const selectedEventTypeLabel = eventTypes.find((eventType) => eventType.code === addForm.eventTypeCode)?.display_label ?? "";
+  const selectedApprovalResolution = caseResolutions.find((resolution) => resolution.id === addForm.caseResolutionId) ?? null;
+  const formatRecommendationLabel = (code: string) => code === "CASE_FOR_FILING" ? "Case for Filing" : code === "CASE_DISMISSAL" ? "Case Dismissal" : code === "MIXED_RESULT" ? "Mixed Result" : code;
+  const approvalActionsFromResolution = (resolution: CaseResolutionWithActionsRecord): CaseResolutionApprovalActionInput[] => resolution.charge_actions.length > 0
+    ? resolution.charge_actions.map((action) => ({
+      chargeText: action.charge_text,
+      caseViolationId: action.case_violation_id,
+      violationId: action.violation_id,
+      sourceResolutionChargeActionId: action.id,
+      decisionCode: action.action_code,
+    }))
+    : [emptyApprovalAction()];
 
   const visibleEvents = useMemo(() => events.filter((event) => showVoided || !event.is_voided), [events, showVoided]);
   const timelineGroupedByDate = useMemo(() => {
@@ -1261,6 +1265,8 @@ export function CaseTimeline({
               </>
             ) : isAddingDecisionApproved ? (
               <>
+                {caseResolutions.length === 0 ? <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">No case resolution available to approve.</div> : null}
+                <div className="space-y-2"><Label htmlFor="add-approval-resolution">Resolution to Approve</Label><select id="add-approval-resolution" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.caseResolutionId ?? ""} onChange={(e) => { const resolutionId = e.target.value ? Number(e.target.value) : null; const resolution = caseResolutions.find((item) => item.id === resolutionId) ?? null; setAddForm((form) => ({ ...form, caseResolutionId: resolutionId, approvalActions: resolution ? approvalActionsFromResolution(resolution) : [emptyApprovalAction()] })); }}><option value="">Select resolution</option>{caseResolutions.map((resolution) => <option key={resolution.id} value={resolution.id}>{formatRecommendationLabel(resolution.recommendation_code)} • {formatDate(resolution.date_resolved)} • Resolution #{resolution.id}</option>)}</select>{selectedApprovalResolution ? <p className="text-xs text-muted-foreground">Loaded {selectedApprovalResolution.charge_actions.length} recommended action{selectedApprovalResolution.charge_actions.length === 1 ? "" : "s"} from the selected resolution.</p> : null}</div>
                 <div className="space-y-2"><Label htmlFor="add-approved-by">Approved By</Label><select id="add-approved-by" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.prosecutorId} onChange={(e) => setAddForm((form) => ({ ...form, prosecutorId: e.target.value }))}><option value="">Select approving prosecutor</option>{approvingProsecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select>{approvingProsecutors.length === 0 ? <p className="text-xs text-muted-foreground">No active Chief Prosecutor or Deputy Prosecutor records found.</p> : null}</div>
                 <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-date-approved">Date Approved</Label><Input id="add-date-approved" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-1"><Label htmlFor="add-time-approved">Time Approved</Label><Input id="add-time-approved" type="time" value={addForm.eventTime} onChange={(e) => setAddForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
                 <ApprovalDecisionEntries actions={addForm.approvalActions} onChange={(approvalActions) => setAddForm((form) => ({ ...form, approvalActions }))} />
@@ -1276,7 +1282,7 @@ export function CaseTimeline({
           </div>
           <DialogFooter className="border-t pt-3">
             <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
-            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : "Add event"}</Button>
+            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.caseResolutionId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : "Add event"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
