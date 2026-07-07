@@ -348,6 +348,25 @@ BEGIN
     RAISE EXCEPTION 'Active case event % not found', p_case_event_id;
   END IF;
 
+  IF lower(coalesce(v_source_table, '')) = 'case_resolutions' OR v_event_type_code = 'CASE_RESOLVED' THEN
+    SELECT cr.id, to_jsonb(cr)
+    INTO v_resolution_id, v_resolution_old
+    FROM public.case_resolutions cr
+    WHERE cr.id = v_source_id
+       OR cr.case_event_id = p_case_event_id
+    ORDER BY CASE WHEN cr.id = v_source_id THEN 0 ELSE 1 END
+    LIMIT 1;
+
+    IF v_resolution_id IS NOT NULL AND EXISTS (
+      SELECT 1
+      FROM public.case_resolution_approvals a
+      WHERE a.case_resolution_id = v_resolution_id
+        AND a.is_voided = false
+    ) THEN
+      RAISE EXCEPTION 'This resolution already has approved decisions. Void the approval events first.';
+    END IF;
+  END IF;
+
   SELECT cpd.current_status_id, to_jsonb(cpd)
   INTO v_previous_status_id, v_old_details
   FROM public.case_private_details cpd
@@ -425,15 +444,6 @@ BEGIN
     LIMIT 1;
 
     IF v_resolution_id IS NOT NULL THEN
-      IF EXISTS (
-        SELECT 1
-        FROM public.case_resolution_approvals a
-        WHERE a.case_resolution_id = v_resolution_id
-          AND a.is_voided = false
-      ) THEN
-        RAISE EXCEPTION 'This resolution already has approved decisions. Void the approval events first.';
-      END IF;
-
       UPDATE public.case_resolutions
       SET is_voided = true,
           voided_at = now(),
