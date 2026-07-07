@@ -1,27 +1,30 @@
-ALTER TABLE public.prosecutors
-ADD COLUMN IF NOT EXISTS position_code text;
-
-ALTER TABLE public.prosecutors
-DROP CONSTRAINT IF EXISTS prosecutors_position_code_check;
-
-ALTER TABLE public.prosecutors
-ADD CONSTRAINT prosecutors_position_code_check
-CHECK (position_code IS NULL OR position_code IN ('CHIEF_PROSECUTOR', 'DEPUTY_PROSECUTOR', 'PROSECUTOR'));
+INSERT INTO public.positions (code, title, group_type, is_active)
+VALUES
+  ('CHIEF_PROSECUTOR', 'Chief Prosecutor', 'PROSECUTOR', true),
+  ('DEPUTY_PROSECUTOR', 'Deputy Prosecutor', 'PROSECUTOR', true),
+  ('PROSECUTOR', 'Prosecutor', 'PROSECUTOR', true)
+ON CONFLICT (code) DO UPDATE SET
+  title = EXCLUDED.title,
+  group_type = EXCLUDED.group_type,
+  is_active = EXCLUDED.is_active;
 
 CREATE OR REPLACE VIEW public.v_ref_prosecutors AS
- SELECT id,
-    first_name,
-    middle_name,
-    last_name,
-    suffix,
-    full_name,
-    short_name,
-    position_id,
-    is_active,
-    created_at,
-    position_code
-   FROM public.prosecutors
-  WHERE (is_active = true);
+ SELECT pr.id,
+    pr.first_name,
+    pr.middle_name,
+    pr.last_name,
+    pr.suffix,
+    pr.full_name,
+    pr.short_name,
+    pr.position_id,
+    pr.is_active,
+    pr.created_at,
+    p.code AS position_code,
+    p.title AS position_title,
+    p.group_type AS position_group_type
+   FROM public.prosecutors pr
+   LEFT JOIN public.positions p ON p.id = pr.position_id
+  WHERE (pr.is_active = true);
 
 INSERT INTO public.case_event_types (code, display_label, category, description, sort_order, is_system, is_active)
 VALUES ('CASE_DECISION_APPROVED', 'Case Decision Approved', 'CASE', 'Manual timeline event for approving a prosecutor recommendation or final case decision.', 130, true, true)
@@ -104,6 +107,7 @@ DECLARE
   v_status_history_id bigint;
   v_approver_name text;
   v_approver_position_code text;
+  v_approver_position_group_type text;
   v_final_status_code text;
   v_final_status_label text;
   v_remarks text := NULLIF(btrim(COALESCE(p_remarks, '')), '');
@@ -124,12 +128,15 @@ BEGIN
     RAISE EXCEPTION 'Unknown case id %', p_case_id;
   END IF;
 
-  SELECT full_name, position_code INTO v_approver_name, v_approver_position_code
-  FROM public.prosecutors
-  WHERE id = p_approved_by_prosecutor_id AND is_active = true;
+  SELECT pr.full_name, p.code, p.group_type INTO v_approver_name, v_approver_position_code, v_approver_position_group_type
+  FROM public.prosecutors pr
+  JOIN public.positions p ON p.id = pr.position_id
+  WHERE pr.id = p_approved_by_prosecutor_id
+    AND pr.is_active = true
+    AND p.is_active = true;
 
   IF v_approver_name IS NULL THEN RAISE EXCEPTION 'Unknown prosecutor id %', p_approved_by_prosecutor_id; END IF;
-  IF COALESCE(v_approver_position_code, '') NOT IN ('CHIEF_PROSECUTOR', 'DEPUTY_PROSECUTOR') THEN
+  IF COALESCE(v_approver_position_group_type, '') <> 'PROSECUTOR' OR COALESCE(v_approver_position_code, '') NOT IN ('CHIEF_PROSECUTOR', 'DEPUTY_PROSECUTOR') THEN
     RAISE EXCEPTION 'Approver must be a Chief Prosecutor or Deputy Prosecutor';
   END IF;
 
@@ -177,6 +184,16 @@ BEGIN
 
   FOR v_action IN SELECT * FROM jsonb_array_elements(COALESCE(p_approval_actions, '[]'::jsonb)) LOOP
     IF NULLIF(btrim(COALESCE(v_action->>'charge_text', '')), '') IS NOT NULL AND v_action->>'decision_code' IN ('FOR_FILING', 'DISMISSAL') THEN
+      IF NULLIF(v_action->>'source_resolution_charge_action_id', '') IS NOT NULL AND NOT EXISTS (
+        SELECT 1
+        FROM public.case_resolution_charge_actions src
+        WHERE src.id = NULLIF(v_action->>'source_resolution_charge_action_id', '')::bigint
+          AND src.case_id = p_case_id
+          AND (p_case_resolution_id IS NULL OR src.case_resolution_id = p_case_resolution_id)
+      ) THEN
+        RAISE EXCEPTION 'Selected recommendation action does not belong to this case resolution.';
+      END IF;
+
       v_display_order := v_display_order + 1;
       INSERT INTO public.case_resolution_approval_actions (approval_id, case_id, source_resolution_charge_action_id, case_violation_id, violation_id, charge_text, decision_code, display_order, remarks)
       VALUES (v_approval_id, p_case_id, NULLIF(v_action->>'source_resolution_charge_action_id', '')::bigint, NULLIF(v_action->>'case_violation_id', '')::bigint, NULLIF(v_action->>'violation_id', '')::bigint, NULLIF(btrim(v_action->>'charge_text'), ''), v_action->>'decision_code', v_display_order, NULLIF(btrim(COALESCE(v_action->>'remarks', '')), ''));
@@ -205,3 +222,15 @@ BEGIN
   RETURN v_event_id;
 END;
 $$;
+
+
+GRANT EXECUTE ON FUNCTION public.record_case_decision_approved_event(
+  bigint,
+  bigint,
+  bigint,
+  date,
+  time without time zone,
+  jsonb,
+  text,
+  bigint
+) TO authenticated;

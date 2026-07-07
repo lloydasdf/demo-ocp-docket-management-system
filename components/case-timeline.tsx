@@ -1059,7 +1059,10 @@ export function CaseTimeline({
   const isAddingReassignment = addForm.eventTypeCode === "CASE_REASSIGNMENT";
   const isAddingResolved = addForm.eventTypeCode === "CASE_RESOLVED";
   const isAddingDecisionApproved = addForm.eventTypeCode === "CASE_DECISION_APPROVED";
-  const approvingProsecutors = prosecutors.filter((prosecutor) => ["CHIEF_PROSECUTOR", "DEPUTY_PROSECUTOR"].includes(String((prosecutor as { position_code?: string | null }).position_code ?? "")));
+  const approvingProsecutors = prosecutors.filter((prosecutor) => {
+    const position = prosecutor as { position_code?: string | null; position_group_type?: string | null };
+    return position.position_group_type === "PROSECUTOR" && ["CHIEF_PROSECUTOR", "DEPUTY_PROSECUTOR"].includes(String(position.position_code ?? ""));
+  });
   const showChargesForFiling = addForm.recommendationCode === "CASE_FOR_FILING" || addForm.recommendationCode === "MIXED_RESULT";
   const showChargesForDismissal = addForm.recommendationCode === "CASE_DISMISSAL" || addForm.recommendationCode === "MIXED_RESULT";
   const isAddingAssignmentLike = isAddingAssignment || isAddingReassignment;
