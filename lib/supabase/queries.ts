@@ -2108,6 +2108,7 @@ export async function getCaseResolutionsWithActions(
       .from("case_resolutions" as never)
       .select("*" as never)
       .eq("case_id" as never, caseId)
+      .eq("is_voided" as never, false)
       .order("date_resolved" as never, { ascending: false, nullsFirst: false })
       .order("created_at" as never, { ascending: false }) as unknown as { data: Omit<CaseResolutionWithActionsRecord, "charge_actions">[] | null; error: unknown };
 
