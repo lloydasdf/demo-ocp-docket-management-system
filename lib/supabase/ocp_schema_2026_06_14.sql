@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict azbgfzqcwZIiqHy9IzmkGNCiWEaefwoqqyS8M2XTCGmdgT4BShpeTkW0aYCNXlU
+\restrict iaEoXhb6L2BPtilIspXQufm3KxoeDkBSPmYgAWY1QsWUjItpuvgJroQ3ryZEmPJ
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 18.3
@@ -7181,6 +7181,433 @@ $$;
 
 
 --
+-- Name: record_case_assignment_event(bigint, bigint, date, time without time zone, bigint, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_case_assignment_event(p_case_id bigint, p_prosecutor_id bigint, p_assignment_date date, p_assignment_time time without time zone DEFAULT NULL::time without time zone, p_staff_id bigint DEFAULT NULL::bigint, p_remarks text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_event_type_id bigint;
+  v_pending_status_id bigint;
+  v_event_id bigint;
+  v_assignment_id bigint;
+  v_status_history_id bigint;
+  v_previous_status_id bigint;
+  v_assigned_at timestamptz;
+  v_prosecutor_name text;
+  v_staff_name text;
+  v_old_details jsonb;
+  v_new_details jsonb;
+BEGIN
+  IF p_case_id IS NULL THEN RAISE EXCEPTION 'Case id is required'; END IF;
+  IF p_prosecutor_id IS NULL THEN RAISE EXCEPTION 'Assigned prosecutor is required'; END IF;
+  IF p_assignment_date IS NULL THEN RAISE EXCEPTION 'Assignment date is required'; END IF;
+
+  SELECT id INTO v_event_type_id
+  FROM public.case_event_types
+  WHERE code = 'CASE_ASSIGNMENT' AND is_active IS TRUE
+  LIMIT 1;
+
+  IF v_event_type_id IS NULL THEN
+    RAISE EXCEPTION 'Missing active case event type CASE_ASSIGNMENT';
+  END IF;
+
+  SELECT id INTO v_pending_status_id
+  FROM public.case_statuses
+  WHERE (lower(code) = 'pending' OR lower(display_label) = 'pending') AND is_active IS TRUE
+  LIMIT 1;
+
+  IF v_pending_status_id IS NULL THEN
+    INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active)
+    VALUES ('PENDING', 'Pending', 20, false, false, true)
+    RETURNING id INTO v_pending_status_id;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN
+    RAISE EXCEPTION 'Unknown case id %', p_case_id;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.prosecutors WHERE id = p_prosecutor_id) THEN
+    RAISE EXCEPTION 'Unknown prosecutor id %', p_prosecutor_id;
+  END IF;
+
+  IF p_staff_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.staff WHERE id = p_staff_id) THEN
+    RAISE EXCEPTION 'Unknown staff id %', p_staff_id;
+  END IF;
+
+  SELECT cpd.current_status_id, to_jsonb(cpd)
+  INTO v_previous_status_id, v_old_details
+  FROM public.case_private_details cpd
+  WHERE cpd.case_id = p_case_id;
+
+  v_assigned_at := (p_assignment_date::timestamp + COALESCE(p_assignment_time, '00:00'::time))::timestamptz;
+
+  SELECT COALESCE(short_name, full_name) INTO v_prosecutor_name
+  FROM public.prosecutors
+  WHERE id = p_prosecutor_id;
+
+  SELECT COALESCE(short_name, full_name) INTO v_staff_name
+  FROM public.staff
+  WHERE id = p_staff_id;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.case_assignments ca
+    WHERE ca.case_id = p_case_id
+      AND ca.unassigned_at IS NULL
+      AND ca.is_voided IS FALSE
+  ) THEN
+    RAISE EXCEPTION 'This case already has an active assignment. Void or reassign the current assignment first.';
+  END IF;
+
+  INSERT INTO public.case_events (
+    case_id, event_type_id, event_date, event_time, title, description,
+    prosecutor_id, staff_id, details_jsonb, source, created_by_user_id, updated_by_user_id
+  ) VALUES (
+    p_case_id,
+    v_event_type_id,
+    p_assignment_date,
+    p_assignment_time,
+    'Case Assignment',
+    'Assigned to Prosec ' || COALESCE(v_prosecutor_name, p_prosecutor_id::text) || ' on ' || to_char(p_assignment_date, 'Mon DD, YYYY'),
+    p_prosecutor_id,
+    p_staff_id,
+    jsonb_build_object(
+      'action', 'case_assignment',
+      'new_prosecutor_id', p_prosecutor_id,
+      'new_prosecutor_name', v_prosecutor_name,
+      'staff_id', p_staff_id,
+      'staff_name', v_staff_name,
+      'remarks', NULLIF(btrim(COALESCE(p_remarks, '')), ''),
+      'automatic_status', 'Pending'
+    ),
+    'MANUAL_ENTRY', p_user_id, p_user_id
+  ) RETURNING id INTO v_event_id;
+
+  INSERT INTO public.case_assignments (case_id, prosecutor_id, staff_id, assigned_by_user_id, assigned_at, remarks, case_event_id)
+  VALUES (p_case_id, p_prosecutor_id, p_staff_id, p_user_id, v_assigned_at, NULLIF(btrim(COALESCE(p_remarks, '')), ''), v_event_id)
+  RETURNING id INTO v_assignment_id;
+
+  UPDATE public.case_events
+  SET source_table = 'case_assignments', source_id = v_assignment_id, updated_by_user_id = p_user_id
+  WHERE id = v_event_id;
+
+  INSERT INTO public.case_status_history (
+    case_id, from_status_id, to_status_id, changed_by_user_id, changed_at, status_date, remarks, case_event_id
+  ) VALUES (
+    p_case_id,
+    v_previous_status_id,
+    v_pending_status_id,
+    p_user_id,
+    now(),
+    p_assignment_date,
+    'Automatically generated by Case Assignment event; internal history record only.',
+    v_event_id
+  ) RETURNING id INTO v_status_history_id;
+
+  INSERT INTO public.case_private_details (case_id, current_status_id, current_status_date, updated_at)
+  VALUES (p_case_id, v_pending_status_id, p_assignment_date, now())
+  ON CONFLICT (case_id) DO UPDATE SET
+    current_status_id = EXCLUDED.current_status_id,
+    current_status_date = EXCLUDED.current_status_date,
+    updated_at = now();
+
+  SELECT to_jsonb(cpd) INTO v_new_details
+  FROM public.case_private_details cpd
+  WHERE cpd.case_id = p_case_id;
+
+  INSERT INTO public.audit_logs (actor_user_id, entity_name, entity_id, action, old_data, new_data, case_id, summary, metadata)
+  VALUES (
+    p_user_id,
+    'case_assignments',
+    v_assignment_id,
+    'CASE_ASSIGNED_PENDING_STATUS',
+    v_old_details,
+    v_new_details,
+    p_case_id,
+    'Case assigned to ' || COALESCE(v_prosecutor_name, 'selected prosecutor') || '; current status automatically changed to Pending; status history record created automatically.',
+    jsonb_build_object('case_event_id', v_event_id, 'assignment_id', v_assignment_id, 'status_id', v_pending_status_id, 'status_history_id', v_status_history_id)
+  );
+
+  RETURN v_event_id;
+END;
+$$;
+
+
+--
+-- Name: record_case_reassignment_event(bigint, bigint, date, time without time zone, bigint, text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_case_reassignment_event(p_case_id bigint, p_new_prosecutor_id bigint, p_reassignment_date date, p_reassignment_time time without time zone DEFAULT NULL::time without time zone, p_new_staff_id bigint DEFAULT NULL::bigint, p_reason text DEFAULT NULL::text, p_remarks text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_event_type_id bigint;
+  v_event_id bigint;
+  v_previous_assignment_id bigint;
+  v_previous_prosecutor_id bigint;
+  v_previous_staff_id bigint;
+  v_previous_assignment_old jsonb;
+  v_previous_assignment_new jsonb;
+  v_new_assignment_id bigint;
+  v_new_assignment_new jsonb;
+  v_reassigned_at timestamptz;
+  v_previous_prosecutor_name text;
+  v_new_prosecutor_name text;
+  v_staff_name text;
+  v_reason text := NULLIF(btrim(COALESCE(p_reason, '')), '');
+  v_remarks text := NULLIF(btrim(COALESCE(p_remarks, '')), '');
+BEGIN
+  IF p_case_id IS NULL THEN RAISE EXCEPTION 'Case id is required'; END IF;
+  IF p_new_prosecutor_id IS NULL THEN RAISE EXCEPTION 'New prosecutor is required'; END IF;
+  IF p_reassignment_date IS NULL THEN RAISE EXCEPTION 'Reassignment date is required'; END IF;
+  IF v_reason IS NULL THEN RAISE EXCEPTION 'Reason is required'; END IF;
+
+  SELECT id INTO v_event_type_id
+  FROM public.case_event_types
+  WHERE code = 'CASE_REASSIGNMENT' AND is_active IS TRUE
+  LIMIT 1;
+
+  IF v_event_type_id IS NULL THEN
+    RAISE EXCEPTION 'Missing active case event type CASE_REASSIGNMENT';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN
+    RAISE EXCEPTION 'Unknown case id %', p_case_id;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.prosecutors WHERE id = p_new_prosecutor_id) THEN
+    RAISE EXCEPTION 'Unknown prosecutor id %', p_new_prosecutor_id;
+  END IF;
+
+  IF p_new_staff_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.staff WHERE id = p_new_staff_id) THEN
+    RAISE EXCEPTION 'Unknown staff id %', p_new_staff_id;
+  END IF;
+
+  SELECT ca.id, ca.prosecutor_id, ca.staff_id, to_jsonb(ca), COALESCE(p.short_name, p.full_name)
+  INTO v_previous_assignment_id, v_previous_prosecutor_id, v_previous_staff_id, v_previous_assignment_old, v_previous_prosecutor_name
+  FROM public.case_assignments ca
+  LEFT JOIN public.prosecutors p ON p.id = ca.prosecutor_id
+  WHERE ca.case_id = p_case_id
+    AND ca.unassigned_at IS NULL
+    AND ca.is_voided IS FALSE
+  ORDER BY ca.assigned_at DESC NULLS LAST, ca.id DESC
+  LIMIT 1
+  FOR UPDATE OF ca;
+
+  IF v_previous_assignment_id IS NULL THEN
+    RAISE EXCEPTION 'This case has no active assignment to reassign.';
+  END IF;
+
+  v_reassigned_at := (p_reassignment_date::timestamp + COALESCE(p_reassignment_time, '00:00'::time))::timestamptz;
+
+  SELECT COALESCE(short_name, full_name) INTO v_new_prosecutor_name
+  FROM public.prosecutors
+  WHERE id = p_new_prosecutor_id;
+
+  SELECT COALESCE(short_name, full_name) INTO v_staff_name
+  FROM public.staff
+  WHERE id = p_new_staff_id;
+
+  UPDATE public.case_assignments
+  SET unassigned_at = v_reassigned_at,
+      unassigned_by_user_id = p_user_id,
+      unassignment_reason = v_reason
+  WHERE id = v_previous_assignment_id;
+
+  SELECT to_jsonb(ca) INTO v_previous_assignment_new
+  FROM public.case_assignments ca
+  WHERE ca.id = v_previous_assignment_id;
+
+  INSERT INTO public.case_assignments (case_id, prosecutor_id, staff_id, assigned_by_user_id, assigned_at, remarks)
+  VALUES (p_case_id, p_new_prosecutor_id, p_new_staff_id, p_user_id, v_reassigned_at, v_remarks)
+  RETURNING id INTO v_new_assignment_id;
+
+  INSERT INTO public.case_events (
+    case_id, event_type_id, event_date, event_time, title, description,
+    prosecutor_id, staff_id, details_jsonb, source, source_table, source_id,
+    created_by_user_id, updated_by_user_id
+  ) VALUES (
+    p_case_id,
+    v_event_type_id,
+    p_reassignment_date,
+    p_reassignment_time,
+    'Case Reassignment',
+    'Reassigned to Prosec ' || COALESCE(v_new_prosecutor_name, p_new_prosecutor_id::text) || ' on ' || to_char(p_reassignment_date, 'Mon FMDD, YYYY'),
+    p_new_prosecutor_id,
+    p_new_staff_id,
+    jsonb_build_object(
+      'action', 'case_reassignment',
+      'previous_assignment_id', v_previous_assignment_id,
+      'previous_prosecutor_id', v_previous_prosecutor_id,
+      'previous_prosecutor_name', v_previous_prosecutor_name,
+      'new_assignment_id', v_new_assignment_id,
+      'new_prosecutor_id', p_new_prosecutor_id,
+      'new_prosecutor_name', v_new_prosecutor_name,
+      'staff_id', p_new_staff_id,
+      'staff_name', v_staff_name,
+      'reason', v_reason,
+      'remarks', v_remarks
+    ),
+    'MANUAL_ENTRY',
+    'case_assignments',
+    v_new_assignment_id,
+    p_user_id,
+    p_user_id
+  ) RETURNING id INTO v_event_id;
+
+  UPDATE public.case_assignments
+  SET case_event_id = v_event_id
+  WHERE id = v_new_assignment_id;
+
+  SELECT to_jsonb(ca) INTO v_new_assignment_new
+  FROM public.case_assignments ca
+  WHERE ca.id = v_new_assignment_id;
+
+  INSERT INTO public.audit_logs (actor_user_id, entity_name, entity_id, action, old_data, new_data, case_id, summary, metadata)
+  VALUES
+    (p_user_id, 'case_assignments', v_previous_assignment_id, 'CASE_REASSIGNMENT_OLD_ASSIGNMENT_CLOSED', v_previous_assignment_old, v_previous_assignment_new, p_case_id, 'Closed old assignment during case reassignment.', jsonb_build_object('case_event_id', v_event_id, 'reason', v_reason, 'new_assignment_id', v_new_assignment_id)),
+    (p_user_id, 'case_assignments', v_new_assignment_id, 'CASE_REASSIGNMENT_NEW_ASSIGNMENT_CREATED', NULL, v_new_assignment_new, p_case_id, 'Created new assignment during case reassignment.', jsonb_build_object('case_event_id', v_event_id, 'reason', v_reason, 'previous_assignment_id', v_previous_assignment_id));
+
+  RETURN v_event_id;
+END;
+$$;
+
+
+--
+-- Name: record_case_resolved_event(bigint, text, date, time without time zone, text, jsonb, jsonb, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_case_resolved_event(p_case_id bigint, p_recommendation_code text, p_date_resolved date, p_time_resolved time without time zone DEFAULT NULL::time without time zone, p_remarks text DEFAULT NULL::text, p_charges_for_filing jsonb DEFAULT '[]'::jsonb, p_charges_for_dismissal jsonb DEFAULT '[]'::jsonb, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_event_type_id bigint;
+  v_reso_for_approval_status_id bigint;
+  v_previous_status_id bigint;
+  v_event_id bigint;
+  v_resolution_id bigint;
+  v_status_history_id bigint;
+  v_recommendation_label text;
+  v_remarks text := NULLIF(btrim(COALESCE(p_remarks, '')), '');
+  v_old_details jsonb;
+  v_new_details jsonb;
+  v_charge jsonb;
+  v_display_order integer;
+BEGIN
+  IF p_case_id IS NULL THEN RAISE EXCEPTION 'Case id is required'; END IF;
+  IF p_recommendation_code NOT IN ('CASE_FOR_FILING', 'CASE_DISMISSAL', 'MIXED_RESULT') THEN RAISE EXCEPTION 'Recommendation is required'; END IF;
+  IF p_date_resolved IS NULL THEN RAISE EXCEPTION 'Date resolved is required'; END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN
+    RAISE EXCEPTION 'Unknown case id %', p_case_id;
+  END IF;
+
+  INSERT INTO public.case_event_types (code, display_label, category, description, sort_order, is_system, is_active)
+  VALUES ('CASE_RESOLVED', 'Case Resolved', 'CASE', 'Manual timeline event for resolving a case.', 120, true, true)
+  ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, category = EXCLUDED.category, description = EXCLUDED.description, sort_order = EXCLUDED.sort_order, is_active = true, updated_at = now()
+  RETURNING id INTO v_event_type_id;
+
+  INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active)
+  VALUES ('RESO_FOR_APPROVAL', 'Reso for Approval', 80, false, true, true)
+  ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, is_final = false, is_milestone = true, is_active = true
+  RETURNING id INTO v_reso_for_approval_status_id;
+
+  v_recommendation_label := CASE p_recommendation_code
+    WHEN 'CASE_FOR_FILING' THEN 'Case for Filing'
+    WHEN 'CASE_DISMISSAL' THEN 'Case Dismissal'
+    ELSE 'Mixed Result'
+  END;
+
+  SELECT cpd.current_status_id, to_jsonb(cpd)
+  INTO v_previous_status_id, v_old_details
+  FROM public.case_private_details cpd
+  WHERE cpd.case_id = p_case_id;
+
+  INSERT INTO public.case_events (
+    case_id, event_type_id, event_date, event_time, title, description, status_id,
+    details_jsonb, source, created_by_user_id, updated_by_user_id
+  ) VALUES (
+    p_case_id, v_event_type_id, p_date_resolved, p_time_resolved, 'Case Resolved',
+    'Case resolved as ' || v_recommendation_label || ' on ' || to_char(p_date_resolved, 'Mon FMDD, YYYY'),
+    v_reso_for_approval_status_id,
+    jsonb_build_object('recommendation_code', p_recommendation_code, 'recommendation_label', v_recommendation_label, 'remarks', v_remarks),
+    'MANUAL_ENTRY', p_user_id, p_user_id
+  ) RETURNING id INTO v_event_id;
+
+  INSERT INTO public.case_resolutions (case_id, case_event_id, recommendation_code, date_resolved, time_resolved, remarks, created_by_user_id, updated_by_user_id)
+  VALUES (p_case_id, v_event_id, p_recommendation_code, p_date_resolved, p_time_resolved, v_remarks, p_user_id, p_user_id)
+  RETURNING id INTO v_resolution_id;
+
+  IF p_recommendation_code IN ('CASE_FOR_FILING', 'MIXED_RESULT') THEN
+    v_display_order := 0;
+    FOR v_charge IN SELECT * FROM jsonb_array_elements(COALESCE(p_charges_for_filing, '[]'::jsonb)) LOOP
+      v_display_order := v_display_order + 1;
+      IF NULLIF(btrim(COALESCE(v_charge->>'charge_text', v_charge #>> '{}')), '') IS NOT NULL THEN
+        INSERT INTO public.case_resolution_charge_actions (case_resolution_id, case_id, case_violation_id, violation_id, charge_text, action_code, display_order, remarks)
+        VALUES (v_resolution_id, p_case_id, NULLIF(v_charge->>'case_violation_id', '')::bigint, NULLIF(v_charge->>'violation_id', '')::bigint, NULLIF(btrim(COALESCE(v_charge->>'charge_text', v_charge #>> '{}')), ''), 'FOR_FILING', v_display_order, NULLIF(btrim(COALESCE(v_charge->>'remarks', '')), ''));
+      END IF;
+    END LOOP;
+  END IF;
+
+  IF p_recommendation_code IN ('CASE_DISMISSAL', 'MIXED_RESULT') THEN
+    v_display_order := 0;
+    FOR v_charge IN SELECT * FROM jsonb_array_elements(COALESCE(p_charges_for_dismissal, '[]'::jsonb)) LOOP
+      v_display_order := v_display_order + 1;
+      IF NULLIF(btrim(COALESCE(v_charge->>'charge_text', v_charge #>> '{}')), '') IS NOT NULL THEN
+        INSERT INTO public.case_resolution_charge_actions (case_resolution_id, case_id, case_violation_id, violation_id, charge_text, action_code, display_order, remarks)
+        VALUES (v_resolution_id, p_case_id, NULLIF(v_charge->>'case_violation_id', '')::bigint, NULLIF(v_charge->>'violation_id', '')::bigint, NULLIF(btrim(COALESCE(v_charge->>'charge_text', v_charge #>> '{}')), ''), 'DISMISSAL', v_display_order, NULLIF(btrim(COALESCE(v_charge->>'remarks', '')), ''));
+      END IF;
+    END LOOP;
+  END IF;
+
+  UPDATE public.case_events
+  SET source_table = 'case_resolutions',
+      source_id = v_resolution_id,
+      details_jsonb = details_jsonb || jsonb_build_object(
+        'charge_actions',
+        COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'id', cra.id,
+            'action_code', cra.action_code,
+            'charge_text', cra.charge_text,
+            'display_order', cra.display_order,
+            'remarks', cra.remarks
+          ) ORDER BY cra.action_code, cra.display_order, cra.id)
+          FROM public.case_resolution_charge_actions cra
+          WHERE cra.case_resolution_id = v_resolution_id
+        ), '[]'::jsonb)
+      ),
+      updated_by_user_id = p_user_id,
+      updated_at = now()
+  WHERE id = v_event_id;
+
+  INSERT INTO public.case_private_details (case_id, current_status_id, current_status_date, current_status_remarks, updated_at)
+  VALUES (p_case_id, v_reso_for_approval_status_id, p_date_resolved, v_remarks, now())
+  ON CONFLICT (case_id) DO UPDATE SET
+    current_status_id = EXCLUDED.current_status_id,
+    current_status_date = EXCLUDED.current_status_date,
+    current_status_remarks = EXCLUDED.current_status_remarks,
+    updated_at = now();
+
+  INSERT INTO public.case_status_history (case_id, from_status_id, to_status_id, changed_by_user_id, changed_at, status_date, remarks, case_event_id)
+  VALUES (p_case_id, v_previous_status_id, v_reso_for_approval_status_id, p_user_id, now(), p_date_resolved, v_remarks, v_event_id)
+  RETURNING id INTO v_status_history_id;
+
+  SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE cpd.case_id = p_case_id;
+
+  INSERT INTO public.audit_logs (actor_user_id, entity_name, entity_id, action, old_data, new_data, case_id, summary, metadata)
+  VALUES (p_user_id, 'case_resolutions', v_resolution_id, 'CASE_RESOLVED', v_old_details, v_new_details, p_case_id, 'Case resolved as ' || v_recommendation_label || '.', jsonb_build_object('case_event_id', v_event_id, 'status_history_id', v_status_history_id, 'recommendation_code', p_recommendation_code));
+
+  RETURN v_event_id;
+END;
+$$;
+
+
+--
 -- Name: refresh_clearance_phonetic_name_tokens(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7996,14 +8423,21 @@ DECLARE
   v_old jsonb;
   v_new jsonb;
   v_case_id bigint;
+  v_event_type_code text;
+  v_source_table text;
+  v_source_id bigint;
+  v_assignment_id bigint;
+  v_assignment_old jsonb;
+  v_assignment_new jsonb;
 BEGIN
   IF nullif(trim(p_void_reason), '') IS NULL THEN
     RAISE EXCEPTION 'Void reason is required';
   END IF;
 
-  SELECT to_jsonb(ce), ce.case_id
-  INTO v_old, v_case_id
+  SELECT to_jsonb(ce), ce.case_id, cet.code, ce.source_table, ce.source_id
+  INTO v_old, v_case_id, v_event_type_code, v_source_table, v_source_id
   FROM public.case_events ce
+  LEFT JOIN public.case_event_types cet ON cet.id = ce.event_type_id
   WHERE ce.id = p_case_event_id
     AND ce.is_voided = false;
 
@@ -8032,6 +8466,46 @@ BEGIN
     p_voided_by_user_id, 'case_events', p_case_event_id, 'VOID_CASE_EVENT', v_old, v_new, v_case_id,
     'Voided case timeline activity', jsonb_build_object('reason', p_void_reason)
   );
+
+  IF lower(coalesce(v_source_table, '')) = 'case_assignments' OR v_event_type_code = 'CASE_ASSIGNMENT' THEN
+    SELECT ca.id, to_jsonb(ca)
+    INTO v_assignment_id, v_assignment_old
+    FROM public.case_assignments ca
+    WHERE ca.id = v_source_id
+       OR ca.case_event_id = p_case_event_id
+    ORDER BY CASE WHEN ca.id = v_source_id THEN 0 ELSE 1 END
+    LIMIT 1;
+
+    IF v_assignment_id IS NOT NULL THEN
+      UPDATE public.case_assignments
+      SET is_voided = true,
+          voided_at = now(),
+          voided_by_user_id = p_voided_by_user_id,
+          void_reason = p_void_reason,
+          unassigned_at = COALESCE(unassigned_at, now())
+      WHERE id = v_assignment_id;
+
+      SELECT to_jsonb(ca)
+      INTO v_assignment_new
+      FROM public.case_assignments ca
+      WHERE ca.id = v_assignment_id;
+
+      INSERT INTO public.audit_logs (
+        actor_user_id, entity_name, entity_id, action, old_data, new_data, case_id, summary, metadata
+      )
+      VALUES (
+        p_voided_by_user_id,
+        'case_assignments',
+        v_assignment_id,
+        'VOID_CASE_ASSIGNMENT_FROM_EVENT',
+        v_assignment_old,
+        v_assignment_new,
+        v_case_id,
+        'Assignment row voided because the Case Assignment event was voided.',
+        jsonb_build_object('case_event_id', p_case_event_id, 'reason', p_void_reason)
+      );
+    END IF;
+  END IF;
 END;
 $$;
 
@@ -10716,7 +11190,9 @@ CREATE TABLE public.case_assignments (
     is_voided boolean DEFAULT false NOT NULL,
     voided_at timestamp with time zone,
     voided_by_user_id bigint,
-    void_reason text
+    void_reason text,
+    unassigned_by_user_id bigint,
+    unassignment_reason text
 );
 
 
@@ -11525,6 +12001,73 @@ COMMENT ON COLUMN public.case_private_details.current_status_raw IS 'Raw legacy 
 --
 
 COMMENT ON COLUMN public.case_private_details.current_status_remarks IS 'Raw legacy status remarks text.';
+
+
+--
+-- Name: case_resolution_charge_actions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_resolution_charge_actions (
+    id bigint NOT NULL,
+    case_resolution_id bigint NOT NULL,
+    case_id bigint NOT NULL,
+    case_violation_id bigint,
+    violation_id bigint,
+    charge_text text NOT NULL,
+    action_code text NOT NULL,
+    display_order integer DEFAULT 0,
+    remarks text,
+    created_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT case_resolution_charge_actions_action_code_check CHECK ((action_code = ANY (ARRAY['FOR_FILING'::text, 'DISMISSAL'::text])))
+);
+
+
+--
+-- Name: case_resolution_charge_actions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.case_resolution_charge_actions ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.case_resolution_charge_actions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: case_resolutions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_resolutions (
+    id bigint NOT NULL,
+    case_id bigint NOT NULL,
+    case_event_id bigint,
+    recommendation_code text NOT NULL,
+    date_resolved date NOT NULL,
+    time_resolved time without time zone,
+    remarks text,
+    created_by_user_id bigint,
+    updated_by_user_id bigint,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    CONSTRAINT case_resolutions_recommendation_code_check CHECK ((recommendation_code = ANY (ARRAY['CASE_FOR_FILING'::text, 'CASE_DISMISSAL'::text, 'MIXED_RESULT'::text])))
+);
+
+
+--
+-- Name: case_resolutions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.case_resolutions ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.case_resolutions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
 
 
 --
@@ -15528,6 +16071,30 @@ ALTER TABLE ONLY public.case_private_details
 
 
 --
+-- Name: case_resolution_charge_actions case_resolution_charge_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_resolution_charge_actions
+    ADD CONSTRAINT case_resolution_charge_actions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: case_resolutions case_resolutions_case_event_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_resolutions
+    ADD CONSTRAINT case_resolutions_case_event_id_key UNIQUE (case_event_id);
+
+
+--
+-- Name: case_resolutions case_resolutions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_resolutions
+    ADD CONSTRAINT case_resolutions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: case_status_colors case_status_colors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17037,6 +17604,20 @@ CREATE INDEX idx_case_private_details_legacy_source ON public.case_private_detai
 
 
 --
+-- Name: idx_case_resolution_charge_actions_resolution_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_resolution_charge_actions_resolution_id ON public.case_resolution_charge_actions USING btree (case_resolution_id);
+
+
+--
+-- Name: idx_case_resolutions_case_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_resolutions_case_id ON public.case_resolutions USING btree (case_id);
+
+
+--
 -- Name: idx_case_status_history_case_event_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18033,6 +18614,14 @@ ALTER TABLE ONLY public.case_assignments
 
 
 --
+-- Name: case_assignments case_assignments_unassigned_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_assignments
+    ADD CONSTRAINT case_assignments_unassigned_by_user_id_fkey FOREIGN KEY (unassigned_by_user_id) REFERENCES public.users(id);
+
+
+--
 -- Name: case_assignments case_assignments_voided_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18422,6 +19011,70 @@ ALTER TABLE ONLY public.case_private_details
 
 ALTER TABLE ONLY public.case_private_details
     ADD CONSTRAINT case_private_details_current_status_id_fkey FOREIGN KEY (current_status_id) REFERENCES public.case_statuses(id);
+
+
+--
+-- Name: case_resolution_charge_actions case_resolution_charge_actions_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_resolution_charge_actions
+    ADD CONSTRAINT case_resolution_charge_actions_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id);
+
+
+--
+-- Name: case_resolution_charge_actions case_resolution_charge_actions_case_resolution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_resolution_charge_actions
+    ADD CONSTRAINT case_resolution_charge_actions_case_resolution_id_fkey FOREIGN KEY (case_resolution_id) REFERENCES public.case_resolutions(id);
+
+
+--
+-- Name: case_resolution_charge_actions case_resolution_charge_actions_case_violation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_resolution_charge_actions
+    ADD CONSTRAINT case_resolution_charge_actions_case_violation_id_fkey FOREIGN KEY (case_violation_id) REFERENCES public.case_violations(id);
+
+
+--
+-- Name: case_resolution_charge_actions case_resolution_charge_actions_violation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_resolution_charge_actions
+    ADD CONSTRAINT case_resolution_charge_actions_violation_id_fkey FOREIGN KEY (violation_id) REFERENCES public.violations(id);
+
+
+--
+-- Name: case_resolutions case_resolutions_case_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_resolutions
+    ADD CONSTRAINT case_resolutions_case_event_id_fkey FOREIGN KEY (case_event_id) REFERENCES public.case_events(id);
+
+
+--
+-- Name: case_resolutions case_resolutions_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_resolutions
+    ADD CONSTRAINT case_resolutions_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id);
+
+
+--
+-- Name: case_resolutions case_resolutions_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_resolutions
+    ADD CONSTRAINT case_resolutions_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_resolutions case_resolutions_updated_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_resolutions
+    ADD CONSTRAINT case_resolutions_updated_by_user_id_fkey FOREIGN KEY (updated_by_user_id) REFERENCES public.users(id);
 
 
 --
@@ -19085,5 +19738,5 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 -- PostgreSQL database dump complete
 --
 
-\unrestrict azbgfzqcwZIiqHy9IzmkGNCiWEaefwoqqyS8M2XTCGmdgT4BShpeTkW0aYCNXlU
+\unrestrict iaEoXhb6L2BPtilIspXQufm3KxoeDkBSPmYgAWY1QsWUjItpuvgJroQ3ryZEmPJ
 
