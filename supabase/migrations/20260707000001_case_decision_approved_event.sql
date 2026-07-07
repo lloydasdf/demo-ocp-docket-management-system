@@ -108,8 +108,10 @@ DECLARE
   v_approver_name text;
   v_approver_position_code text;
   v_approver_position_group_type text;
-  v_final_status_code text;
-  v_final_status_label text;
+  v_event_final_status_code text;
+  v_event_final_status_label text;
+  v_case_final_status_code text;
+  v_case_final_status_label text;
   v_remarks text := NULLIF(btrim(COALESCE(p_remarks, '')), '');
   v_old_details jsonb;
   v_new_details jsonb;
@@ -117,6 +119,11 @@ DECLARE
   v_action_count integer;
   v_for_filing_count integer;
   v_dismissal_count integer;
+  v_existing_for_filing_count integer;
+  v_existing_dismissal_count integer;
+  v_total_for_filing_count integer;
+  v_total_dismissal_count integer;
+  v_total_action_count integer;
   v_display_order integer := 0;
 BEGIN
   IF p_case_id IS NULL THEN RAISE EXCEPTION 'Case id is required'; END IF;
@@ -152,12 +159,35 @@ BEGIN
 
   IF v_action_count < 1 THEN RAISE EXCEPTION 'At least one approval action is required'; END IF;
 
-  v_final_status_code := CASE
+  v_event_final_status_code := CASE
     WHEN v_for_filing_count = v_action_count THEN 'FOR_FILING'
     WHEN v_dismissal_count = v_action_count THEN 'DISMISSED'
     ELSE 'MIXED_RESULT'
   END;
-  v_final_status_label := CASE v_final_status_code WHEN 'FOR_FILING' THEN 'For Filing' WHEN 'DISMISSED' THEN 'Dismissed' ELSE 'Mixed Result' END;
+  v_event_final_status_label := CASE v_event_final_status_code WHEN 'FOR_FILING' THEN 'For Filing' WHEN 'DISMISSED' THEN 'Dismissed' ELSE 'Mixed Result' END;
+
+  SELECT
+    count(*) FILTER (WHERE decision_code = 'FOR_FILING'),
+    count(*) FILTER (WHERE decision_code = 'DISMISSAL')
+  INTO v_existing_for_filing_count, v_existing_dismissal_count
+  FROM public.case_resolution_approval_actions
+  WHERE case_id = p_case_id;
+
+  v_total_for_filing_count := COALESCE(v_existing_for_filing_count, 0) + COALESCE(v_for_filing_count, 0);
+  v_total_dismissal_count := COALESCE(v_existing_dismissal_count, 0) + COALESCE(v_dismissal_count, 0);
+  v_total_action_count := v_total_for_filing_count + v_total_dismissal_count;
+
+  IF v_total_action_count < 1 THEN
+    RAISE EXCEPTION 'At least one approval action is required';
+  ELSIF v_total_for_filing_count > 0 AND v_total_dismissal_count > 0 THEN
+    v_case_final_status_code := 'MIXED_RESULT';
+  ELSIF v_total_for_filing_count > 0 THEN
+    v_case_final_status_code := 'FOR_FILING';
+  ELSIF v_total_dismissal_count > 0 THEN
+    v_case_final_status_code := 'DISMISSED';
+  END IF;
+
+  v_case_final_status_label := CASE v_case_final_status_code WHEN 'FOR_FILING' THEN 'For Filing' WHEN 'DISMISSED' THEN 'Dismissed' ELSE 'Mixed Result' END;
 
   INSERT INTO public.case_event_types (code, display_label, category, description, sort_order, is_system, is_active)
   VALUES ('CASE_DECISION_APPROVED', 'Case Decision Approved', 'CASE', 'Manual timeline event for approving a prosecutor recommendation or final case decision.', 130, true, true)
@@ -165,7 +195,7 @@ BEGIN
   RETURNING id INTO v_event_type_id;
 
   INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active)
-  VALUES (v_final_status_code, v_final_status_label, CASE v_final_status_code WHEN 'FOR_FILING' THEN 90 WHEN 'DISMISSED' THEN 100 ELSE 110 END, true, true, true)
+  VALUES (v_case_final_status_code, v_case_final_status_label, CASE v_case_final_status_code WHEN 'FOR_FILING' THEN 90 WHEN 'DISMISSED' THEN 100 ELSE 110 END, true, true, true)
   ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, is_final = true, is_milestone = true, is_active = true
   RETURNING id INTO v_status_id;
 
@@ -174,12 +204,12 @@ BEGIN
 
   INSERT INTO public.case_events (case_id, event_type_id, event_date, event_time, title, description, status_id, details_jsonb, source, created_by_user_id, updated_by_user_id)
   VALUES (p_case_id, v_event_type_id, p_date_approved, p_time_approved, 'Case Decision Approved', 'Decision approved by Prosec ' || v_approver_name || ' on ' || to_char(p_date_approved, 'Mon FMDD, YYYY'), v_status_id,
-    jsonb_build_object('approved_by_prosecutor_id', p_approved_by_prosecutor_id, 'approved_by_name', v_approver_name, 'date_approved', p_date_approved, 'time_approved', p_time_approved, 'final_status_code', v_final_status_code, 'final_status_label', v_final_status_label, 'remarks', v_remarks),
+    jsonb_build_object('approved_by_prosecutor_id', p_approved_by_prosecutor_id, 'approved_by_name', v_approver_name, 'date_approved', p_date_approved, 'time_approved', p_time_approved, 'final_status_code', v_case_final_status_code, 'final_status_label', v_case_final_status_label, 'event_final_status_code', v_event_final_status_code, 'event_final_status_label', v_event_final_status_label, 'case_final_status_code', v_case_final_status_code, 'case_final_status_label', v_case_final_status_label, 'remarks', v_remarks),
     'MANUAL_ENTRY', p_user_id, p_user_id)
   RETURNING id INTO v_event_id;
 
   INSERT INTO public.case_resolution_approvals (case_id, case_event_id, case_resolution_id, approved_by_prosecutor_id, date_approved, time_approved, final_status_code, remarks, created_by_user_id, updated_by_user_id)
-  VALUES (p_case_id, v_event_id, p_case_resolution_id, p_approved_by_prosecutor_id, p_date_approved, p_time_approved, v_final_status_code, v_remarks, p_user_id, p_user_id)
+  VALUES (p_case_id, v_event_id, p_case_resolution_id, p_approved_by_prosecutor_id, p_date_approved, p_time_approved, v_event_final_status_code, v_remarks, p_user_id, p_user_id)
   RETURNING id INTO v_approval_id;
 
   FOR v_action IN SELECT * FROM jsonb_array_elements(COALESCE(p_approval_actions, '[]'::jsonb)) LOOP
@@ -217,7 +247,7 @@ BEGIN
   SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE cpd.case_id = p_case_id;
 
   INSERT INTO public.audit_logs (actor_user_id, entity_name, entity_id, action, old_data, new_data, case_id, summary, metadata)
-  VALUES (p_user_id, 'case_resolution_approvals', v_approval_id, 'CASE_DECISION_APPROVED', v_old_details, v_new_details, p_case_id, 'Case decision approved as ' || v_final_status_label || '.', jsonb_build_object('case_event_id', v_event_id, 'status_history_id', v_status_history_id, 'final_status_code', v_final_status_code));
+  VALUES (p_user_id, 'case_resolution_approvals', v_approval_id, 'CASE_DECISION_APPROVED', v_old_details, v_new_details, p_case_id, 'Case decision approved as ' || v_case_final_status_label || '.', jsonb_build_object('case_event_id', v_event_id, 'status_history_id', v_status_history_id, 'event_final_status_code', v_event_final_status_code, 'case_final_status_code', v_case_final_status_code));
 
   RETURN v_event_id;
 END;
