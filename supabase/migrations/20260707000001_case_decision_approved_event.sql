@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_case_resolution_approval_actions_case_id ON publi
 
 CREATE OR REPLACE FUNCTION public.record_case_decision_approved_event(
   p_case_id bigint,
-  p_case_resolution_id bigint,
+  p_case_resolution_id bigint DEFAULT NULL,
   p_approved_by_prosecutor_id bigint DEFAULT NULL,
   p_date_approved date DEFAULT NULL,
   p_time_approved time without time zone DEFAULT NULL,
