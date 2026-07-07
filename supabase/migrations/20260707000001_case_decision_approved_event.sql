@@ -177,6 +177,10 @@ BEGIN
     RAISE EXCEPTION 'Voided resolution cannot be approved.';
   END IF;
 
+  IF EXISTS (SELECT 1 FROM public.case_resolution_approvals WHERE case_resolution_id = p_case_resolution_id AND is_voided = false) THEN
+    RAISE EXCEPTION 'This resolution already has an active approved decision.';
+  END IF;
+
   SELECT count(*), count(*) FILTER (WHERE action.value->>'decision_code' = 'FOR_FILING'), count(*) FILTER (WHERE action.value->>'decision_code' = 'DISMISSAL')
   INTO v_action_count, v_for_filing_count, v_dismissal_count
   FROM jsonb_array_elements(COALESCE(p_approval_actions, '[]'::jsonb)) AS action(value)

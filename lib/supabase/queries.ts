@@ -2116,7 +2116,26 @@ export async function getCaseResolutionsWithActions(
       return { data: [], error: resolutionsResult.error };
     }
 
-    const resolutionIds = resolutionsResult.data.map((resolution) => resolution.id);
+    const activeApprovalsResult = await supabase
+      .from("case_resolution_approvals" as never)
+      .select("case_resolution_id" as never)
+      .eq("case_id" as never, caseId)
+      .eq("is_voided" as never, false) as unknown as { data: { case_resolution_id: number | null }[] | null; error: unknown };
+
+    if (activeApprovalsResult.error) {
+      return { data: [], error: activeApprovalsResult.error };
+    }
+
+    const approvedResolutionIds = new Set((activeApprovalsResult.data ?? [])
+      .map((approval) => approval.case_resolution_id)
+      .filter((id): id is number => id !== null));
+    const selectableResolutions = resolutionsResult.data.filter((resolution) => !approvedResolutionIds.has(resolution.id));
+
+    if (selectableResolutions.length === 0) {
+      return { data: [], error: null };
+    }
+
+    const resolutionIds = selectableResolutions.map((resolution) => resolution.id);
     const actionsResult = await supabase
       .from("case_resolution_charge_actions" as never)
       .select("*" as never)
@@ -2136,7 +2155,7 @@ export async function getCaseResolutionsWithActions(
     }
 
     return {
-      data: resolutionsResult.data.map((resolution) => ({
+      data: selectableResolutions.map((resolution) => ({
         ...resolution,
         charge_actions: actionsByResolutionId.get(resolution.id) ?? [],
       })),
