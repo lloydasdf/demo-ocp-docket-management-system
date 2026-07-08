@@ -2363,7 +2363,6 @@ export interface RecordCourtFilingEventInput {
   timeFiled?: string | null;
   informationCount?: number | null;
   criminalCaseNo?: string | null;
-  courtStatus?: string | null;
   remarks?: string | null;
 }
 
@@ -2385,7 +2384,6 @@ export async function recordCourtFilingEvent(input: RecordCourtFilingEventInput)
       p_time_filed: input.timeFiled?.trim() || null,
       p_information_count: input.informationCount ?? null,
       p_criminal_case_no: input.criminalCaseNo?.trim() || null,
-      p_court_status: input.courtStatus?.trim() || null,
       p_remarks: input.remarks?.trim() || null,
       p_user_id: currentUserQuery.data.id,
     } as never);

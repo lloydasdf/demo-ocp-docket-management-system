@@ -26,7 +26,6 @@ CREATE TABLE IF NOT EXISTS public.case_court_filings (
   time_filed time without time zone,
   information_count integer,
   criminal_case_no text,
-  court_status text,
   remarks text,
   created_by_user_id bigint REFERENCES public.users(id),
   updated_by_user_id bigint REFERENCES public.users(id),
@@ -97,7 +96,6 @@ CREATE OR REPLACE FUNCTION public.record_court_filing_event(
   p_time_filed time without time zone DEFAULT NULL,
   p_information_count integer DEFAULT NULL,
   p_criminal_case_no text DEFAULT NULL,
-  p_court_status text DEFAULT NULL,
   p_remarks text DEFAULT NULL,
   p_user_id bigint DEFAULT NULL
 ) RETURNS bigint
@@ -161,11 +159,11 @@ BEGIN
 
   INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,details_jsonb,source,created_by_user_id,updated_by_user_id)
   VALUES (p_case_id,v_event_type_id,p_date_filed,p_time_filed,'Court Filing','Filed in ' || v_court_name || ' on ' || to_char(p_date_filed, 'Mon FMDD, YYYY'),NULL,
-    jsonb_build_object('court',v_court_name,'court_id',v_court_id,'court_branch',NULLIF(btrim(COALESCE(p_court_branch,'')),''),'charge_filed',v_charge,'date_filed',p_date_filed,'time_filed',p_time_filed,'information_count',p_information_count,'criminal_case_no',NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),'court_status',NULLIF(btrim(COALESCE(p_court_status,'')),''),'remarks',NULLIF(btrim(COALESCE(p_remarks,'')),''),'case_resolution_approval_id',v_approval_id,'case_resolution_approval_action_id',p_case_resolution_approval_action_id),
+    jsonb_build_object('court',v_court_name,'court_id',v_court_id,'court_branch',NULLIF(btrim(COALESCE(p_court_branch,'')),''),'charge_filed',v_charge,'date_filed',p_date_filed,'time_filed',p_time_filed,'information_count',p_information_count,'criminal_case_no',NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),'remarks',NULLIF(btrim(COALESCE(p_remarks,'')),''),'case_resolution_approval_id',v_approval_id,'case_resolution_approval_action_id',p_case_resolution_approval_action_id),
     'MANUAL_ENTRY',p_user_id,p_user_id) RETURNING id INTO v_event_id;
 
-  INSERT INTO public.case_court_filings(case_id,case_event_id,case_resolution_approval_id,case_resolution_approval_action_id,court_id,court_name,court_branch,charge_filed,date_filed,time_filed,information_count,criminal_case_no,court_status,remarks,created_by_user_id,updated_by_user_id)
-  VALUES (p_case_id,v_event_id,v_approval_id,p_case_resolution_approval_action_id,v_court_id,v_court_name,NULLIF(btrim(COALESCE(p_court_branch,'')),''),v_charge,p_date_filed,p_time_filed,p_information_count,NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),NULLIF(btrim(COALESCE(p_court_status,'')),''),NULLIF(btrim(COALESCE(p_remarks,'')),''),p_user_id,p_user_id) RETURNING id INTO v_filing_id;
+  INSERT INTO public.case_court_filings(case_id,case_event_id,case_resolution_approval_id,case_resolution_approval_action_id,court_id,court_name,court_branch,charge_filed,date_filed,time_filed,information_count,criminal_case_no,remarks,created_by_user_id,updated_by_user_id)
+  VALUES (p_case_id,v_event_id,v_approval_id,p_case_resolution_approval_action_id,v_court_id,v_court_name,NULLIF(btrim(COALESCE(p_court_branch,'')),''),v_charge,p_date_filed,p_time_filed,p_information_count,NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),NULLIF(btrim(COALESCE(p_remarks,'')),''),p_user_id,p_user_id) RETURNING id INTO v_filing_id;
 
   UPDATE public.case_events SET source_table='case_court_filings', source_id=v_filing_id, updated_at=now(), updated_by_user_id=p_user_id WHERE id=v_event_id;
 
@@ -182,7 +180,7 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.record_court_filing_event(bigint,bigint,bigint,text,text,text,date,time without time zone,integer,text,text,text,bigint) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.record_court_filing_event(bigint,bigint,bigint,text,text,text,date,time without time zone,integer,text,text,bigint) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.void_case_event(p_case_event_id bigint, p_void_reason text, p_voided_by_user_id bigint DEFAULT NULL)
 RETURNS void
