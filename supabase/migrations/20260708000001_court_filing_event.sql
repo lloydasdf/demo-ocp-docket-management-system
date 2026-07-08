@@ -82,13 +82,15 @@ BEGIN
     ELSE
       RETURN QUERY SELECT 'RESO_FOR_APPROVAL'::text, 'Reso for Approval'::text;
     END IF;
-  ELSIF COALESCE(v_active_filing, 0) > 0 AND COALESCE(v_unfiled_for_filing, 0) > 0 THEN
-    RETURN QUERY SELECT 'FILED_OTHER_INFO_FOR_FILING'::text, 'Filed; other info for filing'::text;
-  ELSIF COALESCE(v_for_filing, 0) > 0 AND COALESCE(v_active_filing, 0) = 0 THEN
-    RETURN QUERY SELECT 'FOR_FILING'::text, 'For Filing'::text;
+  ELSIF COALESCE(v_unfiled_for_filing, 0) > 0 THEN
+    IF COALESCE(v_active_filing, 0) > 0 THEN
+      RETURN QUERY SELECT 'FILED_OTHER_INFO_FOR_FILING'::text, 'Filed; other info for filing'::text;
+    ELSE
+      RETURN QUERY SELECT 'FOR_FILING'::text, 'For Filing'::text;
+    END IF;
   ELSIF COALESCE(v_for_filing, 0) > 0 AND COALESCE(v_dismissal, 0) > 0 THEN
     RETURN QUERY SELECT 'MIXED_RESULT'::text, 'Mixed Result'::text;
-  ELSIF COALESCE(v_for_filing, 0) > 0 AND COALESCE(v_unfiled_for_filing, 0) = 0 THEN
+  ELSIF COALESCE(v_for_filing, 0) > 0 AND COALESCE(v_dismissal, 0) = 0 THEN
     RETURN QUERY SELECT 'FILED'::text, 'Filed'::text;
   ELSIF COALESCE(v_dismissal, 0) > 0 AND COALESCE(v_for_filing, 0) = 0 THEN
     RETURN QUERY SELECT 'DISMISSED'::text, 'Dismissed'::text;
