@@ -2288,6 +2288,86 @@ export async function recordCaseDecisionApprovedEvent(
   }
 }
 
+
+export type CourtFilingDecisionRecord = {
+  id: number;
+  approval_id: number;
+  case_resolution_id: number | null;
+  charge_text: string;
+  decision_code: "FOR_FILING";
+  date_approved: string;
+};
+
+export async function getAvailableCourtFilingDecisions(caseId: number): Promise<SupabaseQueryResult<CourtFilingDecisionRecord[]>> {
+  return runSupabaseQuery("getAvailableCourtFilingDecisions", "case_resolution_approval_actions" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const result = await supabase
+      .from("case_resolution_approval_actions" as never)
+      .select("id, approval_id, case_id, charge_text, decision_code, case_resolution_approvals!inner(id, case_resolution_id, date_approved, is_voided, case_resolutions!inner(id, is_voided)), case_court_filings(id, is_voided)" as never)
+      .eq("case_id" as never, caseId)
+      .eq("decision_code" as never, "FOR_FILING")
+      .eq("case_resolution_approvals.is_voided" as never, false)
+      .eq("case_resolution_approvals.case_resolutions.is_voided" as never, false) as unknown as { data: any[] | null; error: unknown };
+
+    if (result.error) return { data: [], error: result.error };
+
+    const data = (result.data ?? [])
+      .filter((row) => !(row.case_court_filings ?? []).some((filing: { is_voided?: boolean | null }) => filing.is_voided === false))
+      .map((row) => ({
+        id: Number(row.id),
+        approval_id: Number(row.approval_id),
+        case_resolution_id: row.case_resolution_approvals?.case_resolution_id ?? null,
+        charge_text: row.charge_text,
+        decision_code: "FOR_FILING" as const,
+        date_approved: row.case_resolution_approvals?.date_approved ?? "",
+      }));
+
+    return { data, error: null };
+  }, []);
+}
+
+export interface RecordCourtFilingEventInput {
+  caseId: number;
+  caseResolutionApprovalActionId: number;
+  court: string;
+  courtBranch?: string | null;
+  chargeFiled: string;
+  dateFiled: string;
+  timeFiled?: string | null;
+  informationCount?: number | null;
+  criminalCaseNo?: string | null;
+  courtStatus?: string | null;
+  remarks?: string | null;
+}
+
+export async function recordCourtFilingEvent(input: RecordCourtFilingEventInput): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table: "case_court_filings" as RelationName, operation: "recordCourtFilingEvent" });
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "recordCourtFilingEvent", "users"));
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("record_court_filing_event" as never, {
+      p_case_id: input.caseId,
+      p_case_resolution_approval_action_id: input.caseResolutionApprovalActionId,
+      p_court: input.court.trim(),
+      p_court_branch: input.courtBranch?.trim() || null,
+      p_charge_filed: input.chargeFiled.trim(),
+      p_date_filed: input.dateFiled,
+      p_time_filed: input.timeFiled?.trim() || null,
+      p_information_count: input.informationCount ?? null,
+      p_criminal_case_no: input.criminalCaseNo?.trim() || null,
+      p_court_status: input.courtStatus?.trim() || null,
+      p_remarks: input.remarks?.trim() || null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "recordCourtFilingEvent", "case_court_filings" as RelationName));
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "recordCourtFilingEvent", "case_court_filings" as RelationName));
+  }
+}
+
 export interface CreateCaseEventInput {
   caseId: number;
   eventTypeCode: string;

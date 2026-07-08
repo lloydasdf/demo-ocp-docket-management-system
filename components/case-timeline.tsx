@@ -51,6 +51,9 @@ import {
   recordCaseReassignmentEvent,
   recordCaseResolvedEvent,
   recordCaseDecisionApprovedEvent,
+  getAvailableCourtFilingDecisions,
+  type CourtFilingDecisionRecord,
+  recordCourtFilingEvent,
   editCaseEvent,
   getCaseEventTypes,
   voidCaseEvent,
@@ -218,6 +221,22 @@ function resolutionEventDetails(event: CaseTimelineEventRecord) {
   ];
 }
 
+function courtFilingEventDetails(event: CaseTimelineEventRecord) {
+  if (event.event_type_code !== "COURT_FILING" && eventSourceTable(event) !== "case_court_filings") return null;
+  const details = event.details_jsonb && typeof event.details_jsonb === "object" ? event.details_jsonb as Record<string, unknown> : {};
+  return [
+    { label: "Court", value: stringDetail(details.court) ?? event.court_name },
+    { label: "Court Branch", value: stringDetail(details.court_branch) },
+    { label: "Charge Filed", value: stringDetail(details.charge_filed) },
+    { label: "Date Filed", value: formatDate(stringDetail(details.date_filed) ?? event.event_date) },
+    { label: "Time Filed", value: formatTime(stringDetail(details.time_filed) ?? event.event_time) },
+    { label: "Information Count", value: stringDetail(details.information_count) },
+    { label: "Criminal Case No.", value: stringDetail(details.criminal_case_no) },
+    { label: "Court Status", value: stringDetail(details.court_status) },
+    { label: "Remarks", value: stringDetail(details.remarks) },
+  ];
+}
+
 function approvalEventDetails(event: CaseTimelineEventRecord) {
   if (event.event_type_code !== "CASE_DECISION_APPROVED") {
     return null;
@@ -312,6 +331,11 @@ function timelineDetailItems(event: CaseTimelineEventRecord, assignment?: CaseAs
     return approvalDetails;
   }
 
+  const courtFilingDetails = courtFilingEventDetails(event);
+  if (courtFilingDetails) {
+    return courtFilingDetails;
+  }
+
   const assignmentDetails = assignmentEventDetails(event, assignment);
   if (assignmentDetails) {
     return assignmentDetails;
@@ -341,7 +365,7 @@ function visibleEventDetails(event: CaseTimelineEventRecord) {
 
   const hiddenKeys = event.event_type_code === "CASE_RECEIVED"
     ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
-    : event.event_type_code === "CASE_RESOLVED" || event.event_type_code === "CASE_DECISION_APPROVED"
+    : event.event_type_code === "CASE_RESOLVED" || event.event_type_code === "CASE_DECISION_APPROVED" || event.event_type_code === "COURT_FILING"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
       : eventSourceTable(event) === "case_assignments"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
@@ -844,7 +868,8 @@ export function CaseTimeline({
   const [violations, setViolations] = useState<TableRow<"violations">[]>([]);
   const [assignments, setAssignments] = useState<CaseAssignmentRecord[]>([]);
   const [caseResolutions, setCaseResolutions] = useState<CaseResolutionWithActionsRecord[]>([]);
-  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()] });
+  const [courtFilingDecisions, setCourtFilingDecisions] = useState<CourtFilingDecisionRecord[]>([]);
+  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", court: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", courtStatus: "" });
   const [editForm, setEditForm] = useState({ eventDate: "", title: "", description: "", editReason: "" });
   const [voidReason, setVoidReason] = useState("");
   const [voidConfirmed, setVoidConfirmed] = useState(false);
@@ -869,7 +894,8 @@ export function CaseTimeline({
     setActionError(null);
     setEventTypesError(null);
     setCaseResolutions([]);
-    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()] });
+    setCourtFilingDecisions([]);
+    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", court: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", courtStatus: "" });
     setIsAddDialogOpen(true);
 
     if (eventTypes.length === 0) {
@@ -911,6 +937,9 @@ export function CaseTimeline({
 
     const assignmentResult = await getCaseAssignments(caseId);
     if (!assignmentResult.error) setAssignments(assignmentResult.data);
+
+    const courtFilingDecisionsResult = await getAvailableCourtFilingDecisions(caseId);
+    if (!courtFilingDecisionsResult.error) setCourtFilingDecisions(courtFilingDecisionsResult.data);
   };
 
   const handleAddSave = async () => {
@@ -918,16 +947,18 @@ export function CaseTimeline({
     const isReassignment = addForm.eventTypeCode === "CASE_REASSIGNMENT";
     const isResolved = addForm.eventTypeCode === "CASE_RESOLVED";
     const isDecisionApproved = addForm.eventTypeCode === "CASE_DECISION_APPROVED";
+    const isCourtFiling = addForm.eventTypeCode === "COURT_FILING";
     if (!addForm.eventTypeCode || !addForm.eventDate) return;
     if ((isAssignment || isReassignment) && !addForm.prosecutorId) return;
     if (isReassignment && !addForm.reason.trim()) return;
     if (isResolved && !addForm.recommendationCode) return;
     if (isDecisionApproved && (!addForm.prosecutorId || !addForm.caseResolutionId || !addForm.approvalActions.some((action) => action.chargeText.trim()))) return;
+    if (isCourtFiling && (!addForm.courtFilingDecisionId || !addForm.court.trim() || !addForm.chargeFiled.trim())) return;
     if (isReassignment && currentAssignment?.prosecutor_id === Number(addForm.prosecutorId)) {
       setActionError("The selected prosecutor is already assigned to this case.");
       return;
     }
-    if (!isAssignment && !isReassignment && !isResolved && !isDecisionApproved && !addForm.title.trim()) return;
+    if (!isAssignment && !isReassignment && !isResolved && !isDecisionApproved && !isCourtFiling && !addForm.title.trim()) return;
     setIsSaving(true);
     setActionError(null);
     const result = isAssignment
@@ -969,6 +1000,20 @@ export function CaseTimeline({
               approvalActions: addForm.approvalActions,
               remarks: addForm.description,
             })
+            : isCourtFiling
+              ? await recordCourtFilingEvent({
+                caseId,
+                caseResolutionApprovalActionId: Number(addForm.courtFilingDecisionId),
+                court: addForm.court,
+                courtBranch: addForm.courtBranch,
+                chargeFiled: addForm.chargeFiled,
+                dateFiled: addForm.eventDate,
+                timeFiled: addForm.eventTime || null,
+                informationCount: addForm.informationCount ? Number(addForm.informationCount) : null,
+                criminalCaseNo: addForm.criminalCaseNo,
+                courtStatus: addForm.courtStatus,
+                remarks: addForm.description,
+              })
           : await createCaseEvent({
         caseId,
         eventTypeCode: addForm.eventTypeCode,
@@ -1052,6 +1097,7 @@ export function CaseTimeline({
   const isAddingReassignment = addForm.eventTypeCode === "CASE_REASSIGNMENT";
   const isAddingResolved = addForm.eventTypeCode === "CASE_RESOLVED";
   const isAddingDecisionApproved = addForm.eventTypeCode === "CASE_DECISION_APPROVED";
+  const isAddingCourtFiling = addForm.eventTypeCode === "COURT_FILING";
   const approvingProsecutors = prosecutors.filter((prosecutor) => {
     const position = prosecutor as { position_code?: string | null; position_group_type?: string | null };
     return position.position_group_type === "PROSECUTOR" && ["CHIEF_PROSECUTOR", "DEPUTY_PROSECUTOR"].includes(String(position.position_code ?? ""));
@@ -1228,7 +1274,7 @@ export function CaseTimeline({
             {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
             <div className="space-y-2">
               <Label htmlFor="add-event-type">Event Type</Label>
-              <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : form.title }))}>
+              <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : e.target.value === "COURT_FILING" ? "Court Filing" : form.title }))}>
                 {eventTypes.map((eventType) => <option key={eventType.code} value={eventType.code}>{eventType.display_label}</option>)}
               </select>
             </div>
@@ -1272,6 +1318,18 @@ export function CaseTimeline({
                 <ApprovalDecisionEntries actions={addForm.approvalActions} onChange={(approvalActions) => setAddForm((form) => ({ ...form, approvalActions }))} />
                 <div className="space-y-1"><Label htmlFor="add-approval-remarks">Remarks</Label><Textarea id="add-approval-remarks" className="min-h-20" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
               </>
+            ) : isAddingCourtFiling ? (
+              <>
+                {courtFilingDecisions.length === 0 ? <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">No approved filing decision available for court filing.</div> : null}
+                <div className="space-y-2"><Label htmlFor="add-court-filing-decision">Approved Filing Decision</Label><select id="add-court-filing-decision" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.courtFilingDecisionId} onChange={(e) => { const decision = courtFilingDecisions.find((item) => item.id === Number(e.target.value)); setAddForm((form) => ({ ...form, courtFilingDecisionId: e.target.value, chargeFiled: decision?.charge_text ?? form.chargeFiled })); }}><option value="">Select approved filing decision</option>{courtFilingDecisions.map((decision) => <option key={decision.id} value={decision.id}>{decision.charge_text} • Approved {formatDate(decision.date_approved)}</option>)}</select></div>
+                <div className="space-y-2"><Label htmlFor="add-court">Court</Label><Input id="add-court" value={addForm.court} onChange={(e) => setAddForm((form) => ({ ...form, court: e.target.value }))} /></div>
+                <div className="space-y-2"><Label htmlFor="add-court-branch">Court Branch</Label><Input id="add-court-branch" value={addForm.courtBranch} onChange={(e) => setAddForm((form) => ({ ...form, courtBranch: e.target.value }))} /></div>
+                <div className="space-y-2"><Label htmlFor="add-charge-filed">Charge Filed</Label><Input id="add-charge-filed" value={addForm.chargeFiled} onChange={(e) => setAddForm((form) => ({ ...form, chargeFiled: e.target.value }))} /></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-date-filed">Date Filed</Label><Input id="add-date-filed" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-1"><Label htmlFor="add-time-filed">Time Filed</Label><Input id="add-time-filed" type="time" value={addForm.eventTime} onChange={(e) => setAddForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-information-count">Information Count</Label><Input id="add-information-count" type="number" min="0" value={addForm.informationCount} onChange={(e) => setAddForm((form) => ({ ...form, informationCount: e.target.value }))} /></div><div className="space-y-1"><Label htmlFor="add-criminal-case-no">Criminal Case No.</Label><Input id="add-criminal-case-no" value={addForm.criminalCaseNo} onChange={(e) => setAddForm((form) => ({ ...form, criminalCaseNo: e.target.value }))} /></div></div>
+                <div className="space-y-2"><Label htmlFor="add-court-status">Court Status</Label><Input id="add-court-status" value={addForm.courtStatus} onChange={(e) => setAddForm((form) => ({ ...form, courtStatus: e.target.value }))} /></div>
+                <div className="space-y-2"><Label htmlFor="add-court-filing-remarks">Remarks</Label><Textarea id="add-court-filing-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
+              </>
             ) : (
               <>
                 <div className="space-y-2"><Label htmlFor="add-event-date">Event Date</Label><Input id="add-event-date" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div>
@@ -1282,7 +1340,7 @@ export function CaseTimeline({
           </div>
           <DialogFooter className="border-t pt-3">
             <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
-            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.caseResolutionId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : "Add event"}</Button>
+            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.caseResolutionId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : isAddingCourtFiling ? !addForm.courtFilingDecisionId || !addForm.court.trim() || !addForm.chargeFiled.trim() : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : isAddingCourtFiling ? "Record Court Filing" : "Add event"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
