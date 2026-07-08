@@ -5,6 +5,8 @@ ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, categor
 INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active)
 VALUES
   ('PENDING', 'Pending', 20, false, false, true),
+  ('RESO_FOR_APPROVAL', 'Reso for Approval', 80, false, true, true),
+  ('FOR_FILING', 'For Filing', 90, false, true, true),
   ('FILED_OTHER_RESO_FOR_APPROVAL', 'Filed; other resolution for approval', 92, false, true, true),
   ('FILED_OTHER_INFO_FOR_FILING', 'Filed; other info for filing', 94, false, true, true),
   ('FILED', 'Filed', 96, true, true, true),
@@ -51,6 +53,7 @@ DECLARE
   v_unfiled_for_filing integer;
   v_for_filing integer;
   v_dismissal integer;
+  v_active_filing integer;
   v_active_assignment integer;
 BEGIN
   SELECT count(*) INTO v_unapproved
@@ -68,10 +71,21 @@ BEGIN
   JOIN public.case_resolutions cr ON cr.id = a.case_resolution_id AND cr.is_voided = false
   WHERE aa.case_id = p_case_id;
 
+  SELECT count(*) INTO v_active_filing
+  FROM public.case_court_filings cf
+  WHERE cf.case_id = p_case_id
+    AND cf.is_voided = false;
+
   IF COALESCE(v_unapproved, 0) > 0 THEN
-    RETURN QUERY SELECT 'FILED_OTHER_RESO_FOR_APPROVAL'::text, 'Filed; other resolution for approval'::text;
-  ELSIF COALESCE(v_unfiled_for_filing, 0) > 0 THEN
+    IF COALESCE(v_active_filing, 0) > 0 THEN
+      RETURN QUERY SELECT 'FILED_OTHER_RESO_FOR_APPROVAL'::text, 'Filed; other resolution for approval'::text;
+    ELSE
+      RETURN QUERY SELECT 'RESO_FOR_APPROVAL'::text, 'Reso for Approval'::text;
+    END IF;
+  ELSIF COALESCE(v_active_filing, 0) > 0 AND COALESCE(v_unfiled_for_filing, 0) > 0 THEN
     RETURN QUERY SELECT 'FILED_OTHER_INFO_FOR_FILING'::text, 'Filed; other info for filing'::text;
+  ELSIF COALESCE(v_for_filing, 0) > 0 AND COALESCE(v_active_filing, 0) = 0 THEN
+    RETURN QUERY SELECT 'FOR_FILING'::text, 'For Filing'::text;
   ELSIF COALESCE(v_for_filing, 0) > 0 AND COALESCE(v_dismissal, 0) > 0 THEN
     RETURN QUERY SELECT 'MIXED_RESULT'::text, 'Mixed Result'::text;
   ELSIF COALESCE(v_for_filing, 0) > 0 AND COALESCE(v_unfiled_for_filing, 0) = 0 THEN
@@ -229,7 +243,7 @@ BEGIN
 
   SELECT status_code, status_label INTO v_status_code, v_status_label FROM public.recompute_case_status_after_court_filing(p_case_id) LIMIT 1;
   IF v_status_code IS NOT NULL THEN
-    INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
+    INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'RESO_FOR_APPROVAL' THEN 80 WHEN 'FOR_FILING' THEN 90 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
     UPDATE public.case_events SET status_id=v_status_id, updated_at=now(), updated_by_user_id=p_user_id WHERE id=v_event_id;
     INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,updated_at) VALUES (p_case_id,v_status_id,p_date_filed,NULLIF(btrim(COALESCE(p_remarks,'')),''),now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,updated_at=now();
   END IF;
@@ -280,7 +294,7 @@ BEGIN
       SELECT to_jsonb(cf) INTO v_filing_new FROM public.case_court_filings cf WHERE cf.id = v_filing_id;
       SELECT status_code, status_label INTO v_status_code, v_status_label FROM public.recompute_case_status_after_court_filing(v_case_id) LIMIT 1;
       IF v_status_code IS NOT NULL THEN
-        INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
+        INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'RESO_FOR_APPROVAL' THEN 80 WHEN 'FOR_FILING' THEN 90 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
         INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,updated_at) VALUES (v_case_id,v_status_id,CURRENT_DATE,'Court filing voided. Status recomputed.',now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,updated_at=now();
         IF v_prev_status_id IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (v_case_id,v_prev_status_id,v_status_id,p_voided_by_user_id,now(),CURRENT_DATE,'Court filing voided. Status recomputed.',p_case_event_id) RETURNING id INTO v_status_history_id; END IF;
         SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE cpd.case_id = v_case_id;
@@ -315,7 +329,7 @@ BEGIN
   IF v_event_type_code IN ('CASE_RESOLVED','CASE_DECISION_APPROVED','CASE_ASSIGNMENT','CASE_REASSIGNMENT') OR lower(coalesce(v_source_table,'')) IN ('case_resolutions','case_resolution_approvals','case_assignments') THEN
     SELECT status_code, status_label INTO v_status_code, v_status_label FROM public.recompute_case_status_after_court_filing(v_case_id) LIMIT 1;
     IF v_status_code IS NOT NULL THEN
-      INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
+      INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'RESO_FOR_APPROVAL' THEN 80 WHEN 'FOR_FILING' THEN 90 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
       INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,updated_at) VALUES (v_case_id,v_status_id,CURRENT_DATE,'Timeline event voided. Status recomputed.',now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,updated_at=now();
       IF v_prev_status_id IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (v_case_id,v_prev_status_id,v_status_id,p_voided_by_user_id,now(),CURRENT_DATE,'Timeline event voided. Status recomputed.',p_case_event_id); END IF;
     END IF;
