@@ -85,6 +85,66 @@ BEGIN
 END;
 $$;
 
+DROP FUNCTION IF EXISTS public.record_court_filing_event(
+  bigint,
+  bigint,
+  text,
+  text,
+  text,
+  date,
+  time without time zone,
+  integer,
+  text,
+  text,
+  text,
+  bigint
+);
+
+DROP FUNCTION IF EXISTS public.record_court_filing_event(
+  bigint,
+  bigint,
+  text,
+  text,
+  text,
+  date,
+  time without time zone,
+  integer,
+  text,
+  text,
+  bigint
+);
+
+DROP FUNCTION IF EXISTS public.record_court_filing_event(
+  bigint,
+  bigint,
+  bigint,
+  text,
+  text,
+  text,
+  date,
+  time without time zone,
+  integer,
+  text,
+  text,
+  text,
+  bigint
+);
+
+DROP FUNCTION IF EXISTS public.record_court_filing_event(
+  bigint,
+  bigint,
+  bigint,
+  text,
+  text,
+  text,
+  date,
+  time without time zone,
+  integer,
+  text,
+  text,
+  bigint
+);
+
 CREATE OR REPLACE FUNCTION public.record_court_filing_event(
   p_case_id bigint,
   p_case_resolution_approval_action_id bigint,
