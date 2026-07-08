@@ -129,12 +129,10 @@ BEGIN
 
   INSERT INTO public.case_event_types (code, display_label, category, description, sort_order, is_system, is_active) VALUES ('COURT_FILING','Court Filing','COURT','Manual timeline event for recording filing in court.',140,true,true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,is_active=true,updated_at=now() RETURNING id INTO v_event_type_id;
 
-  SELECT status_code, status_label INTO v_status_code, v_status_label FROM public.recompute_case_status_after_court_filing(p_case_id) LIMIT 1;
-  INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
   SELECT current_status_id, to_jsonb(cpd) INTO v_prev_status_id, v_old_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
 
   INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,details_jsonb,source,created_by_user_id,updated_by_user_id)
-  VALUES (p_case_id,v_event_type_id,p_date_filed,p_time_filed,'Court Filing','Filed in ' || v_court || ' on ' || to_char(p_date_filed, 'Mon FMDD, YYYY'),v_status_id,
+  VALUES (p_case_id,v_event_type_id,p_date_filed,p_time_filed,'Court Filing','Filed in ' || v_court || ' on ' || to_char(p_date_filed, 'Mon FMDD, YYYY'),NULL,
     jsonb_build_object('court',v_court,'court_branch',NULLIF(btrim(COALESCE(p_court_branch,'')),''),'charge_filed',v_charge,'date_filed',p_date_filed,'time_filed',p_time_filed,'information_count',p_information_count,'criminal_case_no',NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),'court_status',NULLIF(btrim(COALESCE(p_court_status,'')),''),'remarks',NULLIF(btrim(COALESCE(p_remarks,'')),''),'case_resolution_approval_id',v_approval_id,'case_resolution_approval_action_id',p_case_resolution_approval_action_id),
     'MANUAL_ENTRY',p_user_id,p_user_id) RETURNING id INTO v_event_id;
 
@@ -142,7 +140,13 @@ BEGIN
   VALUES (p_case_id,v_event_id,v_approval_id,p_case_resolution_approval_action_id,v_court,NULLIF(btrim(COALESCE(p_court_branch,'')),''),v_charge,p_date_filed,p_time_filed,p_information_count,NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),NULLIF(btrim(COALESCE(p_court_status,'')),''),NULLIF(btrim(COALESCE(p_remarks,'')),''),p_user_id,p_user_id) RETURNING id INTO v_filing_id;
 
   UPDATE public.case_events SET source_table='case_court_filings', source_id=v_filing_id, updated_at=now(), updated_by_user_id=p_user_id WHERE id=v_event_id;
-  INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,updated_at) VALUES (p_case_id,v_status_id,p_date_filed,NULLIF(btrim(COALESCE(p_remarks,'')),''),now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,updated_at=now();
+
+  SELECT status_code, status_label INTO v_status_code, v_status_label FROM public.recompute_case_status_after_court_filing(p_case_id) LIMIT 1;
+  IF v_status_code IS NOT NULL THEN
+    INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
+    UPDATE public.case_events SET status_id=v_status_id, updated_at=now(), updated_by_user_id=p_user_id WHERE id=v_event_id;
+    INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,updated_at) VALUES (p_case_id,v_status_id,p_date_filed,NULLIF(btrim(COALESCE(p_remarks,'')),''),now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,updated_at=now();
+  END IF;
   IF v_prev_status_id IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (p_case_id,v_prev_status_id,v_status_id,p_user_id,now(),p_date_filed,'Court filing recorded. Status recomputed.',v_event_id) RETURNING id INTO v_status_history_id; END IF;
   SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
   INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES (p_user_id,'case_court_filings',v_filing_id,'COURT_FILING',v_old_details,v_new_details,p_case_id,'Court filing recorded.',jsonb_build_object('case_event_id',v_event_id,'status_history_id',v_status_history_id,'case_resolution_approval_id',v_approval_id,'case_resolution_approval_action_id',p_case_resolution_approval_action_id));
