@@ -2289,6 +2289,32 @@ export async function recordCaseDecisionApprovedEvent(
 }
 
 
+
+export type CourtReferenceRecord = Pick<TableRow<"courts">, "id" | "code" | "name" | "court_type"> & { is_active?: boolean | null };
+
+export async function getCourts(limit = 500): Promise<SupabaseQueryResult<CourtReferenceRecord[]>> {
+  return runSupabaseQuery("getCourts", "courts" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const activeQuery = await supabase
+      .from("courts" as never)
+      .select("id, code, name, court_type, is_active" as never)
+      .eq("is_active" as never, true)
+      .order("name" as never, { ascending: true })
+      .limit(limit) as unknown as { data: CourtReferenceRecord[] | null; error: SupabaseErrorLike | null };
+
+    if (!activeQuery.error) return activeQuery;
+
+    const message = [activeQuery.error.message, activeQuery.error.details, activeQuery.error.hint].filter(Boolean).join(" ").toLowerCase();
+    if (!message.includes("is_active")) return activeQuery;
+
+    return await supabase
+      .from("courts" as never)
+      .select("id, code, name, court_type" as never)
+      .order("name" as never, { ascending: true })
+      .limit(limit) as unknown as Promise<{ data: CourtReferenceRecord[] | null; error: unknown }>;
+  }, []);
+}
+
 export type CourtFilingDecisionRecord = {
   id: number;
   approval_id: number;
@@ -2329,7 +2355,8 @@ export async function getAvailableCourtFilingDecisions(caseId: number): Promise<
 export interface RecordCourtFilingEventInput {
   caseId: number;
   caseResolutionApprovalActionId: number;
-  court: string;
+  courtId?: number | null;
+  courtName: string;
   courtBranch?: string | null;
   chargeFiled: string;
   dateFiled: string;
@@ -2350,7 +2377,8 @@ export async function recordCourtFilingEvent(input: RecordCourtFilingEventInput)
     const { data, error } = await supabase.rpc("record_court_filing_event" as never, {
       p_case_id: input.caseId,
       p_case_resolution_approval_action_id: input.caseResolutionApprovalActionId,
-      p_court: input.court.trim(),
+      p_court_id: input.courtId ?? null,
+      p_court_name: input.courtName.trim(),
       p_court_branch: input.courtBranch?.trim() || null,
       p_charge_filed: input.chargeFiled.trim(),
       p_date_filed: input.dateFiled,

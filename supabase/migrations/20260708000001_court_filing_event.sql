@@ -89,7 +89,8 @@ $$;
 CREATE OR REPLACE FUNCTION public.record_court_filing_event(
   p_case_id bigint,
   p_case_resolution_approval_action_id bigint,
-  p_court text,
+  p_court_id bigint DEFAULT NULL,
+  p_court_name text DEFAULT NULL,
   p_court_branch text DEFAULT NULL,
   p_charge_filed text DEFAULT NULL,
   p_date_filed date DEFAULT NULL,
@@ -104,11 +105,11 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_event_type_id bigint; v_event_id bigint; v_filing_id bigint; v_approval_id bigint; v_resolution_id bigint;
   v_status_code text; v_status_label text; v_status_id bigint; v_prev_status_id bigint; v_status_history_id bigint;
-  v_old_details jsonb; v_new_details jsonb; v_court text := NULLIF(btrim(COALESCE(p_court, '')), ''); v_charge text := NULLIF(btrim(COALESCE(p_charge_filed, '')), '');
+  v_old_details jsonb; v_new_details jsonb; v_court_id bigint; v_court_name text; v_court_code text; v_court_code_candidate text; v_code_suffix integer := 0; v_charge text := NULLIF(btrim(COALESCE(p_charge_filed, '')), '');
 BEGIN
   IF p_case_id IS NULL THEN RAISE EXCEPTION 'Case id is required'; END IF;
   IF p_case_resolution_approval_action_id IS NULL THEN RAISE EXCEPTION 'Approved filing decision is required'; END IF;
-  IF v_court IS NULL THEN RAISE EXCEPTION 'Court is required'; END IF;
+  IF p_court_id IS NULL AND NULLIF(btrim(COALESCE(p_court_name, '')), '') IS NULL THEN RAISE EXCEPTION 'Court is required'; END IF;
   IF v_charge IS NULL THEN RAISE EXCEPTION 'Charge filed is required'; END IF;
   IF p_date_filed IS NULL THEN RAISE EXCEPTION 'Date filed is required'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN RAISE EXCEPTION 'Unknown case id %', p_case_id; END IF;
@@ -127,17 +128,44 @@ BEGIN
     RAISE EXCEPTION 'No active approved FOR_FILING decision was found for this case.';
   END IF;
 
+  IF p_court_id IS NOT NULL THEN
+    SELECT c.id, c.name INTO v_court_id, v_court_name
+    FROM public.courts c
+    WHERE c.id = p_court_id;
+    IF v_court_id IS NULL THEN RAISE EXCEPTION 'Unknown court id %', p_court_id; END IF;
+  ELSE
+    SELECT c.id, c.name INTO v_court_id, v_court_name
+    FROM public.courts c
+    WHERE lower(btrim(c.name)) = lower(btrim(p_court_name))
+    ORDER BY c.id
+    LIMIT 1;
+
+    IF v_court_id IS NULL THEN
+      v_court_name := NULLIF(btrim(p_court_name), '');
+      v_court_code_candidate := upper(regexp_replace(v_court_name, '[^a-zA-Z0-9]+', '_', 'g'));
+      v_court_code_candidate := trim(both '_' FROM COALESCE(NULLIF(v_court_code_candidate, ''), 'COURT'));
+      v_court_code := left(v_court_code_candidate, 64);
+      WHILE EXISTS (SELECT 1 FROM public.courts WHERE code = v_court_code) LOOP
+        v_code_suffix := v_code_suffix + 1;
+        v_court_code := left(v_court_code_candidate, greatest(1, 63 - length(v_code_suffix::text))) || '_' || v_code_suffix::text;
+      END LOOP;
+      INSERT INTO public.courts(code, name, court_type, is_active)
+      VALUES (v_court_code, v_court_name, NULL, true)
+      RETURNING id, name INTO v_court_id, v_court_name;
+    END IF;
+  END IF;
+
   INSERT INTO public.case_event_types (code, display_label, category, description, sort_order, is_system, is_active) VALUES ('COURT_FILING','Court Filing','COURT','Manual timeline event for recording filing in court.',140,true,true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,is_active=true,updated_at=now() RETURNING id INTO v_event_type_id;
 
   SELECT current_status_id, to_jsonb(cpd) INTO v_prev_status_id, v_old_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
 
   INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,details_jsonb,source,created_by_user_id,updated_by_user_id)
-  VALUES (p_case_id,v_event_type_id,p_date_filed,p_time_filed,'Court Filing','Filed in ' || v_court || ' on ' || to_char(p_date_filed, 'Mon FMDD, YYYY'),NULL,
-    jsonb_build_object('court',v_court,'court_branch',NULLIF(btrim(COALESCE(p_court_branch,'')),''),'charge_filed',v_charge,'date_filed',p_date_filed,'time_filed',p_time_filed,'information_count',p_information_count,'criminal_case_no',NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),'court_status',NULLIF(btrim(COALESCE(p_court_status,'')),''),'remarks',NULLIF(btrim(COALESCE(p_remarks,'')),''),'case_resolution_approval_id',v_approval_id,'case_resolution_approval_action_id',p_case_resolution_approval_action_id),
+  VALUES (p_case_id,v_event_type_id,p_date_filed,p_time_filed,'Court Filing','Filed in ' || v_court_name || ' on ' || to_char(p_date_filed, 'Mon FMDD, YYYY'),NULL,
+    jsonb_build_object('court',v_court_name,'court_id',v_court_id,'court_branch',NULLIF(btrim(COALESCE(p_court_branch,'')),''),'charge_filed',v_charge,'date_filed',p_date_filed,'time_filed',p_time_filed,'information_count',p_information_count,'criminal_case_no',NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),'court_status',NULLIF(btrim(COALESCE(p_court_status,'')),''),'remarks',NULLIF(btrim(COALESCE(p_remarks,'')),''),'case_resolution_approval_id',v_approval_id,'case_resolution_approval_action_id',p_case_resolution_approval_action_id),
     'MANUAL_ENTRY',p_user_id,p_user_id) RETURNING id INTO v_event_id;
 
-  INSERT INTO public.case_court_filings(case_id,case_event_id,case_resolution_approval_id,case_resolution_approval_action_id,court_name,court_branch,charge_filed,date_filed,time_filed,information_count,criminal_case_no,court_status,remarks,created_by_user_id,updated_by_user_id)
-  VALUES (p_case_id,v_event_id,v_approval_id,p_case_resolution_approval_action_id,v_court,NULLIF(btrim(COALESCE(p_court_branch,'')),''),v_charge,p_date_filed,p_time_filed,p_information_count,NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),NULLIF(btrim(COALESCE(p_court_status,'')),''),NULLIF(btrim(COALESCE(p_remarks,'')),''),p_user_id,p_user_id) RETURNING id INTO v_filing_id;
+  INSERT INTO public.case_court_filings(case_id,case_event_id,case_resolution_approval_id,case_resolution_approval_action_id,court_id,court_name,court_branch,charge_filed,date_filed,time_filed,information_count,criminal_case_no,court_status,remarks,created_by_user_id,updated_by_user_id)
+  VALUES (p_case_id,v_event_id,v_approval_id,p_case_resolution_approval_action_id,v_court_id,v_court_name,NULLIF(btrim(COALESCE(p_court_branch,'')),''),v_charge,p_date_filed,p_time_filed,p_information_count,NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),NULLIF(btrim(COALESCE(p_court_status,'')),''),NULLIF(btrim(COALESCE(p_remarks,'')),''),p_user_id,p_user_id) RETURNING id INTO v_filing_id;
 
   UPDATE public.case_events SET source_table='case_court_filings', source_id=v_filing_id, updated_at=now(), updated_by_user_id=p_user_id WHERE id=v_event_id;
 
@@ -154,7 +182,7 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.record_court_filing_event(bigint,bigint,text,text,text,date,time without time zone,integer,text,text,text,bigint) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.record_court_filing_event(bigint,bigint,bigint,text,text,text,date,time without time zone,integer,text,text,text,bigint) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.void_case_event(p_case_event_id bigint, p_void_reason text, p_voided_by_user_id bigint DEFAULT NULL)
 RETURNS void
