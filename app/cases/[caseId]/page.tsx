@@ -1566,51 +1566,55 @@ export default function CaseDetailsPage() {
                     </div>
 
                     <div className="space-y-4">
-                      <DetailItem
-                        label="Current status"
-                        value={
-                          <StatusBadge
-                            status={
-                              data.details.current_case_status?.display_label ??
-                              data.details.current_case_status?.code ??
-                              data.details.current_status?.display_label ??
-                              data.details.current_status?.code ??
-                              data.details.current_status_raw ??
-                              "—"
-                            }
-                            size="sm"
-                          />
-                        }
-                      />
-                      <DetailItem
-                        label="Current stage"
-                        value={
-                          <StageBadge
-                            stage={
-                              data.details.current_case_stage?.display_label ??
-                              data.details.current_case_stage?.code ??
-                              "—"
-                            }
-                            size="sm"
-                          />
-                        }
-                      />
-                      <OptionalDetailItem
-                        label="Status date"
-                        value={formatDate(
-                          data.details.current_case_status_date ??
-                            data.details.current_status_date ??
-                            data.compact.current_case_status_date ??
-                            data.compact.current_status_date,
-                        )}
-                      />
-                      <OptionalDetailItem
-                        label="Stage date"
-                        value={formatDate(
-                          data.details.current_case_stage_date ??
-                            data.compact.current_case_stage_date,
-                        )}
-                      />
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:items-start">
+                        <DetailItem
+                          label="Current status"
+                          value={
+                            <StatusBadge
+                              status={
+                                data.details.current_case_status?.display_label ??
+                                data.details.current_case_status?.code ??
+                                data.details.current_status?.display_label ??
+                                data.details.current_status?.code ??
+                                data.details.current_status_raw ??
+                                "—"
+                              }
+                              size="sm"
+                            />
+                          }
+                        />
+                        <DetailItem
+                          label="Status date"
+                          value={formatDate(
+                            data.details.current_case_status_date ??
+                              data.details.current_status_date ??
+                              data.compact.current_case_status_date ??
+                              data.compact.current_status_date,
+                          )}
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:items-start">
+                        <DetailItem
+                          label="Current stage"
+                          value={
+                            <StageBadge
+                              stage={
+                                data.details.current_case_stage?.display_label ??
+                                data.details.current_case_stage?.code ??
+                                "—"
+                              }
+                              size="sm"
+                            />
+                          }
+                        />
+                        <DetailItem
+                          label="Stage date"
+                          value={formatDate(
+                            data.details.current_case_stage_date ??
+                              data.compact.current_case_stage_date,
+                          )}
+                        />
+                      </div>
                       <OptionalDetailItem
                         label="Status approved date"
                         value={firstDisplayValue(
