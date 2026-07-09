@@ -311,10 +311,12 @@ WITH latest_assignment AS (
 SELECT
   c.id,
   c.date_received,
-  cpd.current_status_id,
-  cpd.current_status_date,
   cs.code AS current_status_code,
   cs.display_label AS current_status_label,
+  p.full_name AS prosecutor_full_name,
+  p.short_name AS prosecutor_short_name,
+  cpd.current_status_id,
+  cpd.current_status_date,
   cpd.current_case_status_id,
   cpd.current_case_status_date,
   cpd.current_case_status_remarks,
@@ -324,9 +326,7 @@ SELECT
   cpd.current_case_stage_date,
   cpd.current_case_stage_remarks,
   stage.code AS current_case_stage_code,
-  stage.display_label AS current_case_stage_label,
-  p.full_name AS prosecutor_full_name,
-  p.short_name AS prosecutor_short_name
+  stage.display_label AS current_case_stage_label
 FROM public.cases c
 LEFT JOIN public.case_private_details cpd ON cpd.case_id = c.id
 LEFT JOIN public.case_statuses cs ON cs.id = cpd.current_status_id
@@ -404,16 +404,6 @@ CREATE OR REPLACE VIEW public.v_case_details_page AS
     cpd.current_status_remarks,
     cs.code AS current_status_code,
     cs.display_label AS current_status_label,
-    cpd.current_case_status_id,
-    cpd.current_case_status_date,
-    cpd.current_case_status_remarks,
-    broad_status.code AS current_case_status_code,
-    broad_status.display_label AS current_case_status_label,
-    cpd.current_case_stage_id,
-    cpd.current_case_stage_date,
-    cpd.current_case_stage_remarks,
-    stage.code AS current_case_stage_code,
-    stage.display_label AS current_case_stage_label,
     la.prosecutor_id AS current_prosecutor_id,
     p.short_name AS prosecutor_short_name,
     p.full_name AS prosecutor_full_name,
@@ -434,7 +424,17 @@ CREATE OR REPLACE VIEW public.v_case_details_page AS
     NULL::text AS criminal_case_numbers,
     NULL::boolean AS court_needs_review,
     COALESCE(cas.case_addresses, '[]'::jsonb) AS case_addresses,
-    COALESCE(ns.notes, '[]'::jsonb) AS notes
+    COALESCE(ns.notes, '[]'::jsonb) AS notes,
+    cpd.current_case_status_id,
+    cpd.current_case_status_date,
+    cpd.current_case_status_remarks,
+    broad_status.code AS current_case_status_code,
+    broad_status.display_label AS current_case_status_label,
+    cpd.current_case_stage_id,
+    cpd.current_case_stage_date,
+    cpd.current_case_stage_remarks,
+    stage.code AS current_case_stage_code,
+    stage.display_label AS current_case_stage_label
    FROM ((((((((((((public.cases c
      JOIN public.docket_types dt ON ((dt.id = c.docket_type_id)))
      LEFT JOIN public.case_private_details cpd ON ((cpd.case_id = c.id)))
@@ -472,12 +472,6 @@ SELECT
   ce.status_id,
   cs.code AS status_code,
   cs.display_label AS status_label,
-  ce.case_status_id,
-  event_status.code AS case_status_code,
-  event_status.display_label AS case_status_label,
-  ce.case_stage_id,
-  event_stage.code AS case_stage_code,
-  event_stage.display_label AS case_stage_label,
   ce.prosecutor_id,
   p.short_name AS prosecutor_short_name,
   ce.staff_id,
@@ -500,7 +494,13 @@ SELECT
   ce.void_reason,
   ce.voided_at,
   ce.voided_by_user_id,
-  vu.email AS voided_by_email
+  vu.email AS voided_by_email,
+  ce.case_status_id,
+  event_status.code AS case_status_code,
+  event_status.display_label AS case_status_label,
+  ce.case_stage_id,
+  event_stage.code AS case_stage_code,
+  event_stage.display_label AS case_stage_label
 FROM public.case_events ce
 JOIN public.cases c ON c.id = ce.case_id
 JOIN public.docket_types dt ON dt.id = c.docket_type_id
