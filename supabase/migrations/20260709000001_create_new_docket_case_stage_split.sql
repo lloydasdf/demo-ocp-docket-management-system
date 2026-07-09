@@ -2,7 +2,9 @@ BEGIN;
 
 -- Add the non-assigned initial docket stage required by the Case Status / Case Stage split.
 INSERT INTO public.case_stages (code, display_label, sort_order, is_final_stage, is_milestone, is_active)
-VALUES ('FOR_RAFFLE', 'For Raffle', 10, false, false, true)
+VALUES
+  ('FOR_RAFFLE', 'For Raffle', 10, false, false, true),
+  ('CASE_RAFFLED', 'Case Raffled', 30, false, true, true)
 ON CONFLICT (code) DO UPDATE SET
   display_label = EXCLUDED.display_label,
   sort_order = EXCLUDED.sort_order,
@@ -12,7 +14,9 @@ ON CONFLICT (code) DO UPDATE SET
   updated_at = now();
 
 WITH stage_color_seed(code, color_name, background_class, text_class, border_class) AS (
-  VALUES ('FOR_RAFFLE', 'gray', 'bg-gray-50', 'text-gray-800', 'border-gray-200')
+  VALUES
+    ('FOR_RAFFLE', 'gray', 'bg-gray-50', 'text-gray-800', 'border-gray-200'),
+    ('CASE_RAFFLED', 'blue', 'bg-blue-50', 'text-blue-800', 'border-blue-200')
 )
 INSERT INTO public.case_stage_colors (stage_id, color_name, background_class, text_class, border_class, is_active)
 SELECT cs.id, seed.color_name, seed.background_class, seed.text_class, seed.border_class, true
@@ -34,7 +38,7 @@ DECLARE
   v_docket_type_id bigint := (p_payload->>'docketTypeId')::bigint; v_docket_year int := (p_payload->>'docketYear')::int; v_date_received date := (p_payload->>'dateReceived')::date; v_initial_status_id bigint := (p_payload->>'initialStatusId')::bigint;
   v_case_classification_id bigint := nullif(p_payload->>'caseClassificationId','')::bigint; v_region_code text := nullif(btrim(p_payload->>'regionCode'), ''); v_month_code text; v_docket_number int; v_display text; v_dt_prefix text;
   v_person_id bigint; v_org_id bigint; v_name text; v_cp_id bigint; v_address_id bigint; v_violation_id bigint; v_received_event_type_id bigint; v_raffled_event_type_id bigint; v_event_id bigint; v_status_history_id bigint; v_stage_history_id bigint; v_assignment_event_id bigint; v_assignment_id bigint;
-  v_pending_status_id bigint; v_pending_stage_id bigint; v_for_raffle_stage_id bigint; v_initial_stage_id bigint; v_status_date date := COALESCE(v_date_received, CURRENT_DATE);
+  v_pending_status_id bigint; v_for_raffle_stage_id bigint; v_case_raffled_stage_id bigint; v_initial_stage_id bigint; v_status_date date := COALESCE(v_date_received, CURRENT_DATE);
   v_assigned_prosecutor_id bigint := CASE WHEN COALESCE((p_payload->>'caseAlsoRaffled')::boolean,false) THEN nullif(p_payload->>'assignedProsecutorId','')::bigint ELSE NULL END; v_assignment_date date := v_date_received; v_assignment_remarks text := CASE WHEN p_payload ? 'assignmentRemarks' THEN nullif(btrim(p_payload->>'assignmentRemarks'),'') ELSE 'Assigned during manual docket creation' END;
   v_case_note_text text := nullif(btrim(p_payload->>'notes'),'');
   v_case_received_description text := COALESCE(nullif(btrim(p_payload->>'caseReceivedDescription'),''), 'Case received on ' || to_char(v_date_received, 'FMMM/FMDD/YYYY'));
@@ -54,9 +58,9 @@ BEGIN
   SELECT id INTO v_received_event_type_id FROM public.case_event_types WHERE is_active IS TRUE AND code = 'CASE_RECEIVED' LIMIT 1; IF v_received_event_type_id IS NULL THEN RAISE EXCEPTION 'No active CASE_RECEIVED case event type'; END IF;
   IF v_assigned_prosecutor_id IS NOT NULL THEN SELECT id INTO v_raffled_event_type_id FROM public.case_event_types WHERE is_active IS TRUE AND code = 'CASE_RAFFLED' LIMIT 1; IF v_raffled_event_type_id IS NULL THEN RAISE EXCEPTION 'No active CASE_RAFFLED case event type'; END IF; END IF;
   SELECT id INTO v_pending_status_id FROM public.case_statuses WHERE code = 'PENDING' AND is_active IS TRUE LIMIT 1; IF v_pending_status_id IS NULL THEN RAISE EXCEPTION 'No active PENDING case status'; END IF;
-  SELECT id INTO v_pending_stage_id FROM public.case_stages WHERE code = 'PENDING' AND is_active IS TRUE LIMIT 1; IF v_pending_stage_id IS NULL THEN RAISE EXCEPTION 'No active PENDING case stage'; END IF;
   SELECT id INTO v_for_raffle_stage_id FROM public.case_stages WHERE code = 'FOR_RAFFLE' AND is_active IS TRUE LIMIT 1; IF v_for_raffle_stage_id IS NULL THEN RAISE EXCEPTION 'No active FOR_RAFFLE case stage'; END IF;
-  v_initial_stage_id := CASE WHEN v_assigned_prosecutor_id IS NOT NULL THEN v_pending_stage_id ELSE v_for_raffle_stage_id END;
+  SELECT id INTO v_case_raffled_stage_id FROM public.case_stages WHERE code = 'CASE_RAFFLED' AND is_active IS TRUE LIMIT 1; IF v_case_raffled_stage_id IS NULL THEN RAISE EXCEPTION 'No active CASE_RAFFLED case stage'; END IF;
+  v_initial_stage_id := CASE WHEN v_assigned_prosecutor_id IS NOT NULL THEN v_case_raffled_stage_id ELSE v_for_raffle_stage_id END;
 
   PERFORM pg_advisory_xact_lock(v_docket_type_id::int, v_docket_year);
   SELECT COALESCE(MAX(docket_number),0)+1 INTO v_docket_number FROM public.cases WHERE docket_type_id = v_docket_type_id AND docket_year = v_docket_year;
@@ -118,7 +122,7 @@ BEGIN
   INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (v_case_id,NULL,v_pending_status_id,v_user_id,now(),v_status_date,v_case_received_description,v_event_id) RETURNING id INTO v_status_history_id;
   INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id) VALUES (v_case_id,NULL,v_initial_stage_id,v_user_id,now(),v_status_date,v_case_received_description,v_event_id) RETURNING id INTO v_stage_history_id;
   UPDATE public.case_events SET source_id = v_status_history_id WHERE id = v_event_id;
-  IF v_assigned_prosecutor_id IS NOT NULL THEN INSERT INTO public.case_assignments(case_id,prosecutor_id,assigned_by_user_id,assigned_at,remarks) VALUES (v_case_id,v_assigned_prosecutor_id,v_user_id,v_assignment_date::timestamp with time zone,v_assignment_remarks) RETURNING id INTO v_assignment_id; INSERT INTO public.case_events(case_id,event_type_id,event_date,event_order,title,description,status_id,case_status_id,case_stage_id,prosecutor_id,source,source_table,source_id,created_by_user_id,updated_by_user_id) VALUES (v_case_id,v_raffled_event_type_id,v_status_date,2,'Case raffled',v_assignment_remarks,v_pending_status_id,v_pending_status_id,v_pending_stage_id,v_assigned_prosecutor_id,'MANUAL_ENTRY','case_assignments',v_assignment_id,v_user_id,v_user_id) RETURNING id INTO v_assignment_event_id; UPDATE public.case_assignments SET case_event_id = v_assignment_event_id WHERE id = v_assignment_id; END IF;
+  IF v_assigned_prosecutor_id IS NOT NULL THEN INSERT INTO public.case_assignments(case_id,prosecutor_id,assigned_by_user_id,assigned_at,remarks) VALUES (v_case_id,v_assigned_prosecutor_id,v_user_id,v_assignment_date::timestamp with time zone,v_assignment_remarks) RETURNING id INTO v_assignment_id; INSERT INTO public.case_events(case_id,event_type_id,event_date,event_order,title,description,status_id,case_status_id,case_stage_id,prosecutor_id,source,source_table,source_id,created_by_user_id,updated_by_user_id) VALUES (v_case_id,v_raffled_event_type_id,v_status_date,2,'Case raffled',v_assignment_remarks,v_pending_status_id,v_pending_status_id,v_case_raffled_stage_id,v_assigned_prosecutor_id,'MANUAL_ENTRY','case_assignments',v_assignment_id,v_user_id,v_user_id) RETURNING id INTO v_assignment_event_id; UPDATE public.case_assignments SET case_event_id = v_assignment_event_id WHERE id = v_assignment_id; END IF;
 
   v_audit_metadata := jsonb_build_object(
     'payload', p_payload,
@@ -130,7 +134,7 @@ BEGIN
       'case_received_event_case_stage_id', v_initial_stage_id,
       'assignment_event_id', v_assignment_event_id,
       'assignment_event_case_status_id', CASE WHEN v_assignment_event_id IS NULL THEN NULL ELSE v_pending_status_id END,
-      'assignment_event_case_stage_id', CASE WHEN v_assignment_event_id IS NULL THEN NULL ELSE v_pending_stage_id END,
+      'assignment_event_case_stage_id', CASE WHEN v_assignment_event_id IS NULL THEN NULL ELSE v_case_raffled_stage_id END,
       'case_stage_history_id', v_stage_history_id
     ),
     'inserted', jsonb_build_object(
