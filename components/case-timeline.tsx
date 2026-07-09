@@ -348,7 +348,7 @@ function timelineDetailItems(event: CaseTimelineEventRecord, assignment?: CaseAs
 
   const details = [
     { label: "Date", value: formatDate(event.event_date) },
-    { label: "Status", value: event.status_label },
+    { label: "Stage", value: event.case_stage_label ?? event.status_label },
     { label: "Prosecutor", value: event.prosecutor_short_name },
   ];
 
@@ -371,7 +371,7 @@ function visibleEventDetails(event: CaseTimelineEventRecord) {
       : eventSourceTable(event) === "case_assignments"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
       : isMotionForReconsideration(event)
-        ? new Set(["status", "status_label", "prosecutor", "prosecutor_short_name", "court", "court_name"])
+        ? new Set(["status", "status_label", "case_status", "case_status_label", "case_stage", "case_stage_label", "prosecutor", "prosecutor_short_name", "court", "court_name"])
         : new Set<string>();
 
   return Object.entries(event.details_jsonb as Record<string, unknown>).filter(

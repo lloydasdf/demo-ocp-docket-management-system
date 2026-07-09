@@ -26,8 +26,7 @@ export default function Reports() {
     Pending: dockets.filter((d) => d.status === 'Pending').length,
     Filed: dockets.filter((d) => d.status === 'Filed').length,
     Dismissed: dockets.filter((d) => d.status === 'Dismissed').length,
-    Resolved: dockets.filter((d) => d.status === 'Resolved').length,
-    RFI: dockets.filter((d) => d.status === 'RFI').length,
+    MixedResult: dockets.filter((d) => d.status === 'Mixed Result').length,
   };
 
   // Violations by statute
@@ -60,9 +59,9 @@ export default function Reports() {
 
   // Monthly trend (simulated)
   const monthlyData = [
-    { month: 'Jan', cases: 8, resolved: 2, pending: 3, filed: 3 },
-    { month: 'Feb', cases: 12, resolved: 4, pending: 5, filed: 3 },
-    { month: 'Mar', cases: 15, resolved: 6, pending: 6, filed: 3 },
+    { month: 'Jan', cases: 8, mixedResult: 2, pending: 3, filed: 3 },
+    { month: 'Feb', cases: 12, mixedResult: 4, pending: 5, filed: 3 },
+    { month: 'Mar', cases: 15, mixedResult: 6, pending: 6, filed: 3 },
   ];
 
   // Chart colors
@@ -70,16 +69,14 @@ export default function Reports() {
     Pending: '#d4a574',
     Filed: '#3d5a80',
     Dismissed: '#bfbfbf',
-    Resolved: '#52a552',
-    RFI: '#e67e22',
+    MixedResult: '#e67e22',
   };
 
   const statusChartData = [
     { name: 'Pending', value: statusDistribution.Pending, fill: chartColors.Pending },
     { name: 'Filed', value: statusDistribution.Filed, fill: chartColors.Filed },
     { name: 'Dismissed', value: statusDistribution.Dismissed, fill: chartColors.Dismissed },
-    { name: 'Resolved', value: statusDistribution.Resolved, fill: chartColors.Resolved },
-    { name: 'RFI', value: statusDistribution.RFI, fill: chartColors.RFI },
+    { name: 'Mixed Result', value: statusDistribution.MixedResult, fill: chartColors.MixedResult },
   ];
 
   return (
@@ -120,10 +117,10 @@ export default function Reports() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold">
-              {Math.round((statusDistribution.Resolved / dockets.length) * 100)}%
+              {Math.round((statusDistribution.MixedResult / dockets.length) * 100)}%
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              {statusDistribution.Resolved} resolved
+              {statusDistribution.MixedResult} mixed result
             </p>
           </CardContent>
         </Card>
@@ -324,10 +321,10 @@ export default function Reports() {
                   <Line type="monotone" dataKey="cases" stroke="#3d5a80" strokeWidth={2} name="Total Cases" />
                   <Line
                     type="monotone"
-                    dataKey="resolved"
+                    dataKey="mixedResult"
                     stroke="#52a552"
                     strokeWidth={2}
-                    name="Resolved"
+                    name="Mixed Result"
                   />
                   <Line type="monotone" dataKey="pending" stroke="#d4a574" strokeWidth={2} name="Pending" />
                   <Line type="monotone" dataKey="filed" stroke="#3d5a80" strokeWidth={2} name="Filed" />

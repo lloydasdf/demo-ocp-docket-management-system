@@ -1,5 +1,15 @@
 // Status enums and types
-export type CaseStatus = 'Pending' | 'Filed' | 'Dismissed' | 'Resolved' | 'RFI';
+export type CaseStatus = 'Pending' | 'Filed' | 'Dismissed' | 'Mixed Result';
+export type CaseStage =
+  | 'For Raffle'
+  | 'Pending'
+  | 'Reso for Approval'
+  | 'For Filing'
+  | 'Filed; other resolution for approval'
+  | 'Filed; other info for filing'
+  | 'Filed'
+  | 'Dismissed'
+  | 'Mixed Result';
 export type PersonRole = 'Complainant' | 'Respondent' | 'Witness' | 'Representative';
 export type AddressType = 'Residential' | 'Office' | 'Barangay';
 
@@ -46,6 +56,7 @@ export interface CaseDetails {
   witnesses: Person[];
   violations: Violation[];
   status: CaseStatus;
+  stage?: CaseStage;
   statusHistory: StatusUpdate[];
   assignedProsecutor?: Prosecutor;
   prosecutor?: string;
@@ -58,6 +69,7 @@ export interface Docket {
   createdDate: string;
   cases: CaseDetails[];
   status: CaseStatus;
+  stage?: CaseStage;
   description?: string;
 }
 
@@ -65,6 +77,7 @@ export interface StatusUpdate {
   id: string;
   date: string;
   status: CaseStatus;
+  stage?: CaseStage;
   remarks: string;
   updatedBy: string;
 }
@@ -105,6 +118,7 @@ export interface ClearanceSearchResult {
   caseNumber: string;
   respondent: Person;
   status: CaseStatus;
+  stage?: CaseStage;
   lastUpdated: string;
   confidenceScore?: number; // For fuzzy search results
 }

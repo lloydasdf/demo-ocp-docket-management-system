@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ExternalLink } from "lucide-react";
 
 import { CaseTimeline } from "@/components/case-timeline";
+import { StageBadge, StatusBadge } from "@/components/status-badge";
 import { Sidebar } from "@/components/sidebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -603,9 +604,9 @@ function getOverviewInitialData(
 
   if (section === "status") {
     return {
-      statusId: details.current_status_id,
-      statusDate: details.current_status_date,
-      remarks: details.current_status_remarks,
+      statusId: details.current_case_status_id ?? details.current_status_id,
+      statusDate: details.current_case_status_date ?? details.current_status_date,
+      remarks: details.current_case_status_remarks ?? details.current_status_remarks,
       statusApprovedDateRaw: details.status_approved_date_raw,
     };
   }
@@ -1568,19 +1569,46 @@ export default function CaseDetailsPage() {
                       <DetailItem
                         label="Current status"
                         value={
-                          <Badge variant="outline">
-                            {data.details.current_status?.display_label ??
+                          <StatusBadge
+                            status={
+                              data.details.current_case_status?.display_label ??
+                              data.details.current_case_status?.code ??
+                              data.details.current_status?.display_label ??
                               data.details.current_status?.code ??
                               data.details.current_status_raw ??
-                              "—"}
-                          </Badge>
+                              "—"
+                            }
+                            size="sm"
+                          />
+                        }
+                      />
+                      <DetailItem
+                        label="Current stage"
+                        value={
+                          <StageBadge
+                            stage={
+                              data.details.current_case_stage?.display_label ??
+                              data.details.current_case_stage?.code ??
+                              "—"
+                            }
+                            size="sm"
+                          />
                         }
                       />
                       <OptionalDetailItem
                         label="Status date"
                         value={formatDate(
-                          data.details.current_status_date ??
+                          data.details.current_case_status_date ??
+                            data.details.current_status_date ??
+                            data.compact.current_case_status_date ??
                             data.compact.current_status_date,
+                        )}
+                      />
+                      <OptionalDetailItem
+                        label="Stage date"
+                        value={formatDate(
+                          data.details.current_case_stage_date ??
+                            data.compact.current_case_stage_date,
                         )}
                       />
                       <OptionalDetailItem
@@ -1591,8 +1619,12 @@ export default function CaseDetailsPage() {
                         )}
                       />
                       <OptionalDetailItem
-                        label="Remarks"
-                        value={data.details.current_status_remarks}
+                        label="Status remarks"
+                        value={data.details.current_case_status_remarks ?? data.details.current_status_remarks}
+                      />
+                      <OptionalDetailItem
+                        label="Stage remarks"
+                        value={data.details.current_case_stage_remarks}
                       />
                       <OptionalDetailItem
                         label="Summary"

@@ -252,7 +252,8 @@ const sampleCases: CaseDetails[] = [
     respondents: [samplePersons.rodrigo_torres],
     witnesses: [],
     violations: [sampleViolations.estafa],
-    status: 'RFI',
+    status: 'Pending',
+    stage: 'For Filing',
     statusHistory: [
       {
         id: 'status-4',
@@ -264,7 +265,8 @@ const sampleCases: CaseDetails[] = [
       {
         id: 'status-5',
         date: '2025-02-05',
-        status: 'RFI',
+        status: 'Pending',
+    stage: 'For Filing',
         remarks: 'Requesting further information from complainant',
         updatedBy: 'Prosecutor Anna Dela Cruz',
       },
@@ -280,7 +282,8 @@ const sampleCases: CaseDetails[] = [
     respondents: [samplePersons.carlos_santos],
     witnesses: [samplePersons.rosa_fernandez],
     violations: [sampleViolations.vawc],
-    status: 'Resolved',
+    status: 'Mixed Result',
+    stage: 'Mixed Result',
     statusHistory: [
       {
         id: 'status-6',
@@ -299,7 +302,8 @@ const sampleCases: CaseDetails[] = [
       {
         id: 'status-8',
         date: '2025-03-01',
-        status: 'Resolved',
+        status: 'Mixed Result',
+    stage: 'Mixed Result',
         remarks: 'Case settled and resolved',
         updatedBy: 'Prosecutor Maria Santos',
       },
@@ -360,7 +364,8 @@ export const dockets: Docket[] = [
     docketNumber: 'DK-2025-003',
     createdDate: '2025-01-20',
     cases: [sampleCases[2]],
-    status: 'RFI',
+    status: 'Pending',
+    stage: 'For Filing',
     description: 'Online fraud case - estafa',
   },
   {
@@ -368,7 +373,8 @@ export const dockets: Docket[] = [
     docketNumber: 'DK-2025-004',
     createdDate: '2025-01-12',
     cases: [sampleCases[3]],
-    status: 'Resolved',
+    status: 'Mixed Result',
+    stage: 'Mixed Result',
     description: 'Violence against women case',
   },
   {
@@ -546,7 +552,8 @@ export const dockets: Docket[] = [
         respondents: [samplePersons.carlos_santos],
         witnesses: [samplePersons.juan_cruz, samplePersons.rodrigo_torres],
         violations: [sampleViolations.estafa],
-        status: 'Resolved',
+        status: 'Mixed Result',
+    stage: 'Mixed Result',
         statusHistory: [
           {
             id: 'status-17',
@@ -565,7 +572,8 @@ export const dockets: Docket[] = [
           {
             id: 'status-19',
             date: '2025-03-05',
-            status: 'Resolved',
+            status: 'Mixed Result',
+    stage: 'Mixed Result',
             remarks: 'Case resolved with settlement',
             updatedBy: 'Prosecutor Juan Reyes',
           },
@@ -574,7 +582,8 @@ export const dockets: Docket[] = [
         prosecutor: prosecutors[1].name,
       },
     ],
-    status: 'Resolved',
+    status: 'Mixed Result',
+    stage: 'Mixed Result',
   },
 ];
 

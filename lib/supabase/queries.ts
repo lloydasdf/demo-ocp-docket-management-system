@@ -28,11 +28,19 @@ type CasePrivateDetailsRecord = {
   current_status_raw: string | null;
   current_status_remarks: string | null;
   current_status_approved_date_raw: string | null;
+  current_case_status_id?: number | null;
+  current_case_status_date?: string | null;
+  current_case_status_remarks?: string | null;
+  current_case_stage_id?: number | null;
+  current_case_stage_date?: string | null;
+  current_case_stage_remarks?: string | null;
   is_summary_procedure: boolean | null;
   remarks: string | null;
   source: string | null;
   summary_text: string | null;
   current_status: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
+  current_case_status?: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
+  current_case_stage?: { code: string | null; display_label: string | null } | null;
 };
 
 function withFlattenedCasePrivateDetails<T extends { case_private_details?: CasePrivateDetailsRecord | null }>(
@@ -43,6 +51,14 @@ function withFlattenedCasePrivateDetails<T extends { case_private_details?: Case
   current_status_raw?: string | null;
   current_status_remarks?: string | null;
   current_status?: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
+  current_case_status_id?: number | null;
+  current_case_status_date?: string | null;
+  current_case_status_remarks?: string | null;
+  current_case_stage_id?: number | null;
+  current_case_stage_date?: string | null;
+  current_case_stage_remarks?: string | null;
+  current_case_status?: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
+  current_case_stage?: { code: string | null; display_label: string | null } | null;
   is_summary_procedure?: boolean | null;
   remarks?: string | null;
   source?: string | null;
@@ -57,6 +73,14 @@ function withFlattenedCasePrivateDetails<T extends { case_private_details?: Case
     current_status_raw: details?.current_status_raw ?? null,
     current_status_remarks: details?.current_status_remarks ?? null,
     current_status: details?.current_status ?? null,
+    current_case_status_id: details?.current_case_status_id ?? null,
+    current_case_status_date: details?.current_case_status_date ?? null,
+    current_case_status_remarks: details?.current_case_status_remarks ?? null,
+    current_case_stage_id: details?.current_case_stage_id ?? null,
+    current_case_stage_date: details?.current_case_stage_date ?? null,
+    current_case_stage_remarks: details?.current_case_stage_remarks ?? null,
+    current_case_status: details?.current_case_status ?? null,
+    current_case_stage: details?.current_case_stage ?? null,
     is_summary_procedure: details?.is_summary_procedure ?? null,
     remarks: details?.remarks ?? null,
     source: details?.source ?? null,
@@ -353,10 +377,29 @@ export async function getDocketTypes(): Promise<SupabaseQueryResult<TableRow<"do
   }, []);
 }
 
+export type CaseStageReferenceRecord = {
+  id: number;
+  code: string;
+  display_label: string;
+  sort_order: number;
+  is_final_stage: boolean;
+  is_milestone: boolean;
+  is_active: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export async function getCaseStatuses(): Promise<SupabaseQueryResult<TableRow<"case_statuses">[]>> {
   return runSupabaseQuery("getCaseStatuses", "v_ref_case_statuses" as RelationName, async () => {
     const supabase = await getSupabaseBrowserClient();
     return (await supabase.from("v_ref_case_statuses" as never).select("*").order("sort_order" as never, { ascending: true })) as unknown as { data: TableRow<"case_statuses">[] | null; error: unknown };
+  }, []);
+}
+
+export async function getCaseStages(): Promise<SupabaseQueryResult<CaseStageReferenceRecord[]>> {
+  return runSupabaseQuery("getCaseStages", "v_ref_case_stages" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("v_ref_case_stages" as never).select("*").order("sort_order" as never, { ascending: true })) as unknown as { data: CaseStageReferenceRecord[] | null; error: unknown };
   }, []);
 }
 
@@ -395,6 +438,18 @@ export type DocketQuickDetailsRecord = {
   date_received: string | null;
   current_status_code: string | null;
   current_status_label: string | null;
+  current_status_id?: number | null;
+  current_status_date?: string | null;
+  current_case_status_id: number | null;
+  current_case_status_code: string | null;
+  current_case_status_label: string | null;
+  current_case_status_date: string | null;
+  current_case_status_remarks: string | null;
+  current_case_stage_id: number | null;
+  current_case_stage_code: string | null;
+  current_case_stage_label: string | null;
+  current_case_stage_date: string | null;
+  current_case_stage_remarks: string | null;
   prosecutor_full_name: string | null;
   prosecutor_short_name: string | null;
 };
@@ -410,7 +465,7 @@ const DOCKET_CASE_LABELS_COLUMNS =
   "id, violations, summary_text, case_classification_label";
 
 const DOCKET_QUICK_DETAILS_COLUMNS =
-  "id, date_received, current_status_code, current_status_label, prosecutor_full_name, prosecutor_short_name";
+  "id, date_received, current_status_code, current_status_label, prosecutor_full_name, prosecutor_short_name, current_status_id, current_status_date, current_case_status_id, current_case_status_code, current_case_status_label, current_case_status_date, current_case_status_remarks, current_case_stage_id, current_case_stage_code, current_case_stage_label, current_case_stage_date, current_case_stage_remarks";
 
 const EMPTY_DOCKET_PARTICIPANTS: Omit<DocketParticipantsRecord, "id"> = {
   complainant: null,
@@ -427,6 +482,18 @@ const EMPTY_DOCKET_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, "id"> = {
   date_received: null,
   current_status_code: null,
   current_status_label: null,
+  current_status_id: null,
+  current_status_date: null,
+  current_case_status_id: null,
+  current_case_status_code: null,
+  current_case_status_label: null,
+  current_case_status_date: null,
+  current_case_status_remarks: null,
+  current_case_stage_id: null,
+  current_case_stage_code: null,
+  current_case_stage_label: null,
+  current_case_stage_date: null,
+  current_case_stage_remarks: null,
   prosecutor_full_name: null,
   prosecutor_short_name: null,
 };
@@ -764,6 +831,14 @@ export type CaseDetailsRecord = TableRow<"cases"> & {
   current_status_raw?: string | null;
   current_status_remarks?: string | null;
   current_status?: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
+  current_case_status_id?: number | null;
+  current_case_status_date?: string | null;
+  current_case_status_remarks?: string | null;
+  current_case_stage_id?: number | null;
+  current_case_stage_date?: string | null;
+  current_case_stage_remarks?: string | null;
+  current_case_status?: Pick<TableRow<"case_statuses">, "code" | "display_label"> | null;
+  current_case_stage?: { code: string | null; display_label: string | null } | null;
   status_approved_date?: string | null;
   status_approved_date_raw?: string | null;
   case_classification_id?: number | null;
@@ -792,6 +867,12 @@ export type CaseDetailsPageViewRecord = Pick<
   | "current_status_date"
   | "current_status_raw"
   | "current_status_remarks"
+  | "current_case_status_id"
+  | "current_case_status_date"
+  | "current_case_status_remarks"
+  | "current_case_stage_id"
+  | "current_case_stage_date"
+  | "current_case_stage_remarks"
   | "status_approved_date"
   | "status_approved_date_raw"
 > & {
@@ -810,6 +891,12 @@ export type CaseDetailsPageViewRecord = Pick<
   current_status_code: string | null;
   current_status_label: string | null;
   current_status: { code?: string | null; display_label?: string | null } | null;
+  current_case_status_code: string | null;
+  current_case_status_label: string | null;
+  current_case_status: { code?: string | null; display_label?: string | null } | null;
+  current_case_stage_code: string | null;
+  current_case_stage_label: string | null;
+  current_case_stage: { code?: string | null; display_label?: string | null } | null;
   current_prosecutor_id: number | null;
   prosecutor_short_name: string | null;
   prosecutor_full_name: string | null;
@@ -839,7 +926,7 @@ export type CaseDetailsPageViewRecord = Pick<
 
 type CaseDetailsPageViewRawRecord = Omit<
   CaseDetailsPageViewRecord,
-  "case_classifications" | "current_status" | "docket_types"
+  "case_classifications" | "current_status" | "current_case_status" | "current_case_stage" | "docket_types"
 >;
 
 function withCaseDetailsPageRelations(
@@ -851,6 +938,18 @@ function withCaseDetailsPageRelations(
       ? {
           code: record.current_status_code,
           display_label: record.current_status_label,
+        }
+      : null,
+    current_case_status: record.current_case_status_code || record.current_case_status_label
+      ? {
+          code: record.current_case_status_code,
+          display_label: record.current_case_status_label,
+        }
+      : null,
+    current_case_stage: record.current_case_stage_code || record.current_case_stage_label
+      ? {
+          code: record.current_case_stage_code,
+          display_label: record.current_case_stage_label,
         }
       : null,
     docket_types: record.docket_type_name || record.docket_type_prefix
@@ -998,6 +1097,12 @@ export type CaseTimelineEventRecord = {
   description: string | null;
   status_code: string | null;
   status_label: string | null;
+  case_status_id: number | null;
+  case_status_code: string | null;
+  case_status_label: string | null;
+  case_stage_id: number | null;
+  case_stage_code: string | null;
+  case_stage_label: string | null;
   prosecutor_short_name: string | null;
   staff_short_name: string | null;
   court_name: string | null;
@@ -2553,8 +2658,8 @@ export async function getDashboardStats(): Promise<
       const supabase = await getSupabaseBrowserClient();
       const { data, error } = (await supabase
         .from("v_docket_quickdetails" as never)
-        .select("id,current_status_code")) as unknown as {
-        data: Pick<DocketQuickDetailsRecord, "id" | "current_status_code">[] | null;
+        .select("id,current_case_status_code,current_case_stage_code")) as unknown as {
+        data: Pick<DocketQuickDetailsRecord, "id" | "current_case_status_code" | "current_case_stage_code">[] | null;
         error: unknown;
       };
 
@@ -2563,8 +2668,13 @@ export async function getDashboardStats(): Promise<
       }
 
       const byStatusId = data.reduce<Record<string, number>>((totals, row) => {
-        const statusKey = row.current_status_code ?? "UNKNOWN";
+        const statusKey = row.current_case_status_code ?? "UNKNOWN";
         totals[statusKey] = (totals[statusKey] ?? 0) + 1;
+        return totals;
+      }, {});
+      const byStageId = data.reduce<Record<string, number>>((totals, row) => {
+        const stageKey = row.current_case_stage_code ?? "UNKNOWN";
+        totals[stageKey] = (totals[stageKey] ?? 0) + 1;
         return totals;
       }, {});
 
@@ -2572,6 +2682,7 @@ export async function getDashboardStats(): Promise<
         data: {
           totalCases: data.length,
           byStatusId,
+          byStageId,
         },
         error: null,
       };
@@ -2579,6 +2690,7 @@ export async function getDashboardStats(): Promise<
     {
       totalCases: 0,
       byStatusId: {},
+      byStageId: {},
     },
   );
 }

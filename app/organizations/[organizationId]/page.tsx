@@ -260,10 +260,7 @@ export default function OrganizationDetailsPage() {
                             </p>
                             <p className="mt-1 text-sm text-muted-foreground">
                               Violations: {caseRecord.violations ?? "—"} |
-                              Status:{" "}
-                              {caseRecord.current_status_label ??
-                                caseRecord.current_status_code ??
-                                "—"}
+                              Status: {caseRecord.current_case_status_label ?? caseRecord.current_status_label ?? caseRecord.current_status_code ?? "—"} | Stage: {caseRecord.current_case_stage_label ?? "—"}
                             </p>
                           </div>
                           <ExternalLink className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />

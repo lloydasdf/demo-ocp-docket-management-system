@@ -17,7 +17,10 @@ import {
 import type { TableRow as SupabaseTableRow, ViewRow } from '@/lib/supabase/types';
 import { AlertCircle, CheckCircle, Loader2, Search as SearchIcon } from 'lucide-react';
 
-type CompactCase = ViewRow<'v_cases_display'>;
+type CompactCase = ViewRow<'v_cases_display'> & {
+  current_case_status_label?: string | null;
+  current_case_stage_label?: string | null;
+};
 type Prosecutor = SupabaseTableRow<'prosecutors'>;
 
 type Message = {
@@ -54,6 +57,8 @@ function caseMatchesSearch(caseDetail: CompactCase, query: string) {
     caseDetail.docket_display_number,
     caseDetail.summary_text,
     caseDetail.violations,
+    caseDetail.current_case_status_label,
+    caseDetail.current_case_stage_label,
     caseDetail.current_status_label,
   ]
     .filter(Boolean)

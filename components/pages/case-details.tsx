@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { StatusBadge } from "@/components/status-badge";
+import { StageBadge, StatusBadge } from "@/components/status-badge";
 import { getCaseById, getCaseWithAttachments, dockets } from "@/lib/dummy-data";
 import { Button } from "@/components/ui/button";
 import { Download, Mail } from "lucide-react";
@@ -367,6 +367,8 @@ export default function CaseDetails({ caseId, docketId }: CaseDetailsProps) {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Current Status:</span>
                   <StatusBadge status={caseDetail.status} size="sm" />
+                  <span className="text-muted-foreground">Current Stage:</span>
+                  <StageBadge stage={caseDetail.stage ?? caseDetail.status} size="sm" />
                 </div>
               </div>
             </CardContent>

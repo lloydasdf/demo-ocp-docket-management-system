@@ -5,15 +5,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
+import { StageBadge, StatusBadge } from '@/components/status-badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { dockets } from '@/lib/dummy-data';
-import { getCaseStatuses, getCompactCases } from '@/lib/supabase/queries';
+import { getCaseStages, getCaseStatuses, getCompactCases } from '@/lib/supabase/queries';
 import type { ViewRow } from '@/lib/supabase/types';
 import { Search as SearchIcon } from 'lucide-react';
 
-type CompactCase = ViewRow<'v_cases_display'>;
+type CompactCase = ViewRow<'v_cases_display'> & {
+  current_case_status_code?: string | null;
+  current_case_status_label?: string | null;
+  current_case_stage_code?: string | null;
+  current_case_stage_label?: string | null;
+};
 
 function getFallbackCases(): CompactCase[] {
   return dockets.flatMap((docket) =>
@@ -30,6 +35,10 @@ function getFallbackCases(): CompactCase[] {
       created_at: docket.createdDate,
       current_status_label: caseDetail.status,
       current_status_code: caseDetail.status,
+      current_case_status_label: caseDetail.status,
+      current_case_status_code: caseDetail.status,
+      current_case_stage_label: caseDetail.stage ?? caseDetail.status,
+      current_case_stage_code: caseDetail.stage ?? caseDetail.status,
       date_received: caseDetail.dateOfIncident,
       docket_month_code: null,
       docket_display_number: docket.docketNumber,
@@ -51,8 +60,10 @@ export default function DocketSearch() {
   const [cases, setCases] = useState<CompactCase[]>(fallbackCases);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('All');
+  const [selectedStage, setSelectedStage] = useState('All');
   const [sortBy, setSortBy] = useState<'date' | 'number'>('date');
-  const [statuses, setStatuses] = useState<string[]>(['All', 'Pending', 'Filed', 'Dismissed', 'Resolved', 'RFI']);
+  const [statuses, setStatuses] = useState<string[]>(['All', 'Pending', 'Filed', 'Dismissed', 'Mixed Result']);
+  const [stages, setStages] = useState<string[]>(['All', 'For Raffle', 'Pending', 'Reso for Approval', 'For Filing', 'Filed', 'Dismissed', 'Mixed Result']);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isUsingFallback, setIsUsingFallback] = useState(false);
@@ -62,7 +73,7 @@ export default function DocketSearch() {
 
     async function loadCases() {
       setIsLoading(true);
-      const [casesResult, statusesResult] = await Promise.all([getCompactCases(), getCaseStatuses()]);
+      const [casesResult, statusesResult, stagesResult] = await Promise.all([getCompactCases(), getCaseStatuses(), getCaseStages()]);
 
       if (!isMounted) {
         return;
@@ -70,6 +81,10 @@ export default function DocketSearch() {
 
       if (statusesResult.data) {
         setStatuses(['All', ...statusesResult.data.map((status) => status.display_label)]);
+      }
+
+      if (stagesResult.data) {
+        setStages(['All', ...stagesResult.data.map((stage) => stage.display_label)]);
       }
 
       if (casesResult.error) {
@@ -97,15 +112,17 @@ export default function DocketSearch() {
 
     return [...cases]
       .filter((caseDetail) => {
-        const currentStatus = caseDetail.current_status_label ?? '';
+        const currentStatus = caseDetail.current_case_status_label ?? caseDetail.current_status_label ?? '';
+        const currentStage = caseDetail.current_case_stage_label ?? '';
         const matchesStatus = selectedStatus === 'All' || currentStatus === selectedStatus;
+        const matchesStage = selectedStage === 'All' || currentStage === selectedStage;
         const matchesSearch =
           normalizedQuery.length === 0 ||
           (caseDetail.docket_display_number ?? '').toLowerCase().includes(normalizedQuery) ||
           (caseDetail.summary_text ?? '').toLowerCase().includes(normalizedQuery) ||
           (caseDetail.violations ?? '').toLowerCase().includes(normalizedQuery);
 
-        return matchesStatus && matchesSearch;
+        return matchesStatus && matchesStage && matchesSearch;
       })
       .sort((firstCase, secondCase) => {
         if (sortBy === 'date') {
@@ -117,7 +134,7 @@ export default function DocketSearch() {
 
         return (firstCase.docket_display_number ?? '').localeCompare(secondCase.docket_display_number ?? '');
       });
-  }, [cases, searchQuery, selectedStatus, sortBy]);
+  }, [cases, searchQuery, selectedStage, selectedStatus, sortBy]);
 
   return (
     <div className="p-8 space-y-6">
@@ -161,6 +178,22 @@ export default function DocketSearch() {
                   {statuses.map((status) => (
                     <SelectItem key={status} value={status}>
                       {status}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-foreground block mb-2">Stage</label>
+              <Select value={selectedStage} onValueChange={setSelectedStage}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {stages.map((stage) => (
+                    <SelectItem key={stage} value={stage}>
+                      {stage}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -225,6 +258,7 @@ export default function DocketSearch() {
                     <TableHead>Violations</TableHead>
                     <TableHead>Assigned Prosecutor</TableHead>
                     <TableHead>Current Status</TableHead>
+                    <TableHead>Current Stage</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -237,7 +271,10 @@ export default function DocketSearch() {
                       <TableCell className="text-sm max-w-xs truncate">{caseDetail.violations ?? '—'}</TableCell>
                       <TableCell className="text-sm">{caseDetail.prosecutor_full_name ?? caseDetail.prosecutor_short_name ?? '—'}</TableCell>
                       <TableCell>
-                        <Badge variant="outline">{caseDetail.current_status_label ?? '—'}</Badge>
+                        <StatusBadge status={caseDetail.current_case_status_label ?? caseDetail.current_status_label ?? '—'} size="sm" />
+                      </TableCell>
+                      <TableCell>
+                        <StageBadge stage={caseDetail.current_case_stage_label ?? '—'} size="sm" />
                       </TableCell>
                       <TableCell className="text-right">
                         <Button variant="ghost" size="sm" asChild>

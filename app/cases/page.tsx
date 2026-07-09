@@ -6,7 +6,7 @@ import { Sidebar } from '@/components/sidebar';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
+import { StageBadge, StatusBadge } from '@/components/status-badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -50,6 +50,7 @@ const CASE_TABLE_COLUMNS = [
   { key: 'classification', label: 'Classification', initialWidth: 180, minWidth: 140 },
   { key: 'assignedProsecutor', label: 'Assigned Prosecutor', initialWidth: 240, minWidth: 180 },
   { key: 'currentStatus', label: 'Current Status', initialWidth: 180, minWidth: 150 },
+  { key: 'currentStage', label: 'Current Stage', initialWidth: 200, minWidth: 160 },
   { key: 'dateReceived', label: 'Date Received', initialWidth: 150, minWidth: 120 },
 ] as const;
 
@@ -160,7 +161,11 @@ function assignedProsecutor(caseDetail: CompactCase) {
 }
 
 function currentStatusLabel(caseDetail: CompactCase) {
-  return caseDetail.current_status_label || caseDetail.current_status_code;
+  return caseDetail.current_case_status_label || caseDetail.current_case_status_code || caseDetail.current_status_label || caseDetail.current_status_code;
+}
+
+function currentStageLabel(caseDetail: CompactCase) {
+  return caseDetail.current_case_stage_label || caseDetail.current_case_stage_code;
 }
 
 function searchColumnValue(
@@ -184,6 +189,8 @@ function searchColumnValue(
       return assignedProsecutor(caseDetail) ?? '';
     case 'currentStatus':
       return currentStatusLabel(caseDetail) ?? '';
+    case 'currentStage':
+      return currentStageLabel(caseDetail) ?? '';
     case 'dateReceived':
       return `${caseDetail.date_received ?? ''} ${formatDate(caseDetail.date_received)}`;
     default:
@@ -291,6 +298,18 @@ const EMPTY_CASE_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, 'id'> = {
   date_received: null,
   current_status_code: null,
   current_status_label: null,
+  current_status_id: null,
+  current_status_date: null,
+  current_case_status_id: null,
+  current_case_status_code: null,
+  current_case_status_label: null,
+  current_case_status_date: null,
+  current_case_status_remarks: null,
+  current_case_stage_id: null,
+  current_case_stage_code: null,
+  current_case_stage_label: null,
+  current_case_stage_date: null,
+  current_case_stage_remarks: null,
   prosecutor_full_name: null,
   prosecutor_short_name: null,
 };
@@ -1245,7 +1264,10 @@ export default function CasesPage() {
                             <TableCell className="truncate text-sm">{caseDetail.id ? classificationsByCase[caseDetail.id] ?? '—' : '—'}</TableCell>
                             <TableCell className="truncate text-sm">{assignedProsecutor(caseDetail) ?? '—'}</TableCell>
                             <TableCell>
-                              <Badge variant="outline">{currentStatusLabel(caseDetail) ?? '—'}</Badge>
+                              <StatusBadge status={currentStatusLabel(caseDetail) ?? '—'} size="sm" />
+                            </TableCell>
+                            <TableCell>
+                              <StageBadge stage={currentStageLabel(caseDetail) ?? '—'} size="sm" />
                             </TableCell>
                             <TableCell className="truncate text-sm">{formatDate(caseDetail.date_received)}</TableCell>
                           </TableRow>

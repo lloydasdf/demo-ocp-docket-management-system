@@ -12,7 +12,7 @@ export default function Dashboard() {
   const totalDockets = dockets.length;
   const pendingCount = dockets.filter((d) => d.status === 'Pending').length;
   const filedCount = dockets.filter((d) => d.status === 'Filed').length;
-  const resolvedCount = dockets.filter((d) => d.status === 'Resolved').length;
+  const mixedResultCount = dockets.filter((d) => d.status === 'Mixed Result').length;
 
   // Recent entries
   const recentEntries = [...dockets].sort((a, b) => new Date(b.createdDate).getTime() - new Date(a.createdDate).getTime()).slice(0, 5);
@@ -22,8 +22,7 @@ export default function Dashboard() {
     { name: 'Pending', value: pendingCount, fill: 'hsl(35, 84%, 52%)' },
     { name: 'Filed', value: filedCount, fill: 'hsl(250, 47%, 42%)' },
     { name: 'Dismissed', value: dockets.filter((d) => d.status === 'Dismissed').length, fill: 'hsl(0, 0%, 75%)' },
-    { name: 'Resolved', value: resolvedCount, fill: 'hsl(130, 72%, 40%)' },
-    { name: 'RFI', value: dockets.filter((d) => d.status === 'RFI').length, fill: 'hsl(29, 100%, 52%)' },
+    { name: 'Mixed Result', value: mixedResultCount, fill: 'hsl(29, 100%, 52%)' },
   ];
 
   // Violation distribution
@@ -89,10 +88,10 @@ export default function Dashboard() {
 
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Resolved</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Mixed Result</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-[hsl(130,72%,40%)]">{resolvedCount}</div>
+            <div className="text-3xl font-bold text-[hsl(130,72%,40%)]">{mixedResultCount}</div>
             <p className="text-xs text-muted-foreground mt-1">Completed cases</p>
           </CardContent>
         </Card>

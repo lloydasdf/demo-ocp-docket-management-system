@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { StatusBadge } from '@/components/status-badge';
+import { StageBadge, StatusBadge } from '@/components/status-badge';
 import { dockets } from '@/lib/dummy-data';
 import {
   getCaseEventTypes,
@@ -62,6 +62,18 @@ function getFallbackCases(): CompactCase[] {
       created_at: docket.createdDate,
       current_status_label: caseDetail.status,
       current_status_code: caseDetail.status,
+      current_case_status_id: null,
+      current_case_status_label: caseDetail.status,
+      current_case_status_code: caseDetail.status,
+      current_case_status_date: caseDetail.dateOfIncident,
+      current_case_status_remarks: null,
+      current_case_stage_id: null,
+      current_case_stage_label: caseDetail.stage ?? caseDetail.status,
+      current_case_stage_code: caseDetail.stage ?? caseDetail.status,
+      current_case_stage_date: caseDetail.dateOfIncident,
+      current_case_stage_remarks: null,
+      current_status_id: null,
+      current_status_date: caseDetail.dateOfIncident,
       date_received: caseDetail.dateOfIncident,
       docket_month_code: null,
       docket_display_number: docket.docketNumber,
@@ -106,7 +118,11 @@ function getDocketNumber(caseDetail: CompactCase) {
 }
 
 function getCurrentStatus(caseDetail: CompactCase) {
-  return caseDetail.current_status_label || caseDetail.current_status_code || '—';
+  return caseDetail.current_case_status_label || caseDetail.current_case_status_code || caseDetail.current_status_label || caseDetail.current_status_code || '—';
+}
+
+function getCurrentStage(caseDetail: CompactCase) {
+  return caseDetail.current_case_stage_label || caseDetail.current_case_stage_code || '—';
 }
 
 function getProsecutor(caseDetail: CompactCase) {
@@ -395,6 +411,7 @@ export default function StatusUpdate() {
               <h4 className="font-semibold mb-2">Selected Case</h4>
               <p className="font-medium">{getDocketNumber(selectedCase)}</p>
               <p className="text-sm">Current Status: {getCurrentStatus(selectedCase)}</p>
+              <p className="text-sm">Current Stage: {getCurrentStage(selectedCase)}</p>
               <p className="text-sm">Assigned Prosecutor: {getProsecutor(selectedCase)}</p>
               <Button asChild variant="secondary" size="sm" className="mt-3">
                 <Link href={`/cases/${selectedCase.id}`}>
@@ -449,6 +466,8 @@ export default function StatusUpdate() {
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="font-medium">Current Status:</span>
               <StatusBadge status={selectedCase ? getCurrentStatus(selectedCase) : '—'} size="sm" />
+              <span className="font-medium">Current Stage:</span>
+              <StageBadge stage={selectedCase ? getCurrentStage(selectedCase) : '—'} size="sm" />
             </div>
             <div className="flex items-center space-x-2">
               <Checkbox
