@@ -157,6 +157,12 @@ function caseNotesDetails(details: CaseDetailsPageViewRecord | null) {
   );
 }
 
+
+function isFinalCaseStatus(codeOrLabel: string | null | undefined) {
+  const normalized = codeOrLabel?.trim().toUpperCase().replace(/[\s-]+/g, "_");
+  return normalized === "FILED" || normalized === "DISMISSED" || normalized === "MIXED_RESULT";
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) {
     return "—";
@@ -1583,38 +1589,31 @@ export default function CaseDetailsPage() {
                             />
                           }
                         />
-                        <DetailItem
-                          label="Status date"
-                          value={formatDate(
-                            data.details.current_case_status_date ??
-                              data.details.current_status_date ??
-                              data.compact.current_case_status_date ??
-                              data.compact.current_status_date,
-                          )}
-                        />
+                        {isFinalCaseStatus(data.details.current_case_status?.code ?? data.details.current_case_status?.display_label) ? (
+                          <DetailItem
+                            label="Status date"
+                            value={formatDate(
+                              data.details.current_case_status_date ??
+                                data.details.current_status_date ??
+                                data.compact.current_case_status_date ??
+                                data.compact.current_status_date,
+                            )}
+                          />
+                        ) : null}
                       </div>
-                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:items-start">
-                        <DetailItem
-                          label="Current stage"
-                          value={
-                            <StageBadge
-                              stage={
-                                data.details.current_case_stage?.display_label ??
-                                data.details.current_case_stage?.code ??
-                                "—"
-                              }
-                              size="sm"
-                            />
-                          }
-                        />
-                        <DetailItem
-                          label="Stage date"
-                          value={formatDate(
-                            data.details.current_case_stage_date ??
-                              data.compact.current_case_stage_date,
-                          )}
-                        />
-                      </div>
+                      <DetailItem
+                        label="Current stage"
+                        value={
+                          <StageBadge
+                            stage={
+                              data.details.current_case_stage?.display_label ??
+                              data.details.current_case_stage?.code ??
+                              "—"
+                            }
+                            size="sm"
+                          />
+                        }
+                      />
                       <OptionalDetailItem
                         label="Status approved date"
                         value={firstDisplayValue(
