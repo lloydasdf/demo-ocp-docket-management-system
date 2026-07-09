@@ -42,6 +42,11 @@ const stageConfig: Record<CaseStage, BadgeConfig> = {
     text: 'text-gray-800',
     label: 'For Raffle',
   },
+  'Case Raffled': {
+    bg: 'bg-blue-50',
+    text: 'text-blue-800',
+    label: 'Case Raffled',
+  },
   Pending: {
     bg: 'bg-amber-50',
     text: 'text-amber-800',
@@ -93,6 +98,7 @@ const normalizedStatusLabels: Record<string, CaseStatus> = {
 
 const normalizedStageLabels: Record<string, CaseStage> = {
   FOR_RAFFLE: 'For Raffle',
+  CASE_RAFFLED: 'Case Raffled',
   PENDING: 'Pending',
   RESO_FOR_APPROVAL: 'Reso for Approval',
   FOR_FILING: 'For Filing',

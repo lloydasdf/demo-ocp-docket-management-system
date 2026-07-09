@@ -2,6 +2,7 @@
 export type CaseStatus = 'Pending' | 'Filed' | 'Dismissed' | 'Mixed Result';
 export type CaseStage =
   | 'For Raffle'
+  | 'Case Raffled'
   | 'Pending'
   | 'Reso for Approval'
   | 'For Filing'
