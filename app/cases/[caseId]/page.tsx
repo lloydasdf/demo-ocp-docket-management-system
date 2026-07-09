@@ -163,6 +163,22 @@ function isFinalCaseStatus(codeOrLabel: string | null | undefined) {
   return normalized === "FILED" || normalized === "DISMISSED" || normalized === "MIXED_RESULT";
 }
 
+function withoutAutoStatusStageRemark(value: string | null | undefined) {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const autoRemarks = new Set([
+    "Case Assignment voided. Broad case status remains Pending.",
+    "Case Assignment voided. Workflow stage recomputed.",
+    "Court filing voided. Status recomputed.",
+    "Timeline event voided. Status recomputed.",
+  ]);
+
+  return autoRemarks.has(normalized) ? null : normalized;
+}
+
 function formatDate(value: string | null | undefined) {
   if (!value) {
     return "—";
@@ -612,7 +628,9 @@ function getOverviewInitialData(
     return {
       statusId: details.current_case_status_id ?? details.current_status_id,
       statusDate: details.current_case_status_date ?? details.current_status_date,
-      remarks: details.current_case_status_remarks ?? details.current_status_remarks,
+      remarks: withoutAutoStatusStageRemark(
+        details.current_case_status_remarks ?? details.current_status_remarks,
+      ),
       statusApprovedDateRaw: details.status_approved_date_raw,
     };
   }
@@ -1623,11 +1641,14 @@ export default function CaseDetailsPage() {
                       />
                       <OptionalDetailItem
                         label="Status remarks"
-                        value={data.details.current_case_status_remarks ?? data.details.current_status_remarks}
+                        value={withoutAutoStatusStageRemark(
+                          data.details.current_case_status_remarks ??
+                            data.details.current_status_remarks,
+                        )}
                       />
                       <OptionalDetailItem
                         label="Stage remarks"
-                        value={data.details.current_case_stage_remarks}
+                        value={withoutAutoStatusStageRemark(data.details.current_case_stage_remarks)}
                       />
                       <OptionalDetailItem
                         label="Summary"
