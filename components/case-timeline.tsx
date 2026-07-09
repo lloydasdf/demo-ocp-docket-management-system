@@ -286,6 +286,19 @@ function assignmentEventDetails(event: CaseTimelineEventRecord, assignment?: Cas
     ? stringDetail(assignment.unassignment_reason)
     : null;
 
+  if (event.event_type_code === "CASE_REASSIGNMENT") {
+    return [
+      { label: "Previous prosecutor", value: stringDetail(details.previous_prosecutor_name) },
+      { label: "New prosecutor", value: stringDetail(details.new_prosecutor_name) ?? event.prosecutor_short_name },
+      { label: "Reassignment date", value: formatDate(event.event_date) },
+      { label: "Reassignment time", value: formatTime(event.event_time) },
+      { label: "Assigned staff", value: stringDetail(details.staff_name) ?? event.staff_short_name },
+      { label: "Stage", value: event.case_stage_label ?? stringDetail(details.automatic_case_stage) },
+      { label: "Reason", value: stringDetail(details.reason) },
+      { label: "Remarks", value: stringDetail(details.remarks) },
+    ];
+  }
+
   return [
     { label: "Assigned prosecutor", value: stringDetail(details.new_prosecutor_name) ?? event.prosecutor_short_name },
     { label: "Assignment date", value: formatDate(event.event_date) },

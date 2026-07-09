@@ -172,6 +172,8 @@ function withoutAutoStatusStageRemark(value: string | null | undefined) {
   const autoRemarks = new Set([
     "Case Assignment voided. Broad case status remains Pending.",
     "Case Assignment voided. Workflow stage recomputed.",
+    "Case Reassignment voided. Broad case status remains Pending.",
+    "Case Reassignment voided. Workflow stage recomputed.",
     "Court filing voided. Status recomputed.",
     "Timeline event voided. Status recomputed.",
   ]);
