@@ -171,7 +171,7 @@ DECLARE
   v_old jsonb; v_new jsonb; v_case_id bigint; v_event_type_code text; v_source_table text; v_source_id bigint;
   v_filing_id bigint; v_filing_old jsonb; v_filing_new jsonb; v_approval_id bigint; v_resolution_id bigint;
   v_status_code text; v_status_label text; v_status_id bigint; v_prev_status_id bigint; v_status_history_id bigint; v_old_details jsonb; v_new_details jsonb;
-  v_assignment_id bigint; v_assignment_old jsonb; v_assignment_new jsonb; v_prev_case_status_id bigint; v_prev_stage_id bigint; v_pending_status_id bigint; v_for_raffle_stage_id bigint; v_case_raffled_stage_id bigint; v_case_reassigned_stage_id bigint; v_target_stage_id bigint; v_active_assignment_count integer; v_stage_history_id bigint;
+  v_assignment_id bigint; v_assignment_old jsonb; v_assignment_new jsonb; v_previous_assignment_id bigint; v_previous_assignment_old jsonb; v_previous_assignment_new jsonb; v_prev_case_status_id bigint; v_prev_stage_id bigint; v_pending_status_id bigint; v_for_raffle_stage_id bigint; v_case_raffled_stage_id bigint; v_case_reassigned_stage_id bigint; v_target_stage_id bigint; v_active_assignment_count integer; v_stage_history_id bigint;
 BEGIN
   IF nullif(trim(p_void_reason), '') IS NULL THEN RAISE EXCEPTION 'Void reason is required'; END IF;
   SELECT to_jsonb(ce), ce.case_id, cet.code, ce.source_table, ce.source_id INTO v_old, v_case_id, v_event_type_code, v_source_table, v_source_id
@@ -275,6 +275,8 @@ BEGIN
       jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'case_status_id',v_pending_status_id,'case_stage_id',v_target_stage_id,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id,'active_assignment_count',v_active_assignment_count)
     );
   ELSIF v_event_type_code = 'CASE_REASSIGNMENT' THEN
+    v_previous_assignment_id := NULLIF(v_old#>>'{details_jsonb,previous_assignment_id}', '')::bigint;
+
     SELECT ca.id, to_jsonb(ca) INTO v_assignment_id, v_assignment_old
     FROM public.case_assignments ca
     WHERE ca.id = v_source_id OR ca.case_event_id = p_case_event_id
@@ -289,6 +291,28 @@ BEGIN
       SELECT to_jsonb(ca) INTO v_assignment_new
       FROM public.case_assignments ca
       WHERE ca.id = v_assignment_id;
+    END IF;
+
+    IF v_previous_assignment_id IS NOT NULL THEN
+      SELECT to_jsonb(ca) INTO v_previous_assignment_old
+      FROM public.case_assignments ca
+      WHERE ca.id = v_previous_assignment_id
+        AND ca.case_id = v_case_id
+      FOR UPDATE;
+
+      IF v_previous_assignment_old IS NOT NULL THEN
+        UPDATE public.case_assignments
+        SET unassigned_at = NULL,
+            unassigned_by_user_id = NULL,
+            unassignment_reason = NULL
+        WHERE id = v_previous_assignment_id
+          AND case_id = v_case_id
+          AND is_voided IS FALSE;
+
+        SELECT to_jsonb(ca) INTO v_previous_assignment_new
+        FROM public.case_assignments ca
+        WHERE ca.id = v_previous_assignment_id;
+      END IF;
     END IF;
 
     SELECT id INTO v_pending_status_id FROM public.case_statuses WHERE code = 'PENDING' AND is_active IS TRUE LIMIT 1;
@@ -329,12 +353,40 @@ BEGIN
       p_voided_by_user_id,
       'case_assignments',
       v_assignment_id,
-      'VOID_CASE_REASSIGNMENT_STAGE_RECOMPUTED',
+      'VOID_CASE_REASSIGNMENT_NEW_ASSIGNMENT',
       v_assignment_old,
-      jsonb_build_object('assignment', v_assignment_new, 'case_private_details', v_new_details),
+      v_assignment_new,
       v_case_id,
-      'Reassignment assignment row voided; case status kept Pending and case stage recomputed.',
-      jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'case_status_id',v_pending_status_id,'case_stage_id',v_target_stage_id,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id,'active_assignment_count',v_active_assignment_count)
+      'Reassignment-created assignment row voided because the Case Reassignment event was voided.',
+      jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'previous_assignment_id',v_previous_assignment_id)
+    );
+
+    IF v_previous_assignment_old IS NOT NULL THEN
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (
+        p_voided_by_user_id,
+        'case_assignments',
+        v_previous_assignment_id,
+        'RESTORE_PREVIOUS_ASSIGNMENT_FROM_REASSIGNMENT_VOID',
+        v_previous_assignment_old,
+        v_previous_assignment_new,
+        v_case_id,
+        'Previous assignment restored because the Case Reassignment event was voided.',
+        jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'voided_assignment_id',v_assignment_id)
+      );
+    END IF;
+
+    INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+    VALUES (
+      p_voided_by_user_id,
+      'case_private_details',
+      v_case_id,
+      'CASE_REASSIGNMENT_VOID_STATUS_STAGE_RECOMPUTED',
+      v_old_details,
+      v_new_details,
+      v_case_id,
+      'Case Reassignment voided; case status kept Pending and case stage recomputed from active assignments.',
+      jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'case_status_id',v_pending_status_id,'case_stage_id',v_target_stage_id,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id,'active_assignment_count',v_active_assignment_count,'restored_assignment_id',v_previous_assignment_id)
     );
   ELSIF lower(coalesce(v_source_table,'')) = 'case_assignments' THEN
     UPDATE public.case_assignments
@@ -372,3 +424,13 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.record_case_reassignment_event(bigint, bigint, date, time without time zone, bigint, text, text, bigint) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.void_case_event(bigint, text, bigint) TO authenticated;
+
+
+-- Verification notes for CASE_REASSIGNMENT void behavior:
+-- 1. Create a case assignment with public.record_case_assignment_event(...).
+-- 2. Reassign the case with public.record_case_reassignment_event(...), capturing the returned CASE_REASSIGNMENT case_events.id.
+-- 3. Confirm the previous assignment row from case_events.details_jsonb->>'previous_assignment_id' has unassigned_at IS NOT NULL.
+-- 4. Void the reassignment event with public.void_case_event(reassignment_event_id, 'verification void', user_id).
+-- 5. Confirm the reassignment-created assignment row linked by case_events.source_id is is_voided IS TRUE.
+-- 6. Confirm the previous assignment row has unassigned_at IS NULL, unassigned_by_user_id IS NULL, and unassignment_reason IS NULL.
+-- 7. Confirm case_private_details.current_case_stage_id joins to case_stages.code = 'CASE_RAFFLED', not 'FOR_RAFFLE'.
