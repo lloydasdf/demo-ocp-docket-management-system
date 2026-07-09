@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict F5kNGEWGe32pvGgBKoEDutj6oMObM8Dn4iRsCGcvgpRGDEMmCdxKc5uSp0ecfac
+\restrict t7blyZqqpaxPa9pImFQQnS3OZKJcXpLd2GvRFQn9O77jrdsEtcm0OE8pH0btyb4
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 18.3
@@ -1627,7 +1627,8 @@ DECLARE
   v_auth_uid uuid := auth.uid(); v_user_id bigint; v_case_id bigint; v_item jsonb; v_sub jsonb; v_contact_id bigint; v_audit_metadata jsonb;
   v_docket_type_id bigint := (p_payload->>'docketTypeId')::bigint; v_docket_year int := (p_payload->>'docketYear')::int; v_date_received date := (p_payload->>'dateReceived')::date; v_initial_status_id bigint := (p_payload->>'initialStatusId')::bigint;
   v_case_classification_id bigint := nullif(p_payload->>'caseClassificationId','')::bigint; v_region_code text := nullif(btrim(p_payload->>'regionCode'), ''); v_month_code text; v_docket_number int; v_display text; v_dt_prefix text;
-  v_person_id bigint; v_org_id bigint; v_name text; v_cp_id bigint; v_address_id bigint; v_violation_id bigint; v_received_event_type_id bigint; v_raffled_event_type_id bigint; v_event_id bigint; v_status_history_id bigint; v_assignment_event_id bigint; v_assignment_id bigint;
+  v_person_id bigint; v_org_id bigint; v_name text; v_cp_id bigint; v_address_id bigint; v_violation_id bigint; v_received_event_type_id bigint; v_raffled_event_type_id bigint; v_event_id bigint; v_status_history_id bigint; v_stage_history_id bigint; v_assignment_event_id bigint; v_assignment_id bigint;
+  v_pending_status_id bigint; v_for_raffle_stage_id bigint; v_case_raffled_stage_id bigint; v_initial_stage_id bigint; v_status_date date := COALESCE(v_date_received, CURRENT_DATE);
   v_assigned_prosecutor_id bigint := CASE WHEN COALESCE((p_payload->>'caseAlsoRaffled')::boolean,false) THEN nullif(p_payload->>'assignedProsecutorId','')::bigint ELSE NULL END; v_assignment_date date := v_date_received; v_assignment_remarks text := CASE WHEN p_payload ? 'assignmentRemarks' THEN nullif(btrim(p_payload->>'assignmentRemarks'),'') ELSE 'Assigned during manual docket creation' END;
   v_case_note_text text := nullif(btrim(p_payload->>'notes'),'');
   v_case_received_description text := COALESCE(nullif(btrim(p_payload->>'caseReceivedDescription'),''), 'Case received on ' || to_char(v_date_received, 'FMMM/FMDD/YYYY'));
@@ -1636,22 +1637,26 @@ BEGIN
   IF v_auth_uid IS NULL THEN RAISE EXCEPTION 'Authenticated Supabase user is required for docket creation'; END IF;
   SELECT id INTO v_user_id FROM public.users WHERE auth_user_id = v_auth_uid AND is_active IS TRUE LIMIT 1;
   IF v_user_id IS NULL THEN RAISE EXCEPTION 'Authenticated user % is not mapped to an active public.users row', v_auth_uid; END IF;
-  IF v_docket_type_id IS NULL OR v_docket_year IS NULL OR v_date_received IS NULL OR v_initial_status_id IS NULL THEN RAISE EXCEPTION 'Missing required case fields'; END IF;
+  IF v_docket_type_id IS NULL OR v_docket_year IS NULL OR v_date_received IS NULL THEN RAISE EXCEPTION 'Missing required case fields'; END IF;
   IF jsonb_array_length(COALESCE(p_payload->'participants','[]'::jsonb)) = 0 THEN RAISE EXCEPTION 'At least one participant is required'; END IF;
   IF jsonb_array_length(COALESCE(p_payload->'violations','[]'::jsonb)) = 0 THEN RAISE EXCEPTION 'At least one violation is required'; END IF;
   SELECT prefix INTO v_dt_prefix FROM public.docket_types WHERE id = v_docket_type_id AND is_active IS TRUE; IF v_dt_prefix IS NULL THEN RAISE EXCEPTION 'Invalid docket type id'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.case_statuses WHERE id = v_initial_status_id) THEN RAISE EXCEPTION 'Invalid initial status id'; END IF;
+  IF v_initial_status_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.case_statuses WHERE id = v_initial_status_id) THEN RAISE EXCEPTION 'Invalid initial status id'; END IF;
   IF v_case_classification_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.case_classifications WHERE id = v_case_classification_id) THEN RAISE EXCEPTION 'Invalid case classification id %', v_case_classification_id; END IF;
   IF COALESCE((p_payload->>'caseAlsoRaffled')::boolean,false) AND v_assigned_prosecutor_id IS NULL THEN RAISE EXCEPTION 'assignedProsecutorId is required when caseAlsoRaffled is true'; END IF;
   IF v_assigned_prosecutor_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.prosecutors WHERE id = v_assigned_prosecutor_id AND is_active IS TRUE) THEN RAISE EXCEPTION 'Invalid assigned prosecutor id %', v_assigned_prosecutor_id; END IF;
   SELECT id INTO v_received_event_type_id FROM public.case_event_types WHERE is_active IS TRUE AND code = 'CASE_RECEIVED' LIMIT 1; IF v_received_event_type_id IS NULL THEN RAISE EXCEPTION 'No active CASE_RECEIVED case event type'; END IF;
   IF v_assigned_prosecutor_id IS NOT NULL THEN SELECT id INTO v_raffled_event_type_id FROM public.case_event_types WHERE is_active IS TRUE AND code = 'CASE_RAFFLED' LIMIT 1; IF v_raffled_event_type_id IS NULL THEN RAISE EXCEPTION 'No active CASE_RAFFLED case event type'; END IF; END IF;
+  SELECT id INTO v_pending_status_id FROM public.case_statuses WHERE code = 'PENDING' AND is_active IS TRUE LIMIT 1; IF v_pending_status_id IS NULL THEN RAISE EXCEPTION 'No active PENDING case status'; END IF;
+  SELECT id INTO v_for_raffle_stage_id FROM public.case_stages WHERE code = 'FOR_RAFFLE' AND is_active IS TRUE LIMIT 1; IF v_for_raffle_stage_id IS NULL THEN RAISE EXCEPTION 'No active FOR_RAFFLE case stage'; END IF;
+  SELECT id INTO v_case_raffled_stage_id FROM public.case_stages WHERE code = 'CASE_RAFFLED' AND is_active IS TRUE LIMIT 1; IF v_case_raffled_stage_id IS NULL THEN RAISE EXCEPTION 'No active CASE_RAFFLED case stage'; END IF;
+  v_initial_stage_id := CASE WHEN v_assigned_prosecutor_id IS NOT NULL THEN v_case_raffled_stage_id ELSE v_for_raffle_stage_id END;
 
   PERFORM pg_advisory_xact_lock(v_docket_type_id::int, v_docket_year);
   SELECT COALESCE(MAX(docket_number),0)+1 INTO v_docket_number FROM public.cases WHERE docket_type_id = v_docket_type_id AND docket_year = v_docket_year;
   v_month_code := upper(COALESCE(nullif(btrim(p_payload->>'docketMonthCode'),''), chr(64 + extract(month from v_date_received)::int))); IF v_month_code !~ '^[A-L]$' THEN RAISE EXCEPTION 'Invalid docket month code %', v_month_code; END IF; v_display := concat_ws('-', v_region_code, v_dt_prefix, right(v_docket_year::text,2)||v_month_code, lpad(v_docket_number::text,6,'0'));
   INSERT INTO public.cases(docket_type_id,docket_year,docket_number,date_received,created_by_user_id,updated_by_user_id,is_archived,region_code,docket_month_code,case_classification_id) VALUES (v_docket_type_id,v_docket_year,v_docket_number,v_date_received,v_user_id,v_user_id,false,v_region_code,v_month_code,v_case_classification_id) RETURNING id INTO v_case_id;
-  INSERT INTO public.case_private_details(case_id,source,remarks,is_summary_procedure,summary_text,current_status_id,current_status_date) VALUES (v_case_id,'MANUAL_ENTRY',nullif(btrim(p_payload->>'remarks'),''),COALESCE((p_payload->>'isSummaryProcedure')::boolean,false),nullif(btrim(p_payload->>'summaryText'),''),v_initial_status_id,v_date_received);
+  INSERT INTO public.case_private_details(case_id,source,remarks,is_summary_procedure,summary_text,current_status_id,current_status_date,current_case_status_id,current_case_status_date,current_case_stage_id,current_case_stage_date) VALUES (v_case_id,'MANUAL_ENTRY',nullif(btrim(p_payload->>'remarks'),''),COALESCE((p_payload->>'isSummaryProcedure')::boolean,false),nullif(btrim(p_payload->>'summaryText'),''),v_pending_status_id,v_status_date,v_pending_status_id,v_status_date,v_initial_stage_id,v_status_date);
   INSERT INTO public.docket_number_history(case_id,docket_type_id,docket_year,docket_number,docket_display_number,event_type,changed_by_user_id,changed_at,reason) VALUES (v_case_id,v_docket_type_id,v_docket_year,v_docket_number,v_display,'ASSIGNED',v_user_id,now(),'Manual docket creation');
   IF v_case_note_text IS NOT NULL THEN INSERT INTO public.notes(case_id,created_by_user_id,note_text,is_private) VALUES (v_case_id,v_user_id,v_case_note_text,false); END IF;
 
@@ -1703,23 +1708,36 @@ BEGIN
     INSERT INTO public.case_violations(case_id,violation_id,violation_order,raw_violation_text) VALUES (v_case_id,v_violation_id,COALESCE((v_item->>'violationOrder')::int,v_violation_count+1),nullif(btrim(v_item->>'rawViolationText'),'')); v_violation_count:=v_violation_count+1;
   END LOOP;
 
-  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_order,title,description,status_id,source,source_table,created_by_user_id,updated_by_user_id) VALUES (v_case_id,v_received_event_type_id,v_date_received,1,'Case received',v_case_received_description,v_initial_status_id,'MANUAL_ENTRY','case_status_history',v_user_id,v_user_id) RETURNING id INTO v_event_id;
-  INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (v_case_id,NULL,v_initial_status_id,v_user_id,now(),v_date_received,v_case_received_description,v_event_id) RETURNING id INTO v_status_history_id;
+  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_order,title,description,status_id,case_status_id,case_stage_id,source,source_table,created_by_user_id,updated_by_user_id) VALUES (v_case_id,v_received_event_type_id,v_status_date,1,'Case received',v_case_received_description,v_pending_status_id,v_pending_status_id,v_initial_stage_id,'MANUAL_ENTRY','case_status_history',v_user_id,v_user_id) RETURNING id INTO v_event_id;
+  INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (v_case_id,NULL,v_pending_status_id,v_user_id,now(),v_status_date,v_case_received_description,v_event_id) RETURNING id INTO v_status_history_id;
+  INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id) VALUES (v_case_id,NULL,v_initial_stage_id,v_user_id,now(),v_status_date,v_case_received_description,v_event_id) RETURNING id INTO v_stage_history_id;
   UPDATE public.case_events SET source_id = v_status_history_id WHERE id = v_event_id;
-  IF v_assigned_prosecutor_id IS NOT NULL THEN INSERT INTO public.case_assignments(case_id,prosecutor_id,assigned_by_user_id,assigned_at,remarks) VALUES (v_case_id,v_assigned_prosecutor_id,v_user_id,v_assignment_date::timestamp with time zone,v_assignment_remarks) RETURNING id INTO v_assignment_id; INSERT INTO public.case_events(case_id,event_type_id,event_date,event_order,title,description,prosecutor_id,source,source_table,source_id,created_by_user_id,updated_by_user_id) VALUES (v_case_id,v_raffled_event_type_id,v_assignment_date,2,'Case raffled',v_assignment_remarks,v_assigned_prosecutor_id,'MANUAL_ENTRY','case_assignments',v_assignment_id,v_user_id,v_user_id) RETURNING id INTO v_assignment_event_id; UPDATE public.case_assignments SET case_event_id = v_assignment_event_id WHERE id = v_assignment_id; END IF;
+  IF v_assigned_prosecutor_id IS NOT NULL THEN INSERT INTO public.case_assignments(case_id,prosecutor_id,assigned_by_user_id,assigned_at,remarks) VALUES (v_case_id,v_assigned_prosecutor_id,v_user_id,v_assignment_date::timestamp with time zone,v_assignment_remarks) RETURNING id INTO v_assignment_id; INSERT INTO public.case_events(case_id,event_type_id,event_date,event_order,title,description,status_id,case_status_id,case_stage_id,prosecutor_id,source,source_table,source_id,created_by_user_id,updated_by_user_id) VALUES (v_case_id,v_raffled_event_type_id,v_status_date,2,'Case raffled',v_assignment_remarks,v_pending_status_id,v_pending_status_id,v_case_raffled_stage_id,v_assigned_prosecutor_id,'MANUAL_ENTRY','case_assignments',v_assignment_id,v_user_id,v_user_id) RETURNING id INTO v_assignment_event_id; UPDATE public.case_assignments SET case_event_id = v_assignment_event_id WHERE id = v_assignment_id; END IF;
 
   v_audit_metadata := jsonb_build_object(
     'payload', p_payload,
+    'case_status_stage_split', jsonb_build_object(
+      'current_case_status_id', v_pending_status_id,
+      'current_case_stage_id', v_initial_stage_id,
+      'case_received_event_id', v_event_id,
+      'case_received_event_case_status_id', v_pending_status_id,
+      'case_received_event_case_stage_id', v_initial_stage_id,
+      'assignment_event_id', v_assignment_event_id,
+      'assignment_event_case_status_id', CASE WHEN v_assignment_event_id IS NULL THEN NULL ELSE v_pending_status_id END,
+      'assignment_event_case_stage_id', CASE WHEN v_assignment_event_id IS NULL THEN NULL ELSE v_case_raffled_stage_id END,
+      'case_stage_history_id', v_stage_history_id
+    ),
     'inserted', jsonb_build_object(
       'cases', jsonb_build_object('id', v_case_id, 'columns', jsonb_build_array('docket_type_id','docket_year','docket_number','date_received','created_by_user_id','updated_by_user_id','is_archived','region_code','docket_month_code','case_classification_id')),
-      'case_private_details', jsonb_build_object('columns', jsonb_build_array('case_id','source','remarks','is_summary_procedure','summary_text','current_status_id','current_status_date')),
+      'case_private_details', jsonb_build_object('columns', jsonb_build_array('case_id','source','remarks','is_summary_procedure','summary_text','current_status_id','current_status_date','current_case_status_id','current_case_status_date','current_case_stage_id','current_case_stage_date')),
       'notes', CASE WHEN v_case_note_text IS NULL THEN NULL ELSE jsonb_build_object('columns', jsonb_build_array('case_id','created_by_user_id','note_text','is_private')) END,
       'docket_number_history', jsonb_build_object('columns', jsonb_build_array('case_id','docket_type_id','docket_year','docket_number','docket_display_number','event_type','changed_by_user_id','changed_at','reason')),
       'case_participants', jsonb_build_object('count', v_participant_count, 'columns', jsonb_build_array('case_id','person_id','organization_id','role_id','participant_order','participant_kind','display_name_snapshot')),
       'case_addresses', jsonb_build_object('columns', jsonb_build_array('case_id','address_id','address_type_id','is_primary','remarks')),
       'case_violations', jsonb_build_object('count', v_violation_count, 'columns', jsonb_build_array('case_id','violation_id','violation_order','raw_violation_text')),
-      'case_events', jsonb_build_object('columns', jsonb_build_array('case_id','event_type_id','event_date','event_order','title','description','status_id','prosecutor_id','source','source_table','source_id','created_by_user_id','updated_by_user_id')),
+      'case_events', jsonb_build_object('columns', jsonb_build_array('case_id','event_type_id','event_date','event_order','title','description','status_id','case_status_id','case_stage_id','prosecutor_id','source','source_table','source_id','created_by_user_id','updated_by_user_id')),
       'case_status_history', jsonb_build_object('id', v_status_history_id, 'columns', jsonb_build_array('case_id','from_status_id','to_status_id','changed_by_user_id','changed_at','status_date','remarks','case_event_id')),
+      'case_stage_history', jsonb_build_object('id', v_stage_history_id, 'columns', jsonb_build_array('case_id','from_stage_id','to_stage_id','changed_by_user_id','changed_at','stage_date','remarks','case_event_id')),
       'case_assignments', CASE WHEN v_assignment_id IS NULL THEN NULL ELSE jsonb_build_object('id', v_assignment_id, 'columns', jsonb_build_array('case_id','prosecutor_id','assigned_by_user_id','assigned_at','remarks','case_event_id')) END,
       'persons', jsonb_build_object('createdCount', v_created_persons, 'reusedCount', v_reused_persons),
       'addresses', jsonb_build_object('createdCount', v_created_addresses, 'reusedCount', v_reused_addresses),
@@ -7252,10 +7270,14 @@ CREATE FUNCTION public.record_case_assignment_event(p_case_id bigint, p_prosecut
 DECLARE
   v_event_type_id bigint;
   v_pending_status_id bigint;
+  v_case_raffled_stage_id bigint;
   v_event_id bigint;
   v_assignment_id bigint;
   v_status_history_id bigint;
+  v_stage_history_id bigint;
   v_previous_status_id bigint;
+  v_previous_case_status_id bigint;
+  v_previous_stage_id bigint;
   v_assigned_at timestamptz;
   v_prosecutor_name text;
   v_staff_name text;
@@ -7277,13 +7299,23 @@ BEGIN
 
   SELECT id INTO v_pending_status_id
   FROM public.case_statuses
-  WHERE (lower(code) = 'pending' OR lower(display_label) = 'pending') AND is_active IS TRUE
+  WHERE code = 'PENDING' AND is_active IS TRUE
   LIMIT 1;
 
   IF v_pending_status_id IS NULL THEN
     INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active)
     VALUES ('PENDING', 'Pending', 20, false, false, true)
+    ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, is_final = false, is_milestone = false, is_active = true
     RETURNING id INTO v_pending_status_id;
+  END IF;
+
+  SELECT id INTO v_case_raffled_stage_id
+  FROM public.case_stages
+  WHERE code = 'CASE_RAFFLED' AND is_active IS TRUE
+  LIMIT 1;
+
+  IF v_case_raffled_stage_id IS NULL THEN
+    RAISE EXCEPTION 'Missing active case stage CASE_RAFFLED';
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN
@@ -7298,8 +7330,8 @@ BEGIN
     RAISE EXCEPTION 'Unknown staff id %', p_staff_id;
   END IF;
 
-  SELECT cpd.current_status_id, to_jsonb(cpd)
-  INTO v_previous_status_id, v_old_details
+  SELECT cpd.current_status_id, cpd.current_case_status_id, cpd.current_case_stage_id, to_jsonb(cpd)
+  INTO v_previous_status_id, v_previous_case_status_id, v_previous_stage_id, v_old_details
   FROM public.case_private_details cpd
   WHERE cpd.case_id = p_case_id;
 
@@ -7325,6 +7357,7 @@ BEGIN
 
   INSERT INTO public.case_events (
     case_id, event_type_id, event_date, event_time, title, description,
+    status_id, case_status_id, case_stage_id,
     prosecutor_id, staff_id, details_jsonb, source, created_by_user_id, updated_by_user_id
   ) VALUES (
     p_case_id,
@@ -7333,6 +7366,9 @@ BEGIN
     p_assignment_time,
     'Case Assignment',
     'Assigned to Prosec ' || COALESCE(v_prosecutor_name, p_prosecutor_id::text) || ' on ' || to_char(p_assignment_date, 'Mon DD, YYYY'),
+    v_pending_status_id,
+    v_pending_status_id,
+    v_case_raffled_stage_id,
     p_prosecutor_id,
     p_staff_id,
     jsonb_build_object(
@@ -7342,7 +7378,9 @@ BEGIN
       'staff_id', p_staff_id,
       'staff_name', v_staff_name,
       'remarks', NULLIF(btrim(COALESCE(p_remarks, '')), ''),
-      'automatic_status', 'Pending'
+      'automatic_status', 'Pending',
+      'automatic_case_status', 'Pending',
+      'automatic_case_stage', 'Case Raffled'
     ),
     'MANUAL_ENTRY', p_user_id, p_user_id
   ) RETURNING id INTO v_event_id;
@@ -7359,20 +7397,55 @@ BEGIN
     case_id, from_status_id, to_status_id, changed_by_user_id, changed_at, status_date, remarks, case_event_id
   ) VALUES (
     p_case_id,
-    v_previous_status_id,
+    COALESCE(v_previous_case_status_id, v_previous_status_id),
     v_pending_status_id,
     p_user_id,
     now(),
     p_assignment_date,
-    'Automatically generated by Case Assignment event; internal history record only.',
+    'Case Assignment recorded. Broad case status set to Pending.',
     v_event_id
   ) RETURNING id INTO v_status_history_id;
 
-  INSERT INTO public.case_private_details (case_id, current_status_id, current_status_date, updated_at)
-  VALUES (p_case_id, v_pending_status_id, p_assignment_date, now())
+  INSERT INTO public.case_stage_history (
+    case_id, from_stage_id, to_stage_id, changed_by_user_id, changed_at, stage_date, remarks, case_event_id
+  ) VALUES (
+    p_case_id,
+    v_previous_stage_id,
+    v_case_raffled_stage_id,
+    p_user_id,
+    now(),
+    p_assignment_date,
+    'Case Assignment recorded. Workflow stage set to Case Raffled.',
+    v_event_id
+  ) RETURNING id INTO v_stage_history_id;
+
+  INSERT INTO public.case_private_details (
+    case_id,
+    current_status_id,
+    current_status_date,
+    current_case_status_id,
+    current_case_status_date,
+    current_case_stage_id,
+    current_case_stage_date,
+    updated_at
+  )
+  VALUES (
+    p_case_id,
+    v_pending_status_id,
+    p_assignment_date,
+    v_pending_status_id,
+    p_assignment_date,
+    v_case_raffled_stage_id,
+    p_assignment_date,
+    now()
+  )
   ON CONFLICT (case_id) DO UPDATE SET
     current_status_id = EXCLUDED.current_status_id,
     current_status_date = EXCLUDED.current_status_date,
+    current_case_status_id = EXCLUDED.current_case_status_id,
+    current_case_status_date = EXCLUDED.current_case_status_date,
+    current_case_stage_id = EXCLUDED.current_case_stage_id,
+    current_case_stage_date = EXCLUDED.current_case_stage_date,
     updated_at = now();
 
   SELECT to_jsonb(cpd) INTO v_new_details
@@ -7384,12 +7457,20 @@ BEGIN
     p_user_id,
     'case_assignments',
     v_assignment_id,
-    'CASE_ASSIGNED_PENDING_STATUS',
+    'CASE_ASSIGNED_CASE_RAFFLED_STAGE',
     v_old_details,
     v_new_details,
     p_case_id,
-    'Case assigned to ' || COALESCE(v_prosecutor_name, 'selected prosecutor') || '; current status automatically changed to Pending; status history record created automatically.',
-    jsonb_build_object('case_event_id', v_event_id, 'assignment_id', v_assignment_id, 'status_id', v_pending_status_id, 'status_history_id', v_status_history_id)
+    'Case assigned to ' || COALESCE(v_prosecutor_name, 'selected prosecutor') || '; case status set to Pending and case stage set to Case Raffled.',
+    jsonb_build_object(
+      'case_event_id', v_event_id,
+      'assignment_id', v_assignment_id,
+      'status_id', v_pending_status_id,
+      'case_status_id', v_pending_status_id,
+      'case_stage_id', v_case_raffled_stage_id,
+      'status_history_id', v_status_history_id,
+      'case_stage_history_id', v_stage_history_id
+    )
   );
 
   RETURN v_event_id;
@@ -7613,6 +7694,8 @@ CREATE FUNCTION public.record_case_reassignment_event(p_case_id bigint, p_new_pr
     AS $$
 DECLARE
   v_event_type_id bigint;
+  v_pending_status_id bigint;
+  v_case_reassigned_stage_id bigint;
   v_event_id bigint;
   v_previous_assignment_id bigint;
   v_previous_prosecutor_id bigint;
@@ -7621,6 +7704,13 @@ DECLARE
   v_previous_assignment_new jsonb;
   v_new_assignment_id bigint;
   v_new_assignment_new jsonb;
+  v_status_history_id bigint;
+  v_stage_history_id bigint;
+  v_previous_status_id bigint;
+  v_previous_case_status_id bigint;
+  v_previous_stage_id bigint;
+  v_old_details jsonb;
+  v_new_details jsonb;
   v_reassigned_at timestamptz;
   v_previous_prosecutor_name text;
   v_new_prosecutor_name text;
@@ -7633,61 +7723,44 @@ BEGIN
   IF p_reassignment_date IS NULL THEN RAISE EXCEPTION 'Reassignment date is required'; END IF;
   IF v_reason IS NULL THEN RAISE EXCEPTION 'Reason is required'; END IF;
 
-  SELECT id INTO v_event_type_id
-  FROM public.case_event_types
-  WHERE code = 'CASE_REASSIGNMENT' AND is_active IS TRUE
-  LIMIT 1;
+  SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code = 'CASE_REASSIGNMENT' AND is_active IS TRUE LIMIT 1;
+  IF v_event_type_id IS NULL THEN RAISE EXCEPTION 'Missing active case event type CASE_REASSIGNMENT'; END IF;
 
-  IF v_event_type_id IS NULL THEN
-    RAISE EXCEPTION 'Missing active case event type CASE_REASSIGNMENT';
-  END IF;
+  SELECT id INTO v_pending_status_id FROM public.case_statuses WHERE code = 'PENDING' AND is_active IS TRUE LIMIT 1;
+  IF v_pending_status_id IS NULL THEN RAISE EXCEPTION 'Missing active case status PENDING'; END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN
-    RAISE EXCEPTION 'Unknown case id %', p_case_id;
-  END IF;
+  SELECT id INTO v_case_reassigned_stage_id FROM public.case_stages WHERE code = 'CASE_REASSIGNED' AND is_active IS TRUE LIMIT 1;
+  IF v_case_reassigned_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage CASE_REASSIGNED'; END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM public.prosecutors WHERE id = p_new_prosecutor_id) THEN
-    RAISE EXCEPTION 'Unknown prosecutor id %', p_new_prosecutor_id;
-  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN RAISE EXCEPTION 'Unknown case id %', p_case_id; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.prosecutors WHERE id = p_new_prosecutor_id) THEN RAISE EXCEPTION 'Unknown prosecutor id %', p_new_prosecutor_id; END IF;
+  IF p_new_staff_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.staff WHERE id = p_new_staff_id) THEN RAISE EXCEPTION 'Unknown staff id %', p_new_staff_id; END IF;
 
-  IF p_new_staff_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.staff WHERE id = p_new_staff_id) THEN
-    RAISE EXCEPTION 'Unknown staff id %', p_new_staff_id;
-  END IF;
+  SELECT cpd.current_status_id, cpd.current_case_status_id, cpd.current_case_stage_id, to_jsonb(cpd)
+  INTO v_previous_status_id, v_previous_case_status_id, v_previous_stage_id, v_old_details
+  FROM public.case_private_details cpd WHERE cpd.case_id = p_case_id;
 
   SELECT ca.id, ca.prosecutor_id, ca.staff_id, to_jsonb(ca), COALESCE(p.short_name, p.full_name)
   INTO v_previous_assignment_id, v_previous_prosecutor_id, v_previous_staff_id, v_previous_assignment_old, v_previous_prosecutor_name
   FROM public.case_assignments ca
   LEFT JOIN public.prosecutors p ON p.id = ca.prosecutor_id
-  WHERE ca.case_id = p_case_id
-    AND ca.unassigned_at IS NULL
-    AND ca.is_voided IS FALSE
+  WHERE ca.case_id = p_case_id AND ca.unassigned_at IS NULL AND ca.is_voided IS FALSE
   ORDER BY ca.assigned_at DESC NULLS LAST, ca.id DESC
   LIMIT 1
   FOR UPDATE OF ca;
 
-  IF v_previous_assignment_id IS NULL THEN
-    RAISE EXCEPTION 'This case has no active assignment to reassign.';
-  END IF;
+  IF v_previous_assignment_id IS NULL THEN RAISE EXCEPTION 'This case has no active assignment to reassign.'; END IF;
 
   v_reassigned_at := (p_reassignment_date::timestamp + COALESCE(p_reassignment_time, '00:00'::time))::timestamptz;
 
-  SELECT COALESCE(short_name, full_name) INTO v_new_prosecutor_name
-  FROM public.prosecutors
-  WHERE id = p_new_prosecutor_id;
-
-  SELECT COALESCE(short_name, full_name) INTO v_staff_name
-  FROM public.staff
-  WHERE id = p_new_staff_id;
+  SELECT COALESCE(short_name, full_name) INTO v_new_prosecutor_name FROM public.prosecutors WHERE id = p_new_prosecutor_id;
+  SELECT COALESCE(short_name, full_name) INTO v_staff_name FROM public.staff WHERE id = p_new_staff_id;
 
   UPDATE public.case_assignments
-  SET unassigned_at = v_reassigned_at,
-      unassigned_by_user_id = p_user_id,
-      unassignment_reason = v_reason
+  SET unassigned_at = v_reassigned_at, unassigned_by_user_id = p_user_id, unassignment_reason = v_reason
   WHERE id = v_previous_assignment_id;
 
-  SELECT to_jsonb(ca) INTO v_previous_assignment_new
-  FROM public.case_assignments ca
-  WHERE ca.id = v_previous_assignment_id;
+  SELECT to_jsonb(ca) INTO v_previous_assignment_new FROM public.case_assignments ca WHERE ca.id = v_previous_assignment_id;
 
   INSERT INTO public.case_assignments (case_id, prosecutor_id, staff_id, assigned_by_user_id, assigned_at, remarks)
   VALUES (p_case_id, p_new_prosecutor_id, p_new_staff_id, p_user_id, v_reassigned_at, v_remarks)
@@ -7695,17 +7768,15 @@ BEGIN
 
   INSERT INTO public.case_events (
     case_id, event_type_id, event_date, event_time, title, description,
+    status_id, case_status_id, case_stage_id,
     prosecutor_id, staff_id, details_jsonb, source, source_table, source_id,
     created_by_user_id, updated_by_user_id
   ) VALUES (
-    p_case_id,
-    v_event_type_id,
-    p_reassignment_date,
-    p_reassignment_time,
+    p_case_id, v_event_type_id, p_reassignment_date, p_reassignment_time,
     'Case Reassignment',
-    'Reassigned to Prosec ' || COALESCE(v_new_prosecutor_name, p_new_prosecutor_id::text) || ' on ' || to_char(p_reassignment_date, 'Mon FMDD, YYYY'),
-    p_new_prosecutor_id,
-    p_new_staff_id,
+    'Reassigned from Prosec ' || COALESCE(v_previous_prosecutor_name, v_previous_prosecutor_id::text) || ' to Prosec ' || COALESCE(v_new_prosecutor_name, p_new_prosecutor_id::text) || ' on ' || to_char(p_reassignment_date, 'Mon FMDD, YYYY'),
+    v_pending_status_id, v_pending_status_id, v_case_reassigned_stage_id,
+    p_new_prosecutor_id, p_new_staff_id,
     jsonb_build_object(
       'action', 'case_reassignment',
       'previous_assignment_id', v_previous_assignment_id,
@@ -7716,28 +7787,37 @@ BEGIN
       'new_prosecutor_name', v_new_prosecutor_name,
       'staff_id', p_new_staff_id,
       'staff_name', v_staff_name,
+      'reassignment_date', p_reassignment_date,
+      'reassignment_time', p_reassignment_time,
       'reason', v_reason,
-      'remarks', v_remarks
+      'remarks', v_remarks,
+      'automatic_case_status', 'Pending',
+      'automatic_case_stage', 'Case Reassigned'
     ),
-    'MANUAL_ENTRY',
-    'case_assignments',
-    v_new_assignment_id,
-    p_user_id,
-    p_user_id
+    'MANUAL_ENTRY', 'case_assignments', v_new_assignment_id, p_user_id, p_user_id
   ) RETURNING id INTO v_event_id;
 
-  UPDATE public.case_assignments
-  SET case_event_id = v_event_id
-  WHERE id = v_new_assignment_id;
+  UPDATE public.case_assignments SET case_event_id = v_event_id WHERE id = v_new_assignment_id;
 
-  SELECT to_jsonb(ca) INTO v_new_assignment_new
-  FROM public.case_assignments ca
-  WHERE ca.id = v_new_assignment_id;
+  INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id)
+  VALUES (p_case_id,COALESCE(v_previous_case_status_id, v_previous_status_id),v_pending_status_id,p_user_id,now(),p_reassignment_date,v_remarks,v_event_id)
+  RETURNING id INTO v_status_history_id;
+
+  INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id)
+  VALUES (p_case_id,v_previous_stage_id,v_case_reassigned_stage_id,p_user_id,now(),p_reassignment_date,v_remarks,v_event_id)
+  RETURNING id INTO v_stage_history_id;
+
+  INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_case_status_id,current_case_status_date,current_case_stage_id,current_case_stage_date,updated_at)
+  VALUES (p_case_id,v_pending_status_id,p_reassignment_date,v_pending_status_id,p_reassignment_date,v_case_reassigned_stage_id,p_reassignment_date,now())
+  ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,current_case_stage_id=EXCLUDED.current_case_stage_id,current_case_stage_date=EXCLUDED.current_case_stage_date,current_case_status_remarks=NULL,current_case_stage_remarks=NULL,updated_at=now();
+
+  SELECT to_jsonb(ca) INTO v_new_assignment_new FROM public.case_assignments ca WHERE ca.id = v_new_assignment_id;
+  SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE cpd.case_id = p_case_id;
 
   INSERT INTO public.audit_logs (actor_user_id, entity_name, entity_id, action, old_data, new_data, case_id, summary, metadata)
   VALUES
     (p_user_id, 'case_assignments', v_previous_assignment_id, 'CASE_REASSIGNMENT_OLD_ASSIGNMENT_CLOSED', v_previous_assignment_old, v_previous_assignment_new, p_case_id, 'Closed old assignment during case reassignment.', jsonb_build_object('case_event_id', v_event_id, 'reason', v_reason, 'new_assignment_id', v_new_assignment_id)),
-    (p_user_id, 'case_assignments', v_new_assignment_id, 'CASE_REASSIGNMENT_NEW_ASSIGNMENT_CREATED', NULL, v_new_assignment_new, p_case_id, 'Created new assignment during case reassignment.', jsonb_build_object('case_event_id', v_event_id, 'reason', v_reason, 'previous_assignment_id', v_previous_assignment_id));
+    (p_user_id, 'case_assignments', v_new_assignment_id, 'CASE_REASSIGNMENT_NEW_ASSIGNMENT_CREATED', NULL, v_new_assignment_new, p_case_id, 'Created new assignment during case reassignment.', jsonb_build_object('case_event_id', v_event_id, 'reason', v_reason, 'previous_assignment_id', v_previous_assignment_id, 'case_status_id', v_pending_status_id, 'case_stage_id', v_case_reassigned_stage_id, 'status_history_id', v_status_history_id, 'case_stage_history_id', v_stage_history_id, 'case_private_details', v_new_details));
 
   RETURN v_event_id;
 END;
@@ -8780,6 +8860,7 @@ DECLARE
   v_old jsonb; v_new jsonb; v_case_id bigint; v_event_type_code text; v_source_table text; v_source_id bigint;
   v_filing_id bigint; v_filing_old jsonb; v_filing_new jsonb; v_approval_id bigint; v_resolution_id bigint;
   v_status_code text; v_status_label text; v_status_id bigint; v_prev_status_id bigint; v_status_history_id bigint; v_old_details jsonb; v_new_details jsonb;
+  v_assignment_id bigint; v_assignment_old jsonb; v_assignment_new jsonb; v_previous_assignment_id bigint; v_previous_assignment_old jsonb; v_previous_assignment_new jsonb; v_prev_case_status_id bigint; v_prev_stage_id bigint; v_pending_status_id bigint; v_for_raffle_stage_id bigint; v_case_raffled_stage_id bigint; v_case_reassigned_stage_id bigint; v_target_stage_id bigint; v_active_assignment_count integer; v_stage_history_id bigint;
 BEGIN
   IF nullif(trim(p_void_reason), '') IS NULL THEN RAISE EXCEPTION 'Void reason is required'; END IF;
   SELECT to_jsonb(ce), ce.case_id, cet.code, ce.source_table, ce.source_id INTO v_old, v_case_id, v_event_type_code, v_source_table, v_source_id
@@ -8799,7 +8880,7 @@ BEGIN
     END IF;
   END IF;
 
-  SELECT current_status_id, to_jsonb(cpd) INTO v_prev_status_id, v_old_details FROM public.case_private_details cpd WHERE cpd.case_id = v_case_id;
+  SELECT current_status_id, current_case_status_id, current_case_stage_id, to_jsonb(cpd) INTO v_prev_status_id, v_prev_case_status_id, v_prev_stage_id, v_old_details FROM public.case_private_details cpd WHERE cpd.case_id = v_case_id;
   UPDATE public.case_events SET is_voided = true, void_reason = p_void_reason, voided_at = now(), voided_by_user_id = p_voided_by_user_id, updated_by_user_id = p_voided_by_user_id, updated_at = now() WHERE id = p_case_event_id;
   SELECT to_jsonb(ce) INTO v_new FROM public.case_events ce WHERE ce.id = p_case_event_id;
   INSERT INTO public.audit_logs(actor_user_id, entity_name, entity_id, action, old_data, new_data, case_id, summary, metadata) VALUES (p_voided_by_user_id, 'case_events', p_case_event_id, 'VOID_CASE_EVENT', v_old, v_new, v_case_id, 'Voided case timeline activity', jsonb_build_object('reason', p_void_reason));
@@ -8812,15 +8893,191 @@ BEGIN
       SELECT status_code, status_label INTO v_status_code, v_status_label FROM public.recompute_case_status_after_court_filing(v_case_id) LIMIT 1;
       IF v_status_code IS NOT NULL THEN
         INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'RESO_FOR_APPROVAL' THEN 80 WHEN 'FOR_FILING' THEN 90 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
-        INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,updated_at) VALUES (v_case_id,v_status_id,CURRENT_DATE,'Court filing voided. Status recomputed.',now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,updated_at=now();
-        IF v_prev_status_id IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (v_case_id,v_prev_status_id,v_status_id,p_voided_by_user_id,now(),CURRENT_DATE,'Court filing voided. Status recomputed.',p_case_event_id) RETURNING id INTO v_status_history_id; END IF;
+        INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_case_status_id,current_case_status_date,updated_at) VALUES (v_case_id,v_status_id,CURRENT_DATE,v_status_id,CURRENT_DATE,now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,updated_at=now();
+        IF COALESCE(v_prev_case_status_id, v_prev_status_id) IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (v_case_id,COALESCE(v_prev_case_status_id, v_prev_status_id),v_status_id,p_voided_by_user_id,now(),CURRENT_DATE,'Court filing voided. Status recomputed.',p_case_event_id) RETURNING id INTO v_status_history_id; END IF;
         SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE cpd.case_id = v_case_id;
       END IF;
       INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES (p_voided_by_user_id,'case_court_filings',v_filing_id,'VOID_COURT_FILING_FROM_EVENT',v_filing_old,jsonb_build_object('court_filing',v_filing_new,'case_private_details',v_new_details),v_case_id,'Court filing voided and case status recomputed.',jsonb_build_object('case_event_id',p_case_event_id,'status_history_id',v_status_history_id,'reason',p_void_reason,'recomputed_status_code',v_status_code));
     END IF;
   END IF;
 
-  IF lower(coalesce(v_source_table,'')) = 'case_assignments' OR v_event_type_code IN ('CASE_ASSIGNMENT','CASE_REASSIGNMENT') THEN
+  IF v_event_type_code = 'CASE_ASSIGNMENT' THEN
+    SELECT ca.id, to_jsonb(ca) INTO v_assignment_id, v_assignment_old
+    FROM public.case_assignments ca
+    WHERE ca.id = v_source_id OR ca.case_event_id = p_case_event_id
+    ORDER BY CASE WHEN ca.id = v_source_id THEN 0 ELSE 1 END
+    LIMIT 1;
+
+    IF v_assignment_id IS NOT NULL THEN
+      UPDATE public.case_assignments
+      SET is_voided = true, voided_at = now(), voided_by_user_id = p_voided_by_user_id, void_reason = p_void_reason, unassigned_at = COALESCE(unassigned_at, now())
+      WHERE id = v_assignment_id;
+
+      SELECT to_jsonb(ca) INTO v_assignment_new
+      FROM public.case_assignments ca
+      WHERE ca.id = v_assignment_id;
+    END IF;
+
+    SELECT id INTO v_pending_status_id FROM public.case_statuses WHERE code = 'PENDING' AND is_active IS TRUE LIMIT 1;
+    SELECT id INTO v_for_raffle_stage_id FROM public.case_stages WHERE code = 'FOR_RAFFLE' AND is_active IS TRUE LIMIT 1;
+    SELECT id INTO v_case_raffled_stage_id FROM public.case_stages WHERE code = 'CASE_RAFFLED' AND is_active IS TRUE LIMIT 1;
+    IF v_pending_status_id IS NULL THEN RAISE EXCEPTION 'Missing active case status PENDING'; END IF;
+    IF v_for_raffle_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage FOR_RAFFLE'; END IF;
+    IF v_case_raffled_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage CASE_RAFFLED'; END IF;
+
+    SELECT count(*) INTO v_active_assignment_count
+    FROM public.case_assignments ca
+    WHERE ca.case_id = v_case_id
+      AND ca.unassigned_at IS NULL
+      AND ca.is_voided IS FALSE;
+
+    v_target_stage_id := CASE WHEN COALESCE(v_active_assignment_count, 0) > 0 THEN v_case_raffled_stage_id ELSE v_for_raffle_stage_id END;
+
+    INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_case_status_id,current_case_status_date,current_case_stage_id,current_case_stage_date,updated_at)
+    VALUES (v_case_id,v_pending_status_id,CURRENT_DATE,v_pending_status_id,CURRENT_DATE,v_target_stage_id,CURRENT_DATE,now())
+    ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=NULL,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,current_case_status_remarks=NULL,current_case_stage_id=EXCLUDED.current_case_stage_id,current_case_stage_date=EXCLUDED.current_case_stage_date,current_case_stage_remarks=NULL,updated_at=now();
+
+    IF COALESCE(v_prev_case_status_id, v_prev_status_id) IS DISTINCT FROM v_pending_status_id THEN
+      INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id)
+      VALUES (v_case_id,COALESCE(v_prev_case_status_id, v_prev_status_id),v_pending_status_id,p_voided_by_user_id,now(),CURRENT_DATE,'Case Assignment voided. Broad case status remains Pending.',p_case_event_id)
+      RETURNING id INTO v_status_history_id;
+    END IF;
+
+    IF v_prev_stage_id IS DISTINCT FROM v_target_stage_id THEN
+      INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id)
+      VALUES (v_case_id,v_prev_stage_id,v_target_stage_id,p_voided_by_user_id,now(),CURRENT_DATE,'Case Assignment voided. Workflow stage recomputed.',p_case_event_id)
+      RETURNING id INTO v_stage_history_id;
+    END IF;
+
+    SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE cpd.case_id = v_case_id;
+
+    INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+    VALUES (
+      p_voided_by_user_id,
+      'case_assignments',
+      v_assignment_id,
+      'VOID_CASE_ASSIGNMENT_STAGE_RECOMPUTED',
+      v_assignment_old,
+      jsonb_build_object('assignment', v_assignment_new, 'case_private_details', v_new_details),
+      v_case_id,
+      'Assignment row voided; case status kept Pending and case stage recomputed.',
+      jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'case_status_id',v_pending_status_id,'case_stage_id',v_target_stage_id,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id,'active_assignment_count',v_active_assignment_count)
+    );
+  ELSIF v_event_type_code = 'CASE_REASSIGNMENT' THEN
+    v_previous_assignment_id := NULLIF(v_old#>>'{details_jsonb,previous_assignment_id}', '')::bigint;
+
+    SELECT ca.id, to_jsonb(ca) INTO v_assignment_id, v_assignment_old
+    FROM public.case_assignments ca
+    WHERE ca.id = v_source_id OR ca.case_event_id = p_case_event_id
+    ORDER BY CASE WHEN ca.id = v_source_id THEN 0 ELSE 1 END
+    LIMIT 1;
+
+    IF v_assignment_id IS NOT NULL THEN
+      UPDATE public.case_assignments
+      SET is_voided = true, voided_at = now(), voided_by_user_id = p_voided_by_user_id, void_reason = p_void_reason, unassigned_at = COALESCE(unassigned_at, now())
+      WHERE id = v_assignment_id;
+
+      SELECT to_jsonb(ca) INTO v_assignment_new
+      FROM public.case_assignments ca
+      WHERE ca.id = v_assignment_id;
+    END IF;
+
+    IF v_previous_assignment_id IS NOT NULL THEN
+      SELECT to_jsonb(ca) INTO v_previous_assignment_old
+      FROM public.case_assignments ca
+      WHERE ca.id = v_previous_assignment_id
+        AND ca.case_id = v_case_id
+      FOR UPDATE;
+
+      IF v_previous_assignment_old IS NOT NULL THEN
+        UPDATE public.case_assignments
+        SET unassigned_at = NULL,
+            unassigned_by_user_id = NULL,
+            unassignment_reason = NULL
+        WHERE id = v_previous_assignment_id
+          AND case_id = v_case_id
+          AND is_voided IS FALSE;
+
+        SELECT to_jsonb(ca) INTO v_previous_assignment_new
+        FROM public.case_assignments ca
+        WHERE ca.id = v_previous_assignment_id;
+      END IF;
+    END IF;
+
+    SELECT id INTO v_pending_status_id FROM public.case_statuses WHERE code = 'PENDING' AND is_active IS TRUE LIMIT 1;
+    SELECT id INTO v_for_raffle_stage_id FROM public.case_stages WHERE code = 'FOR_RAFFLE' AND is_active IS TRUE LIMIT 1;
+    SELECT id INTO v_case_raffled_stage_id FROM public.case_stages WHERE code = 'CASE_RAFFLED' AND is_active IS TRUE LIMIT 1;
+    IF v_pending_status_id IS NULL THEN RAISE EXCEPTION 'Missing active case status PENDING'; END IF;
+    IF v_for_raffle_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage FOR_RAFFLE'; END IF;
+    IF v_case_raffled_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage CASE_RAFFLED'; END IF;
+
+    SELECT count(*) INTO v_active_assignment_count
+    FROM public.case_assignments ca
+    WHERE ca.case_id = v_case_id
+      AND ca.unassigned_at IS NULL
+      AND ca.is_voided IS FALSE;
+
+    v_target_stage_id := CASE WHEN COALESCE(v_active_assignment_count, 0) > 0 THEN v_case_raffled_stage_id ELSE v_for_raffle_stage_id END;
+
+    INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_case_status_id,current_case_status_date,current_case_stage_id,current_case_stage_date,updated_at)
+    VALUES (v_case_id,v_pending_status_id,CURRENT_DATE,v_pending_status_id,CURRENT_DATE,v_target_stage_id,CURRENT_DATE,now())
+    ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=NULL,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,current_case_status_remarks=NULL,current_case_stage_id=EXCLUDED.current_case_stage_id,current_case_stage_date=EXCLUDED.current_case_stage_date,current_case_stage_remarks=NULL,updated_at=now();
+
+    IF COALESCE(v_prev_case_status_id, v_prev_status_id) IS DISTINCT FROM v_pending_status_id THEN
+      INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id)
+      VALUES (v_case_id,COALESCE(v_prev_case_status_id, v_prev_status_id),v_pending_status_id,p_voided_by_user_id,now(),CURRENT_DATE,'Case Reassignment voided. Broad case status remains Pending.',p_case_event_id)
+      RETURNING id INTO v_status_history_id;
+    END IF;
+
+    IF v_prev_stage_id IS DISTINCT FROM v_target_stage_id THEN
+      INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id)
+      VALUES (v_case_id,v_prev_stage_id,v_target_stage_id,p_voided_by_user_id,now(),CURRENT_DATE,'Case Reassignment voided. Workflow stage recomputed.',p_case_event_id)
+      RETURNING id INTO v_stage_history_id;
+    END IF;
+
+    SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE cpd.case_id = v_case_id;
+
+    INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+    VALUES (
+      p_voided_by_user_id,
+      'case_assignments',
+      v_assignment_id,
+      'VOID_CASE_REASSIGNMENT_NEW_ASSIGNMENT',
+      v_assignment_old,
+      v_assignment_new,
+      v_case_id,
+      'Reassignment-created assignment row voided because the Case Reassignment event was voided.',
+      jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'previous_assignment_id',v_previous_assignment_id)
+    );
+
+    IF v_previous_assignment_old IS NOT NULL THEN
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (
+        p_voided_by_user_id,
+        'case_assignments',
+        v_previous_assignment_id,
+        'RESTORE_PREVIOUS_ASSIGNMENT_FROM_REASSIGNMENT_VOID',
+        v_previous_assignment_old,
+        v_previous_assignment_new,
+        v_case_id,
+        'Previous assignment restored because the Case Reassignment event was voided.',
+        jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'voided_assignment_id',v_assignment_id)
+      );
+    END IF;
+
+    INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+    VALUES (
+      p_voided_by_user_id,
+      'case_private_details',
+      v_case_id,
+      'CASE_REASSIGNMENT_VOID_STATUS_STAGE_RECOMPUTED',
+      v_old_details,
+      v_new_details,
+      v_case_id,
+      'Case Reassignment voided; case status kept Pending and case stage recomputed from active assignments.',
+      jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'case_status_id',v_pending_status_id,'case_stage_id',v_target_stage_id,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id,'active_assignment_count',v_active_assignment_count,'restored_assignment_id',v_previous_assignment_id)
+    );
+  ELSIF lower(coalesce(v_source_table,'')) = 'case_assignments' THEN
     UPDATE public.case_assignments
     SET is_voided = true, voided_at = now(), voided_by_user_id = p_voided_by_user_id, void_reason = p_void_reason, unassigned_at = COALESCE(unassigned_at, now())
     WHERE id = v_source_id OR case_event_id = p_case_event_id;
@@ -8843,12 +9100,12 @@ BEGIN
     END IF;
   END IF;
 
-  IF v_event_type_code IN ('CASE_RESOLVED','CASE_DECISION_APPROVED','CASE_ASSIGNMENT','CASE_REASSIGNMENT') OR lower(coalesce(v_source_table,'')) IN ('case_resolutions','case_resolution_approvals','case_assignments') THEN
+  IF v_event_type_code IN ('CASE_RESOLVED','CASE_DECISION_APPROVED') OR lower(coalesce(v_source_table,'')) IN ('case_resolutions','case_resolution_approvals') THEN
     SELECT status_code, status_label INTO v_status_code, v_status_label FROM public.recompute_case_status_after_court_filing(v_case_id) LIMIT 1;
     IF v_status_code IS NOT NULL THEN
       INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'RESO_FOR_APPROVAL' THEN 80 WHEN 'FOR_FILING' THEN 90 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
-      INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,updated_at) VALUES (v_case_id,v_status_id,CURRENT_DATE,'Timeline event voided. Status recomputed.',now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,updated_at=now();
-      IF v_prev_status_id IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (v_case_id,v_prev_status_id,v_status_id,p_voided_by_user_id,now(),CURRENT_DATE,'Timeline event voided. Status recomputed.',p_case_event_id); END IF;
+      INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_case_status_id,current_case_status_date,updated_at) VALUES (v_case_id,v_status_id,CURRENT_DATE,v_status_id,CURRENT_DATE,now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,updated_at=now();
+      IF COALESCE(v_prev_case_status_id, v_prev_status_id) IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (v_case_id,COALESCE(v_prev_case_status_id, v_prev_status_id),v_status_id,p_voided_by_user_id,now(),CURRENT_DATE,'Timeline event voided. Status recomputed.',p_case_event_id); END IF;
     END IF;
   END IF;
 END;
@@ -11827,6 +12084,8 @@ CREATE TABLE public.case_events (
     updated_by_user_id bigint,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    case_status_id bigint,
+    case_stage_id bigint,
     CONSTRAINT chk_case_events_void_reason CHECK ((((is_voided = false) AND (voided_at IS NULL)) OR (is_voided = true)))
 );
 
@@ -11836,6 +12095,20 @@ CREATE TABLE public.case_events (
 --
 
 COMMENT ON TABLE public.case_events IS 'Central MVP timeline/activity table for cases. UI should CRUD case_events through functions/API; specialized tables can be updated by the backend/function when needed.';
+
+
+--
+-- Name: COLUMN case_events.case_status_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_events.case_status_id IS 'Broad legal outcome status associated with this timeline event. Legacy status_id remains for compatibility.';
+
+
+--
+-- Name: COLUMN case_events.case_stage_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_events.case_stage_id IS 'Automatic workflow stage associated with this timeline event. Legacy status_id remains for compatibility.';
 
 
 --
@@ -12340,7 +12613,13 @@ CREATE TABLE public.case_private_details (
     current_status_raw text,
     current_status_remarks text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    current_case_status_id bigint,
+    current_case_status_date date,
+    current_case_status_remarks text,
+    current_case_stage_id bigint,
+    current_case_stage_date date,
+    current_case_stage_remarks text
 );
 
 
@@ -12391,6 +12670,20 @@ COMMENT ON COLUMN public.case_private_details.current_status_raw IS 'Raw legacy 
 --
 
 COMMENT ON COLUMN public.case_private_details.current_status_remarks IS 'Raw legacy status remarks text.';
+
+
+--
+-- Name: COLUMN case_private_details.current_case_status_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_private_details.current_case_status_id IS 'Broad legal outcome status. During phased refactor, legacy current_status_id remains for compatibility.';
+
+
+--
+-- Name: COLUMN case_private_details.current_case_stage_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.case_private_details.current_case_stage_id IS 'Automatic workflow stage. During phased refactor, legacy current_status_id remains for compatibility.';
 
 
 --
@@ -12536,6 +12829,129 @@ ALTER TABLE public.case_resolutions ALTER COLUMN id ADD GENERATED BY DEFAULT AS 
     NO MAXVALUE
     CACHE 1
 );
+
+
+--
+-- Name: case_stage_colors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_stage_colors (
+    id bigint NOT NULL,
+    stage_id bigint NOT NULL,
+    color_name text,
+    background_class text,
+    text_class text,
+    border_class text,
+    is_active boolean DEFAULT true,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: case_stage_colors_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.case_stage_colors_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: case_stage_colors_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.case_stage_colors_id_seq OWNED BY public.case_stage_colors.id;
+
+
+--
+-- Name: case_stage_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_stage_history (
+    id bigint NOT NULL,
+    case_id bigint NOT NULL,
+    from_stage_id bigint,
+    to_stage_id bigint,
+    changed_by_user_id bigint,
+    changed_at timestamp with time zone DEFAULT now() NOT NULL,
+    stage_date date,
+    remarks text,
+    case_event_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE case_stage_history; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.case_stage_history IS 'Workflow stage transition history backfilled from legacy case_status_history during phased Case Status / Case Stage split.';
+
+
+--
+-- Name: case_stage_history_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.case_stage_history_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: case_stage_history_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.case_stage_history_id_seq OWNED BY public.case_stage_history.id;
+
+
+--
+-- Name: case_stages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_stages (
+    id bigint NOT NULL,
+    code text NOT NULL,
+    display_label character varying(100) NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL,
+    is_final_stage boolean DEFAULT false NOT NULL,
+    is_milestone boolean DEFAULT false NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE case_stages; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.case_stages IS 'Reference table for automatic workflow stages split out from broad case statuses.';
+
+
+--
+-- Name: case_stages_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.case_stages_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: case_stages_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.case_stages_id_seq OWNED BY public.case_stages.id;
 
 
 --
@@ -14740,11 +15156,23 @@ CREATE VIEW public.v_case_details_page AS
     NULL::text AS criminal_case_numbers,
     NULL::boolean AS court_needs_review,
     COALESCE(cas.case_addresses, '[]'::jsonb) AS case_addresses,
-    COALESCE(ns.notes, '[]'::jsonb) AS notes
-   FROM ((((((((((public.cases c
+    COALESCE(ns.notes, '[]'::jsonb) AS notes,
+    cpd.current_case_status_id,
+    cpd.current_case_status_date,
+    cpd.current_case_status_remarks,
+    broad_status.code AS current_case_status_code,
+    broad_status.display_label AS current_case_status_label,
+    cpd.current_case_stage_id,
+    cpd.current_case_stage_date,
+    cpd.current_case_stage_remarks,
+    stage.code AS current_case_stage_code,
+    stage.display_label AS current_case_stage_label
+   FROM ((((((((((((public.cases c
      JOIN public.docket_types dt ON ((dt.id = c.docket_type_id)))
      LEFT JOIN public.case_private_details cpd ON ((cpd.case_id = c.id)))
      LEFT JOIN public.case_statuses cs ON ((cs.id = cpd.current_status_id)))
+     LEFT JOIN public.case_statuses broad_status ON ((broad_status.id = cpd.current_case_status_id)))
+     LEFT JOIN public.case_stages stage ON ((stage.id = cpd.current_case_stage_id)))
      LEFT JOIN latest_assignment la ON ((la.case_id = c.id)))
      LEFT JOIN public.prosecutors p ON ((p.id = la.prosecutor_id)))
      LEFT JOIN public.staff st ON ((st.id = la.staff_id)))
@@ -14759,7 +15187,7 @@ CREATE VIEW public.v_case_details_page AS
 -- Name: VIEW v_case_details_page; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON VIEW public.v_case_details_page IS 'Centralized case details page read model with case-level addresses. Intentionally policy-free for development debugging.';
+COMMENT ON VIEW public.v_case_details_page IS 'Case details page read model with legacy status plus split case status and case stage fields. Intentionally policy-free for development debugging.';
 
 
 --
@@ -14946,6 +15374,36 @@ COMMENT ON VIEW public.v_case_petitions_for_review_detail IS 'Case details petit
 
 
 --
+-- Name: v_case_stage_history_detail; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_case_stage_history_detail AS
+ SELECT csh.id,
+    csh.case_id,
+    csh.from_stage_id,
+    fs.code AS from_stage_code,
+    fs.display_label AS from_stage_label,
+    csh.to_stage_id,
+    ts.code AS to_stage_code,
+    ts.display_label AS to_stage_label,
+    csh.changed_by_user_id,
+    csh.changed_at,
+    csh.stage_date,
+    csh.remarks,
+    csh.case_event_id
+   FROM ((public.case_stage_history csh
+     LEFT JOIN public.case_stages fs ON ((fs.id = csh.from_stage_id)))
+     LEFT JOIN public.case_stages ts ON ((ts.id = csh.to_stage_id)));
+
+
+--
+-- Name: VIEW v_case_stage_history_detail; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_case_stage_history_detail IS 'Frontend case-stage-history read view for phased Case Status / Case Stage split.';
+
+
+--
 -- Name: v_case_status_history_detail; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -15026,12 +15484,20 @@ CREATE VIEW public.v_case_timeline AS
     ce.void_reason,
     ce.voided_at,
     ce.voided_by_user_id,
-    vu.email AS voided_by_email
-   FROM ((((((((public.case_events ce
+    vu.email AS voided_by_email,
+    ce.case_status_id,
+    event_status.code AS case_status_code,
+    event_status.display_label AS case_status_label,
+    ce.case_stage_id,
+    event_stage.code AS case_stage_code,
+    event_stage.display_label AS case_stage_label
+   FROM ((((((((((public.case_events ce
      JOIN public.cases c ON ((c.id = ce.case_id)))
      JOIN public.docket_types dt ON ((dt.id = c.docket_type_id)))
      JOIN public.case_event_types cet ON ((cet.id = ce.event_type_id)))
      LEFT JOIN public.case_statuses cs ON ((cs.id = ce.status_id)))
+     LEFT JOIN public.case_statuses event_status ON ((event_status.id = ce.case_status_id)))
+     LEFT JOIN public.case_stages event_stage ON ((event_stage.id = ce.case_stage_id)))
      LEFT JOIN public.prosecutors p ON ((p.id = ce.prosecutor_id)))
      LEFT JOIN public.staff st ON ((st.id = ce.staff_id)))
      LEFT JOIN public.courts co ON ((co.id = ce.court_id)))
@@ -15042,7 +15508,7 @@ CREATE VIEW public.v_case_timeline AS
 -- Name: VIEW v_case_timeline; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON VIEW public.v_case_timeline IS 'Case details page timeline read model, kept separate from v_case_details_page to avoid over-complicating the centralized details view. Intentionally policy-free for development debugging.';
+COMMENT ON VIEW public.v_case_timeline IS 'Case details page timeline read model with legacy event status plus split case status and case stage fields.';
 
 
 --
@@ -15184,10 +15650,24 @@ CREATE VIEW public.v_docket_quickdetails AS
     cs.code AS current_status_code,
     cs.display_label AS current_status_label,
     p.full_name AS prosecutor_full_name,
-    p.short_name AS prosecutor_short_name
-   FROM ((((public.cases c
+    p.short_name AS prosecutor_short_name,
+    cpd.current_status_id,
+    cpd.current_status_date,
+    cpd.current_case_status_id,
+    cpd.current_case_status_date,
+    cpd.current_case_status_remarks,
+    broad_status.code AS current_case_status_code,
+    broad_status.display_label AS current_case_status_label,
+    cpd.current_case_stage_id,
+    cpd.current_case_stage_date,
+    cpd.current_case_stage_remarks,
+    stage.code AS current_case_stage_code,
+    stage.display_label AS current_case_stage_label
+   FROM ((((((public.cases c
      LEFT JOIN public.case_private_details cpd ON ((cpd.case_id = c.id)))
      LEFT JOIN public.case_statuses cs ON ((cs.id = cpd.current_status_id)))
+     LEFT JOIN public.case_statuses broad_status ON ((broad_status.id = cpd.current_case_status_id)))
+     LEFT JOIN public.case_stages stage ON ((stage.id = cpd.current_case_stage_id)))
      LEFT JOIN latest_assignment la ON ((la.case_id = c.id)))
      LEFT JOIN public.prosecutors p ON ((p.id = la.prosecutor_id)))
   WHERE (NOT c.is_archived);
@@ -15197,7 +15677,7 @@ CREATE VIEW public.v_docket_quickdetails AS
 -- Name: VIEW v_docket_quickdetails; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON VIEW public.v_docket_quickdetails IS 'Cases page quick details read model for prosecutor, status, and received date. Intentionally policy-free for development debugging.';
+COMMENT ON VIEW public.v_docket_quickdetails IS 'Cases page quick details read model for prosecutor, legacy status, split case status, split case stage, and received date. Intentionally policy-free for development debugging.';
 
 
 --
@@ -15412,6 +15892,31 @@ CREATE VIEW public.v_ref_case_event_types AS
 --
 
 COMMENT ON VIEW public.v_ref_case_event_types IS 'Frontend reference view for active case timeline/activity event types.';
+
+
+--
+-- Name: v_ref_case_stages; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_ref_case_stages AS
+ SELECT id,
+    code,
+    display_label,
+    sort_order,
+    is_final_stage,
+    is_milestone,
+    is_active,
+    created_at,
+    updated_at
+   FROM public.case_stages
+  WHERE (is_active = true);
+
+
+--
+-- Name: VIEW v_ref_case_stages; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_ref_case_stages IS 'Frontend reference view for active case workflow stages.';
 
 
 --
@@ -15890,6 +16395,27 @@ ALTER TABLE ONLY public.case_motions ALTER COLUMN id SET DEFAULT nextval('public
 --
 
 ALTER TABLE ONLY public.case_participants ALTER COLUMN id SET DEFAULT nextval('public.case_participants_id_seq'::regclass);
+
+
+--
+-- Name: case_stage_colors id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stage_colors ALTER COLUMN id SET DEFAULT nextval('public.case_stage_colors_id_seq'::regclass);
+
+
+--
+-- Name: case_stage_history id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stage_history ALTER COLUMN id SET DEFAULT nextval('public.case_stage_history_id_seq'::regclass);
+
+
+--
+-- Name: case_stages id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stages ALTER COLUMN id SET DEFAULT nextval('public.case_stages_id_seq'::regclass);
 
 
 --
@@ -16606,6 +17132,46 @@ ALTER TABLE ONLY public.case_resolutions
 
 ALTER TABLE ONLY public.case_resolutions
     ADD CONSTRAINT case_resolutions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: case_stage_colors case_stage_colors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stage_colors
+    ADD CONSTRAINT case_stage_colors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: case_stage_colors case_stage_colors_stage_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stage_colors
+    ADD CONSTRAINT case_stage_colors_stage_id_key UNIQUE (stage_id);
+
+
+--
+-- Name: case_stage_history case_stage_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stage_history
+    ADD CONSTRAINT case_stage_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: case_stages case_stages_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stages
+    ADD CONSTRAINT case_stages_code_key UNIQUE (code);
+
+
+--
+-- Name: case_stages case_stages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stages
+    ADD CONSTRAINT case_stages_pkey PRIMARY KEY (id);
 
 
 --
@@ -17831,6 +18397,20 @@ CREATE INDEX idx_case_events_case_date ON public.case_events USING btree (case_i
 
 
 --
+-- Name: idx_case_events_case_stage_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_events_case_stage_id ON public.case_events USING btree (case_stage_id);
+
+
+--
+-- Name: idx_case_events_case_status_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_events_case_status_id ON public.case_events USING btree (case_status_id);
+
+
+--
 -- Name: idx_case_events_details_gin; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18111,6 +18691,27 @@ CREATE INDEX idx_case_private_details_case_status ON public.case_private_details
 
 
 --
+-- Name: idx_case_private_details_current_case_stage_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_private_details_current_case_stage_date ON public.case_private_details USING btree (current_case_stage_date);
+
+
+--
+-- Name: idx_case_private_details_current_case_stage_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_private_details_current_case_stage_id ON public.case_private_details USING btree (current_case_stage_id);
+
+
+--
+-- Name: idx_case_private_details_current_case_status_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_private_details_current_case_status_id ON public.case_private_details USING btree (current_case_status_id);
+
+
+--
 -- Name: idx_case_private_details_current_status_date; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18164,6 +18765,27 @@ CREATE INDEX idx_case_resolution_charge_actions_resolution_id ON public.case_res
 --
 
 CREATE INDEX idx_case_resolutions_case_id ON public.case_resolutions USING btree (case_id);
+
+
+--
+-- Name: idx_case_stage_history_case_event_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_stage_history_case_event_id ON public.case_stage_history USING btree (case_event_id);
+
+
+--
+-- Name: idx_case_stage_history_case_time; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_stage_history_case_time ON public.case_stage_history USING btree (case_id, changed_at DESC);
+
+
+--
+-- Name: idx_case_stage_history_stage; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_stage_history_stage ON public.case_stage_history USING btree (to_stage_id);
 
 
 --
@@ -19291,6 +19913,22 @@ ALTER TABLE ONLY public.case_events
 
 
 --
+-- Name: case_events case_events_case_stage_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_events
+    ADD CONSTRAINT case_events_case_stage_id_fkey FOREIGN KEY (case_stage_id) REFERENCES public.case_stages(id);
+
+
+--
+-- Name: case_events case_events_case_status_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_events
+    ADD CONSTRAINT case_events_case_status_id_fkey FOREIGN KEY (case_status_id) REFERENCES public.case_statuses(id);
+
+
+--
 -- Name: case_events case_events_court_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19619,6 +20257,22 @@ ALTER TABLE ONLY public.case_private_details
 
 
 --
+-- Name: case_private_details case_private_details_current_case_stage_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_private_details
+    ADD CONSTRAINT case_private_details_current_case_stage_id_fkey FOREIGN KEY (current_case_stage_id) REFERENCES public.case_stages(id);
+
+
+--
+-- Name: case_private_details case_private_details_current_case_status_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_private_details
+    ADD CONSTRAINT case_private_details_current_case_status_id_fkey FOREIGN KEY (current_case_status_id) REFERENCES public.case_statuses(id);
+
+
+--
 -- Name: case_private_details case_private_details_current_status_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19792,6 +20446,54 @@ ALTER TABLE ONLY public.case_resolutions
 
 ALTER TABLE ONLY public.case_resolutions
     ADD CONSTRAINT case_resolutions_voided_by_user_id_fkey FOREIGN KEY (voided_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_stage_colors case_stage_colors_stage_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stage_colors
+    ADD CONSTRAINT case_stage_colors_stage_id_fkey FOREIGN KEY (stage_id) REFERENCES public.case_stages(id) ON DELETE CASCADE;
+
+
+--
+-- Name: case_stage_history case_stage_history_case_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stage_history
+    ADD CONSTRAINT case_stage_history_case_event_id_fkey FOREIGN KEY (case_event_id) REFERENCES public.case_events(id) ON DELETE SET NULL;
+
+
+--
+-- Name: case_stage_history case_stage_history_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stage_history
+    ADD CONSTRAINT case_stage_history_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: case_stage_history case_stage_history_changed_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stage_history
+    ADD CONSTRAINT case_stage_history_changed_by_user_id_fkey FOREIGN KEY (changed_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_stage_history case_stage_history_from_stage_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stage_history
+    ADD CONSTRAINT case_stage_history_from_stage_id_fkey FOREIGN KEY (from_stage_id) REFERENCES public.case_stages(id);
+
+
+--
+-- Name: case_stage_history case_stage_history_to_stage_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_stage_history
+    ADD CONSTRAINT case_stage_history_to_stage_id_fkey FOREIGN KEY (to_stage_id) REFERENCES public.case_stages(id);
 
 
 --
@@ -20455,5 +21157,5 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 -- PostgreSQL database dump complete
 --
 
-\unrestrict F5kNGEWGe32pvGgBKoEDutj6oMObM8Dn4iRsCGcvgpRGDEMmCdxKc5uSp0ecfac
+\unrestrict t7blyZqqpaxPa9pImFQQnS3OZKJcXpLd2GvRFQn9O77jrdsEtcm0OE8pH0btyb4
 
