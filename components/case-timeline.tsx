@@ -930,7 +930,7 @@ export function CaseTimeline({
   const [courtOptions, setCourtOptions] = useState<CourtReferenceRecord[]>([]);
   const [motionRecommendations, setMotionRecommendations] = useState<MotionResolutionRecommendationRecord[]>([]);
   const [isRecommendationDialogOpen, setIsRecommendationDialogOpen] = useState(false);
-  const [recommendationForm, setRecommendationForm] = useState({ label: "", code: "" });
+  const [recommendationLabel, setRecommendationLabel] = useState("");
   const [isCourtPickerOpen, setIsCourtPickerOpen] = useState(false);
   const initialManilaDateTime = getManilaDateTimeInputValues();
   const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: initialManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDetails: [] as MotionDetailRow[] });
@@ -979,7 +979,7 @@ export function CaseTimeline({
     setEventTypesError(null);
     setCaseResolutions([]);
     setCourtFilingDecisions([]);
-    setRecommendationForm({ label: "", code: "" });
+    setRecommendationLabel("");
     const currentManilaDateTime = getManilaDateTimeInputValues();
     setManilaNow(new Date());
     setIsAddDateTimeDirty(false);
@@ -1277,10 +1277,10 @@ export function CaseTimeline({
   }, [addForm.eventTypeCode, addForm.motionResolveMotionId, eligibleMotions]);
 
   const handleAddRecommendationSave = async () => {
-    if (!recommendationForm.label.trim()) return;
+    if (!recommendationLabel.trim()) return;
     setIsSaving(true);
     setActionError(null);
-    const result = await addMotionResolutionRecommendation({ displayLabel: recommendationForm.label, code: recommendationForm.code });
+    const result = await addMotionResolutionRecommendation({ displayLabel: recommendationLabel });
     setIsSaving(false);
     if (result.error) {
       setActionError(result.error.message);
@@ -1517,7 +1517,7 @@ export function CaseTimeline({
               <>
                 {eligibleMotions.length === 0 ? <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">No pending motion is available for resolution.</div> : null}
                 <div className="space-y-2"><Label htmlFor="add-motion-to-resolve">Motion</Label><select id="add-motion-to-resolve" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionResolveMotionId} onChange={(e) => setAddForm((form) => ({ ...form, motionResolveMotionId: e.target.value }))}><option value="">Select motion</option>{eligibleMotions.map((motion) => <option key={motion.id} value={motion.id}>{motion.motion_title ?? motion.motion_name} • {motionFiledByLabel(motion.filed_by_code) ?? motion.filed_by ?? "—"} • {formatDate(motion.date_filed ?? motion.date_received)}</option>)}</select></div>
-                <div className="space-y-2"><Label htmlFor="add-motion-recommendation">Recommendation</Label><select id="add-motion-recommendation" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionRecommendationId} onChange={(e) => { if (e.target.value === "__add__") { setRecommendationForm({ label: "", code: "" }); setIsRecommendationDialogOpen(true); return; } setAddForm((form) => ({ ...form, motionRecommendationId: e.target.value })); }}><option value="">Select recommendation</option>{motionRecommendations.map((recommendation) => <option key={recommendation.id} value={recommendation.id}>{recommendation.display_label}</option>)}<option value="__add__">+ Add Recommendation</option></select></div>
+                <div className="space-y-2"><Label htmlFor="add-motion-recommendation">Recommendation</Label><select id="add-motion-recommendation" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionRecommendationId} onChange={(e) => { if (e.target.value === "__add__") { setRecommendationLabel(""); setIsRecommendationDialogOpen(true); return; } setAddForm((form) => ({ ...form, motionRecommendationId: e.target.value })); }}><option value="">Select recommendation</option>{motionRecommendations.map((recommendation) => <option key={recommendation.id} value={recommendation.id}>{recommendation.display_label}</option>)}<option value="__add__">+ Add Recommendation</option></select></div>
                 <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-motion-date-resolved">Date Resolved</Label><Input id="add-motion-date-resolved" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div><div className="space-y-1"><Label htmlFor="add-motion-time-resolved">Time Resolved</Label><Input id="add-motion-time-resolved" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div></div>
                 <div className="space-y-2"><Label htmlFor="add-motion-resolution-remarks">Remarks</Label><Textarea id="add-motion-resolution-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
               </>
@@ -1543,12 +1543,12 @@ export function CaseTimeline({
           </DialogHeader>
           <div className="space-y-3">
             {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
-            <div className="space-y-2"><Label htmlFor="motion-recommendation-label">Recommendation Label</Label><Input id="motion-recommendation-label" value={recommendationForm.label} onChange={(e) => { const label = e.target.value; setRecommendationForm((form) => ({ ...form, label, code: form.code || label.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") })); }} /></div>
-            <div className="space-y-2"><Label htmlFor="motion-recommendation-code">Recommendation Code</Label><Input id="motion-recommendation-code" value={recommendationForm.code} onChange={(e) => setRecommendationForm((form) => ({ ...form, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") }))} /></div>
+            <div className="space-y-2"><Label htmlFor="motion-recommendation-label">Recommendation Label</Label><Input id="motion-recommendation-label" value={recommendationLabel} onChange={(e) => setRecommendationLabel(e.target.value)} /></div>
+            <p className="text-xs text-muted-foreground">The recommendation code will be generated automatically.</p>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setIsRecommendationDialogOpen(false)}>Cancel</Button>
-            <Button type="button" onClick={handleAddRecommendationSave} disabled={isSaving || !recommendationForm.label.trim()}>{isSaving ? "Saving..." : "Save Recommendation"}</Button>
+            <Button type="button" onClick={handleAddRecommendationSave} disabled={isSaving || !recommendationLabel.trim()}>{isSaving ? "Saving..." : "Save Recommendation"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
