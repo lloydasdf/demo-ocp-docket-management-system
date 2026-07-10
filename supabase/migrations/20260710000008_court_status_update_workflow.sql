@@ -11,6 +11,7 @@
 -- 20. RPC writes UPDATE_COURT_FILING_STATUS_DETAILS audit log with before/after data.
 -- 21. Migration does not alter unrelated event RPCs, recompute helpers, or public.void_case_event.
 -- 22. TypeScript check is expected to pass after frontend changes.
+-- 23. Removing all Criminal Case Number rows and Court Status rows sets legacy case_court_filings.criminal_case_no and case_court_filings.court_status to NULL, so reopening the form cannot repopulate deleted legacy values.
 
 UPDATE public.case_event_types SET sort_order = 145, updated_at = now() WHERE code = 'COURT_STATUS_UPDATE';
 
@@ -134,7 +135,7 @@ BEGIN
     ON CONFLICT (court_filing_id, (lower(court_status)), status_date) WHERE is_voided=false DO UPDATE SET sort_order=EXCLUDED.sort_order, remarks=EXCLUDED.remarks, updated_at=now(), updated_by_user_id=p_user_id;
   END LOOP;
 
-  UPDATE public.case_court_filings SET information_count=p_information_count, additional_details_jsonb=v_details, court_status_update_remarks=nullif(btrim(coalesce(p_remarks,'')), ''), criminal_case_no=COALESCE(v_numbers->>0, criminal_case_no), court_status=COALESCE((v_statuses->(jsonb_array_length(v_statuses)-1))->>'court_status', court_status), updated_at=now(), updated_by_user_id=p_user_id WHERE id=p_court_filing_id;
+  UPDATE public.case_court_filings SET information_count=p_information_count, additional_details_jsonb=v_details, court_status_update_remarks=nullif(btrim(coalesce(p_remarks,'')), ''), criminal_case_no=CASE WHEN jsonb_array_length(v_numbers) = 0 THEN NULL ELSE v_numbers->>0 END, court_status=CASE WHEN jsonb_array_length(v_statuses) = 0 THEN NULL ELSE (v_statuses->(jsonb_array_length(v_statuses)-1))->>'court_status' END, updated_at=now(), updated_by_user_id=p_user_id WHERE id=p_court_filing_id;
 
   SELECT jsonb_build_object('criminal_case_numbers', COALESCE((SELECT jsonb_agg(jsonb_build_object('id',id,'criminal_case_no',criminal_case_no,'sort_order',sort_order) ORDER BY sort_order,id) FROM public.case_court_filing_criminal_cases WHERE court_filing_id=p_court_filing_id AND is_voided=false), '[]'::jsonb), 'court_statuses', COALESCE((SELECT jsonb_agg(jsonb_build_object('id',id,'court_status',court_status,'status_date',status_date,'sort_order',sort_order) ORDER BY sort_order,id) FROM public.case_court_filing_statuses WHERE court_filing_id=p_court_filing_id AND is_voided=false), '[]'::jsonb)) INTO v_new;
 
