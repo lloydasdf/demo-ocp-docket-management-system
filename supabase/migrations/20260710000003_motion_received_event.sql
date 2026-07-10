@@ -120,7 +120,36 @@ $$;
 GRANT EXECUTE ON FUNCTION public.record_motion_received_event(bigint,text,text,date,time without time zone,jsonb,text,bigint) TO authenticated;
 
 CREATE OR REPLACE VIEW public.v_case_motions_detail AS
-SELECT id, case_id, case_event_id, motion_order, motion_name, motion_title, filed_by, filed_by_code, filed_by_raw, date_received, date_received_raw, date_filed, time_filed, date_resolved, date_resolved_raw, date_approved, date_approved_raw, motion_status, motion_status_raw, details_jsonb, remarks, remarks_raw, is_voided, voided_at, voided_by_user_id, void_reason, created_at, updated_at FROM public.case_motions;
+SELECT
+  id,
+  case_id,
+  motion_order,
+  motion_name,
+  filed_by,
+  filed_by_raw,
+  date_received,
+  date_received_raw,
+  date_resolved,
+  date_resolved_raw,
+  date_approved,
+  date_approved_raw,
+  motion_status,
+  motion_status_raw,
+  remarks,
+  remarks_raw,
+  created_at,
+  updated_at,
+  case_event_id,
+  motion_title,
+  filed_by_code,
+  date_filed,
+  time_filed,
+  details_jsonb,
+  is_voided,
+  voided_at,
+  voided_by_user_id,
+  void_reason
+FROM public.case_motions;
 
 -- public.void_case_event keeps the complete latest implementation and adds only the MOTION_RECEIVED-specific branch above the COURT_FILING branch.
 CREATE OR REPLACE FUNCTION public.void_case_event(p_case_event_id bigint, p_void_reason text, p_voided_by_user_id bigint DEFAULT NULL)
@@ -359,6 +388,6 @@ GRANT EXECUTE ON FUNCTION public.void_case_event(bigint, text, bigint) TO authen
 
 COMMENT ON FUNCTION public.record_motion_received_event(bigint,text,text,date,time without time zone,jsonb,text,bigint) IS 'Records MOTION_RECEIVED with controlled filed_by_code, normalized details_jsonb, PENDING/MOTION_PENDING, audit and history rows only when changed. Verification: rejects non COMPLAINANT/RESPONDENT; omits empty detail rows; defaults omitted time to current Asia/Manila time(0); preserves explicit historical time.';
 COMMENT ON FUNCTION public.compute_current_case_state(bigint) IS 'Motion-aware priority: active motion resolution awaiting approval -> PENDING/MOTION_RESO_FOR_APPROVAL; active pending motion -> PENDING/MOTION_PENDING; otherwise existing case resolution/filing/assignment workflow. Verification: voiding one of multiple motions remains MOTION_PENDING; voiding last motion falls back to existing workflow; history rows are inserted only when ids change by apply_case_state_recompute.';
-COMMENT ON FUNCTION public.void_case_event(bigint,text,bigint) IS 'Changed for MOTION_RECEIVED: marks linked case_motions row voided, keeps event visible, audits, and invokes shared recompute once. Preserve latest unrelated branches in a follow-up full-body merge if this migration is rebased.';
+COMMENT ON FUNCTION public.void_case_event(bigint,text,bigint) IS 'Changed for MOTION_RECEIVED: marks linked case_motions row voided, keeps event visible, audits, and invokes shared recompute once while preserving unrelated event branches.';
 
 COMMIT;
