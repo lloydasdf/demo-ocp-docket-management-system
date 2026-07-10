@@ -148,7 +148,6 @@ DECLARE
   v_reso_stage_id bigint;
   v_previous_case_status_id bigint;
   v_previous_stage_id bigint;
-  v_previous_status_id bigint;
   v_event_id bigint;
   v_resolution_id bigint;
   v_status_history_id bigint;
@@ -186,8 +185,8 @@ BEGIN
     ELSE 'Mixed Result'
   END;
 
-  SELECT cpd.current_status_id, cpd.current_case_status_id, cpd.current_case_stage_id, to_jsonb(cpd)
-  INTO v_previous_status_id, v_previous_case_status_id, v_previous_stage_id, v_old_details
+  SELECT cpd.current_case_status_id, cpd.current_case_stage_id, to_jsonb(cpd)
+  INTO v_previous_case_status_id, v_previous_stage_id, v_old_details
   FROM public.case_private_details cpd
   WHERE cpd.case_id = p_case_id;
 
@@ -263,9 +262,11 @@ BEGIN
     current_case_stage_remarks = v_remarks,
     updated_at = now();
 
-  INSERT INTO public.case_status_history (case_id, from_status_id, to_status_id, changed_by_user_id, changed_at, status_date, remarks, case_event_id)
-  VALUES (p_case_id, v_previous_status_id, v_pending_status_id, p_user_id, now(), p_date_resolved, v_remarks, v_event_id)
-  RETURNING id INTO v_status_history_id;
+  IF v_previous_case_status_id IS DISTINCT FROM v_pending_status_id THEN
+    INSERT INTO public.case_status_history (case_id, from_status_id, to_status_id, changed_by_user_id, changed_at, status_date, remarks, case_event_id)
+    VALUES (p_case_id, v_previous_case_status_id, v_pending_status_id, p_user_id, now(), p_date_resolved, v_remarks, v_event_id)
+    RETURNING id INTO v_status_history_id;
+  END IF;
 
   IF v_previous_stage_id IS DISTINCT FROM v_reso_stage_id THEN
     INSERT INTO public.case_stage_history (case_id, from_stage_id, to_stage_id, changed_by_user_id, changed_at, stage_date, remarks, case_event_id)
