@@ -1958,6 +1958,13 @@ export type CasePetitionForReviewRecord = {
 };
 
 export type CaseMotionRecord = TableRow<"case_motions"> & {
+  case_event_id?: number | null;
+  motion_title?: string | null;
+  filed_by_code?: string | null;
+  date_filed?: string | null;
+  time_filed?: string | null;
+  details_jsonb?: unknown;
+  is_voided?: boolean | null;
   motion_order?: number | null;
   date_received_raw?: string | null;
   date_resolved?: string | null;
@@ -2496,6 +2503,46 @@ export async function recordCourtFilingEvent(input: RecordCourtFilingEventInput)
     return ok(Number(data ?? 0));
   } catch (error) {
     return fail(toQueryError(error, "recordCourtFilingEvent", "case_court_filings" as RelationName));
+  }
+}
+
+
+export type MotionDetailInput = { detail: string; value: string };
+
+export interface RecordMotionReceivedEventInput {
+  caseId: number;
+  motionTitle: string;
+  filedByCode: "COMPLAINANT" | "RESPONDENT";
+  dateFiled: string;
+  timeFiled?: string | null;
+  details?: MotionDetailInput[];
+  remarks?: string | null;
+}
+
+export async function recordMotionReceivedEvent(input: RecordMotionReceivedEventInput): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table: "case_motions" as RelationName, operation: "recordMotionReceivedEvent" });
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "recordMotionReceivedEvent", "users"));
+    const normalizedDetails = (input.details ?? [])
+      .map((row) => ({ detail: row.detail.trim(), value: row.value.trim() }))
+      .filter((row) => row.detail || row.value);
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("record_motion_received_event" as never, {
+      p_case_id: input.caseId,
+      p_motion_title: input.motionTitle.trim(),
+      p_filed_by_code: input.filedByCode,
+      p_date_filed: input.dateFiled,
+      p_time_filed: input.timeFiled?.trim() || null,
+      p_details_jsonb: normalizedDetails,
+      p_remarks: input.remarks?.trim() || null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "recordMotionReceivedEvent", "case_motions" as RelationName));
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "recordMotionReceivedEvent", "case_motions" as RelationName));
   }
 }
 
