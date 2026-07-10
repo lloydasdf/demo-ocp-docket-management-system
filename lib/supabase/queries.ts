@@ -288,6 +288,12 @@ type ClearanceRpcRow = {
   match_type: ClearanceSearchResult["matchType"] | null;
   role_label: string | null;
   is_voided?: boolean | null;
+  assigned_prosecutor_id?: number | null;
+  assigned_prosecutor_name?: string | null;
+  active_motion_resolution_id?: number | null;
+  active_motion_resolution_recommendation_id?: number | null;
+  active_motion_resolution_recommendation_code?: string | null;
+  active_motion_resolution_recommendation_label?: string | null;
   is_corrected?: boolean | null;
   replaced_by_person_id?: number | null;
   active_person_id?: number | null;
@@ -1965,6 +1971,12 @@ export type CaseMotionRecord = TableRow<"case_motions"> & {
   time_filed?: string | null;
   details_jsonb?: unknown;
   is_voided?: boolean | null;
+  assigned_prosecutor_id?: number | null;
+  assigned_prosecutor_name?: string | null;
+  active_motion_resolution_id?: number | null;
+  active_motion_resolution_recommendation_id?: number | null;
+  active_motion_resolution_recommendation_code?: string | null;
+  active_motion_resolution_recommendation_label?: string | null;
   motion_order?: number | null;
   date_received_raw?: string | null;
   date_resolved?: string | null;
@@ -2516,6 +2528,7 @@ export interface RecordMotionReceivedEventInput {
   dateFiled: string;
   timeFiled?: string | null;
   details?: MotionDetailInput[];
+  assignedProsecutorId?: number | null;
   remarks?: string | null;
 }
 
@@ -2537,12 +2550,85 @@ export async function recordMotionReceivedEvent(input: RecordMotionReceivedEvent
       p_time_filed: input.timeFiled?.trim() || null,
       p_details_jsonb: normalizedDetails,
       p_remarks: input.remarks?.trim() || null,
+      p_assigned_prosecutor_id: input.assignedProsecutorId ?? null,
       p_user_id: currentUserQuery.data.id,
     } as never);
     if (error) return fail(toQueryError(error, "recordMotionReceivedEvent", "case_motions" as RelationName));
     return ok(Number(data ?? 0));
   } catch (error) {
     return fail(toQueryError(error, "recordMotionReceivedEvent", "case_motions" as RelationName));
+  }
+}
+
+
+export type MotionResolutionRecommendationRecord = {
+  id: number;
+  code: string;
+  display_label: string;
+  sort_order: number | null;
+  is_active: boolean | null;
+};
+
+export async function getMotionResolutionRecommendations(): Promise<SupabaseQueryResult<MotionResolutionRecommendationRecord[]>> {
+  return runSupabaseQuery("getMotionResolutionRecommendations", "motion_resolution_recommendations" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase
+      .from("motion_resolution_recommendations" as never)
+      .select("id, code, display_label, sort_order, is_active")
+      .eq("is_active" as never, true)
+      .order("sort_order" as never, { ascending: true })
+      .order("display_label" as never, { ascending: true })) as unknown as { data: MotionResolutionRecommendationRecord[] | null; error: unknown };
+  }, []);
+}
+
+export async function addMotionResolutionRecommendation(input: { displayLabel: string; code?: string | null }): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table: "motion_resolution_recommendations" as RelationName, operation: "addMotionResolutionRecommendation" });
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "addMotionResolutionRecommendation", "users"));
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("add_motion_resolution_recommendation" as never, {
+      p_display_label: input.displayLabel.trim(),
+      p_code: input.code?.trim() || null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "addMotionResolutionRecommendation", "motion_resolution_recommendations" as RelationName));
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "addMotionResolutionRecommendation", "motion_resolution_recommendations" as RelationName));
+  }
+}
+
+export interface RecordMotionResolvedEventInput {
+  caseId: number;
+  caseMotionId: number;
+  recommendationId: number;
+  dateResolved: string;
+  timeResolved?: string | null;
+  remarks?: string | null;
+}
+
+export async function recordMotionResolvedEvent(input: RecordMotionResolvedEventInput): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table: "case_motion_resolutions" as RelationName, operation: "recordMotionResolvedEvent" });
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "recordMotionResolvedEvent", "users"));
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("record_motion_resolved_event" as never, {
+      p_case_id: input.caseId,
+      p_case_motion_id: input.caseMotionId,
+      p_recommendation_id: input.recommendationId,
+      p_date_resolved: input.dateResolved,
+      p_time_resolved: input.timeResolved?.trim() || null,
+      p_remarks: input.remarks?.trim() || null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "recordMotionResolvedEvent", "case_motion_resolutions" as RelationName));
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "recordMotionResolvedEvent", "case_motion_resolutions" as RelationName));
   }
 }
 

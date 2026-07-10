@@ -57,6 +57,10 @@ import {
   type CourtReferenceRecord,
   recordCourtFilingEvent,
   recordMotionReceivedEvent,
+  recordMotionResolvedEvent,
+  getMotionResolutionRecommendations,
+  addMotionResolutionRecommendation,
+  type MotionResolutionRecommendationRecord,
   editCaseEvent,
   getCaseEventTypes,
   voidCaseEvent,
@@ -173,14 +177,18 @@ function motionFiledByLabel(code: string | null | undefined) {
   return code === "COMPLAINANT" ? "Complainant" : code === "RESPONDENT" ? "Respondent" : code;
 }
 
-function motionReceivedEventDetails(event: CaseTimelineEventRecord) {
-  if (event.event_type_code !== "MOTION_RECEIVED") return null;
+function motionWorkflowEventDetails(event: CaseTimelineEventRecord) {
+  if (event.event_type_code !== "MOTION_RECEIVED" && event.event_type_code !== "MOTION_RESOLVED") return null;
   const details = event.details_jsonb && typeof event.details_jsonb === "object" ? event.details_jsonb as Record<string, unknown> : {};
   return [
     { label: "Motion Title", value: stringDetail(details.motion_title) ?? event.title },
     { label: "Filed By", value: stringDetail(details.filed_by_label) ?? motionFiledByLabel(stringDetail(details.filed_by_code)) },
-    { label: "Date Filed", value: formatDate(stringDetail(details.date_filed) ?? event.event_date) },
-    { label: "Time Filed", value: formatTime(stringDetail(details.time_filed) ?? event.event_time) },
+    { label: "Assigned Prosecutor", value: stringDetail(details.assigned_prosecutor_name) },
+    event.event_type_code === "MOTION_RESOLVED"
+      ? { label: "Recommendation", value: stringDetail(details.recommendation_label) ?? stringDetail(details.recommendation_code) }
+      : { label: "Date Filed", value: formatDate(stringDetail(details.date_filed) ?? event.event_date) },
+    { label: event.event_type_code === "MOTION_RESOLVED" ? "Date Resolved" : "Time Filed", value: event.event_type_code === "MOTION_RESOLVED" ? formatDate(stringDetail(details.date_resolved) ?? event.event_date) : formatTime(stringDetail(details.time_filed) ?? event.event_time) },
+    ...(event.event_type_code === "MOTION_RESOLVED" ? [{ label: "Time Resolved", value: formatTime(stringDetail(details.time_resolved) ?? event.event_time) }] : []),
     { label: "Remarks", value: stringDetail(details.remarks) ?? event.description },
   ];
 }
@@ -365,9 +373,9 @@ function timelineDetailItems(event: CaseTimelineEventRecord, assignment?: CaseAs
     return [{ label: "Date", value: formatDate(event.event_date) }];
   }
 
-  const motionReceivedDetails = motionReceivedEventDetails(event);
-  if (motionReceivedDetails) {
-    return motionReceivedDetails;
+  const motionWorkflowDetails = motionWorkflowEventDetails(event);
+  if (motionWorkflowDetails) {
+    return motionWorkflowDetails;
   }
 
   const resolutionDetails = resolutionEventDetails(event);
@@ -414,7 +422,7 @@ function visibleEventDetails(event: CaseTimelineEventRecord) {
 
   const hiddenKeys = event.event_type_code === "CASE_RECEIVED"
     ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
-    : event.event_type_code === "CASE_RESOLVED" || event.event_type_code === "CASE_DECISION_APPROVED" || event.event_type_code === "COURT_FILING" || event.event_type_code === "MOTION_RECEIVED"
+    : event.event_type_code === "CASE_RESOLVED" || event.event_type_code === "CASE_DECISION_APPROVED" || event.event_type_code === "COURT_FILING" || event.event_type_code === "MOTION_RECEIVED" || event.event_type_code === "MOTION_RESOLVED"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
       : eventSourceTable(event) === "case_assignments"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
@@ -635,6 +643,7 @@ function MotionEventDetails({ motion }: { motion: CaseMotionRecord }) {
         <OptionalDetailItem label="Date resolved" value={firstDisplayValue(motion.date_resolved_raw, formatDate(motion.date_resolved))} />
         <OptionalDetailItem label="Date approved" value={firstDisplayValue(motion.date_approved_raw, formatDate(motion.date_approved))} />
         <OptionalDetailItem label="Filed by" value={firstDisplayValue(motion.filed_by_raw, motion.filed_by)} />
+        <OptionalDetailItem label="Assigned Prosecutor" value={motion.assigned_prosecutor_name} />
         <OptionalDetailItem label="Remarks" value={firstDisplayValue(motion.remarks_raw, motion.remarks)} />
       </div>
     </div>
@@ -919,9 +928,12 @@ export function CaseTimeline({
   const [caseResolutions, setCaseResolutions] = useState<CaseResolutionWithActionsRecord[]>([]);
   const [courtFilingDecisions, setCourtFilingDecisions] = useState<CourtFilingDecisionRecord[]>([]);
   const [courtOptions, setCourtOptions] = useState<CourtReferenceRecord[]>([]);
+  const [motionRecommendations, setMotionRecommendations] = useState<MotionResolutionRecommendationRecord[]>([]);
+  const [isRecommendationDialogOpen, setIsRecommendationDialogOpen] = useState(false);
+  const [recommendationForm, setRecommendationForm] = useState({ label: "", code: "" });
   const [isCourtPickerOpen, setIsCourtPickerOpen] = useState(false);
   const initialManilaDateTime = getManilaDateTimeInputValues();
-  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: initialManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", motionDetails: [] as MotionDetailRow[] });
+  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: initialManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDetails: [] as MotionDetailRow[] });
   const [manilaNow, setManilaNow] = useState(() => new Date());
   const [isAddDateTimeDirty, setIsAddDateTimeDirty] = useState(false);
   const [editForm, setEditForm] = useState({ eventDate: "", title: "", description: "", editReason: "" });
@@ -967,10 +979,11 @@ export function CaseTimeline({
     setEventTypesError(null);
     setCaseResolutions([]);
     setCourtFilingDecisions([]);
+    setRecommendationForm({ label: "", code: "" });
     const currentManilaDateTime = getManilaDateTimeInputValues();
     setManilaNow(new Date());
     setIsAddDateTimeDirty(false);
-    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: currentManilaDateTime.date, eventTime: currentManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", motionDetails: [] as MotionDetailRow[] });
+    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: currentManilaDateTime.date, eventTime: currentManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDetails: [] as MotionDetailRow[] });
     setIsAddDialogOpen(true);
 
     if (eventTypes.length === 0) {
@@ -1020,6 +1033,9 @@ export function CaseTimeline({
       const courtsResult = await getCourts();
       if (!courtsResult.error) setCourtOptions(courtsResult.data);
     }
+
+    const motionRecommendationsResult = await getMotionResolutionRecommendations();
+    if (!motionRecommendationsResult.error) setMotionRecommendations(motionRecommendationsResult.data);
   };
 
   useEffect(() => {
@@ -1042,6 +1058,7 @@ export function CaseTimeline({
     const isDecisionApproved = addForm.eventTypeCode === "CASE_DECISION_APPROVED";
     const isCourtFiling = addForm.eventTypeCode === "COURT_FILING";
     const isMotionReceived = addForm.eventTypeCode === "MOTION_RECEIVED";
+    const isMotionResolved = addForm.eventTypeCode === "MOTION_RESOLVED";
     if (!addForm.eventTypeCode || !addForm.eventDate) return;
     if ((isAssignment || isReassignment) && !addForm.prosecutorId) return;
     if (isReassignment && !addForm.reason.trim()) return;
@@ -1049,11 +1066,12 @@ export function CaseTimeline({
     if (isDecisionApproved && (!addForm.prosecutorId || !addForm.caseResolutionId || !addForm.approvalActions.some((action) => action.chargeText.trim()))) return;
     if (isCourtFiling && (!addForm.courtFilingDecisionId || !addForm.courtName.trim() || !addForm.chargeFiled.trim())) return;
     if (isMotionReceived && (!addForm.motionTitle.trim() || !addForm.filedByCode)) return;
+    if (isMotionResolved && (!addForm.motionResolveMotionId || !addForm.motionRecommendationId)) return;
     if (isReassignment && currentAssignment?.prosecutor_id === Number(addForm.prosecutorId)) {
       setActionError("The selected prosecutor is already assigned to this case.");
       return;
     }
-    if (!isAssignment && !isReassignment && !isResolved && !isDecisionApproved && !isCourtFiling && !isMotionReceived && !addForm.title.trim()) return;
+    if (!isAssignment && !isReassignment && !isResolved && !isDecisionApproved && !isCourtFiling && !isMotionReceived && !isMotionResolved && !addForm.title.trim()) return;
     setIsSaving(true);
     setActionError(null);
     const result = isAssignment
@@ -1117,8 +1135,18 @@ export function CaseTimeline({
                   dateFiled: addForm.eventDate,
                   timeFiled: addForm.eventTime || null,
                   details: addForm.motionDetails,
+                  assignedProsecutorId: addForm.assignedProsecutorId ? Number(addForm.assignedProsecutorId) : null,
                   remarks: addForm.description,
                 })
+                : isMotionResolved
+                  ? await recordMotionResolvedEvent({
+                    caseId,
+                    caseMotionId: Number(addForm.motionResolveMotionId),
+                    recommendationId: Number(addForm.motionRecommendationId),
+                    dateResolved: addForm.eventDate,
+                    timeResolved: addForm.eventTime || null,
+                    remarks: addForm.description,
+                  })
           : await createCaseEvent({
         caseId,
         eventTypeCode: addForm.eventTypeCode,
@@ -1204,6 +1232,7 @@ export function CaseTimeline({
   const isAddingDecisionApproved = addForm.eventTypeCode === "CASE_DECISION_APPROVED";
   const isAddingCourtFiling = addForm.eventTypeCode === "COURT_FILING";
   const isAddingMotionReceived = addForm.eventTypeCode === "MOTION_RECEIVED";
+  const isAddingMotionResolved = addForm.eventTypeCode === "MOTION_RESOLVED";
   const approvingProsecutors = prosecutors.filter((prosecutor) => {
     const position = prosecutor as { position_code?: string | null; position_group_type?: string | null };
     return position.position_group_type === "PROSECUTOR" && ["CHIEF_PROSECUTOR", "DEPUTY_PROSECUTOR"].includes(String(position.position_code ?? ""));
@@ -1211,7 +1240,13 @@ export function CaseTimeline({
   const showChargesForFiling = addForm.recommendationCode === "CASE_FOR_FILING" || addForm.recommendationCode === "MIXED_RESULT";
   const showChargesForDismissal = addForm.recommendationCode === "CASE_DISMISSAL" || addForm.recommendationCode === "MIXED_RESULT";
   const isAddingAssignmentLike = isAddingAssignment || isAddingReassignment;
-  const currentAssignment = assignments.find((assignment) => !assignment.unassigned_at && ("is_voided" in assignment ? assignment.is_voided === false : true)) ?? null;
+  const activeAssignments = assignments.filter((assignment) => !assignment.unassigned_at && ("is_voided" in assignment ? assignment.is_voided === false : true));
+  const currentAssignment = [...activeAssignments].sort((left, right) => {
+    const leftTime = left.assigned_at ? new Date(left.assigned_at).getTime() : 0;
+    const rightTime = right.assigned_at ? new Date(right.assigned_at).getTime() : 0;
+    return rightTime - leftTime || Number(right.id) - Number(left.id);
+  })[0] ?? null;
+  const eligibleMotions = motions.filter((motion) => !motion.is_voided && motion.case_event_id && !motion.active_motion_resolution_id);
   const selectedEventTypeLabel = eventTypes.find((eventType) => eventType.code === addForm.eventTypeCode)?.display_label ?? "";
   const selectedApprovalResolution = caseResolutions.find((resolution) => resolution.id === addForm.caseResolutionId) ?? null;
   const filteredCourts = courtOptions.filter((court) => {
@@ -1230,6 +1265,32 @@ export function CaseTimeline({
       decisionCode: action.action_code,
     }))
     : [emptyApprovalAction()];
+
+  useEffect(() => {
+    if (addForm.eventTypeCode !== "MOTION_RECEIVED" || addForm.assignedProsecutorId || !currentAssignment?.prosecutor_id) return;
+    setAddForm((form) => ({ ...form, assignedProsecutorId: String(currentAssignment.prosecutor_id) }));
+  }, [addForm.assignedProsecutorId, addForm.eventTypeCode, currentAssignment?.prosecutor_id]);
+
+  useEffect(() => {
+    if (addForm.eventTypeCode !== "MOTION_RESOLVED" || addForm.motionResolveMotionId || eligibleMotions.length !== 1) return;
+    setAddForm((form) => ({ ...form, motionResolveMotionId: String(eligibleMotions[0].id) }));
+  }, [addForm.eventTypeCode, addForm.motionResolveMotionId, eligibleMotions]);
+
+  const handleAddRecommendationSave = async () => {
+    if (!recommendationForm.label.trim()) return;
+    setIsSaving(true);
+    setActionError(null);
+    const result = await addMotionResolutionRecommendation({ displayLabel: recommendationForm.label, code: recommendationForm.code });
+    setIsSaving(false);
+    if (result.error) {
+      setActionError(result.error.message);
+      return;
+    }
+    const recommendationsResult = await getMotionResolutionRecommendations();
+    if (!recommendationsResult.error) setMotionRecommendations(recommendationsResult.data);
+    setAddForm((form) => ({ ...form, motionRecommendationId: String(result.data) }));
+    setIsRecommendationDialogOpen(false);
+  };
 
   const visibleEvents = useMemo(() => events.filter((event) => showVoided || !event.is_voided), [events, showVoided]);
   const timelineGroupedByDate = useMemo(() => {
@@ -1388,7 +1449,7 @@ export function CaseTimeline({
             {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
             <div className="space-y-2">
               <Label htmlFor="add-event-type">Event Type</Label>
-              <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : e.target.value === "COURT_FILING" ? "Court Filing" : e.target.value === "MOTION_RECEIVED" ? "Motion Received" : form.title }))}>
+              <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : e.target.value === "COURT_FILING" ? "Court Filing" : e.target.value === "MOTION_RECEIVED" ? "Motion Received" : e.target.value === "MOTION_RESOLVED" ? "Motion Resolved" : form.title }))}>
                 {eventTypes.map((eventType) => <option key={eventType.code} value={eventType.code}>{eventType.display_label}</option>)}
               </select>
             </div>
@@ -1447,9 +1508,18 @@ export function CaseTimeline({
               <>
                 <div className="space-y-2"><Label htmlFor="add-motion-title">Motion Title</Label><Input id="add-motion-title" value={addForm.motionTitle} onChange={(e) => setAddForm((form) => ({ ...form, motionTitle: e.target.value }))} /></div>
                 <div className="space-y-2"><Label htmlFor="add-motion-filed-by">Filed By</Label><select id="add-motion-filed-by" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.filedByCode} onChange={(e) => setAddForm((form) => ({ ...form, filedByCode: e.target.value }))}><option value="">Select filer</option><option value="COMPLAINANT">Complainant</option><option value="RESPONDENT">Respondent</option></select></div>
+                <div className="space-y-2"><Label htmlFor="add-motion-assigned-prosecutor">Assigned Prosecutor</Label><select id="add-motion-assigned-prosecutor" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.assignedProsecutorId} onChange={(e) => setAddForm((form) => ({ ...form, assignedProsecutorId: e.target.value }))}><option value="">No prosecutor selected</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select></div>
                 <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-motion-date-filed">Date Filed</Label><Input id="add-motion-date-filed" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div><div className="space-y-1"><Label htmlFor="add-motion-time-filed">Time Filed</Label><Input id="add-motion-time-filed" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div></div>
                 <div className="space-y-2"><div className="flex items-center justify-between gap-2"><Label>Additional Details</Label><Button type="button" variant="outline" size="sm" onClick={() => setAddForm((form) => ({ ...form, motionDetails: [...form.motionDetails, { detail: "", value: "" }] }))}>Add Detail</Button></div>{addForm.motionDetails.map((row, index) => <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]"><Input placeholder="Detail" value={row.detail} onChange={(e) => setAddForm((form) => ({ ...form, motionDetails: form.motionDetails.map((item, itemIndex) => itemIndex === index ? { ...item, detail: e.target.value } : item) }))} /><Input placeholder="Value" value={row.value} onChange={(e) => setAddForm((form) => ({ ...form, motionDetails: form.motionDetails.map((item, itemIndex) => itemIndex === index ? { ...item, value: e.target.value } : item) }))} /><Button type="button" variant="outline" size="sm" onClick={() => setAddForm((form) => ({ ...form, motionDetails: form.motionDetails.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</Button></div>)}</div>
                 <div className="space-y-2"><Label htmlFor="add-motion-remarks">Remarks</Label><Textarea id="add-motion-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
+              </>
+            ) : isAddingMotionResolved ? (
+              <>
+                {eligibleMotions.length === 0 ? <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">No pending motion is available for resolution.</div> : null}
+                <div className="space-y-2"><Label htmlFor="add-motion-to-resolve">Motion</Label><select id="add-motion-to-resolve" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionResolveMotionId} onChange={(e) => setAddForm((form) => ({ ...form, motionResolveMotionId: e.target.value }))}><option value="">Select motion</option>{eligibleMotions.map((motion) => <option key={motion.id} value={motion.id}>{motion.motion_title ?? motion.motion_name} • {motionFiledByLabel(motion.filed_by_code) ?? motion.filed_by ?? "—"} • {formatDate(motion.date_filed ?? motion.date_received)}</option>)}</select></div>
+                <div className="space-y-2"><Label htmlFor="add-motion-recommendation">Recommendation</Label><select id="add-motion-recommendation" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionRecommendationId} onChange={(e) => { if (e.target.value === "__add__") { setRecommendationForm({ label: "", code: "" }); setIsRecommendationDialogOpen(true); return; } setAddForm((form) => ({ ...form, motionRecommendationId: e.target.value })); }}><option value="">Select recommendation</option>{motionRecommendations.map((recommendation) => <option key={recommendation.id} value={recommendation.id}>{recommendation.display_label}</option>)}<option value="__add__">+ Add Recommendation</option></select></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-motion-date-resolved">Date Resolved</Label><Input id="add-motion-date-resolved" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div><div className="space-y-1"><Label htmlFor="add-motion-time-resolved">Time Resolved</Label><Input id="add-motion-time-resolved" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div></div>
+                <div className="space-y-2"><Label htmlFor="add-motion-resolution-remarks">Remarks</Label><Textarea id="add-motion-resolution-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
               </>
             ) : (
               <>
@@ -1461,7 +1531,24 @@ export function CaseTimeline({
           </div>
           <DialogFooter className="border-t pt-3">
             <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
-            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.caseResolutionId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : isAddingCourtFiling ? !addForm.courtFilingDecisionId || !addForm.courtName.trim() || !addForm.chargeFiled.trim() : isAddingMotionReceived ? !addForm.motionTitle.trim() || !addForm.filedByCode : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : isAddingCourtFiling ? "Record Court Filing" : isAddingMotionReceived ? "Record Motion Received" : "Add event"}</Button>
+            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.caseResolutionId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : isAddingCourtFiling ? !addForm.courtFilingDecisionId || !addForm.courtName.trim() || !addForm.chargeFiled.trim() : isAddingMotionReceived ? !addForm.motionTitle.trim() || !addForm.filedByCode : isAddingMotionResolved ? !addForm.motionResolveMotionId || !addForm.motionRecommendationId : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : isAddingCourtFiling ? "Record Court Filing" : isAddingMotionReceived ? "Record Motion Received" : isAddingMotionResolved ? "Record Motion Resolved" : "Add event"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={isRecommendationDialogOpen} onOpenChange={setIsRecommendationDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add recommendation</DialogTitle>
+            <DialogDescription>Add a Motion Resolution recommendation option.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
+            <div className="space-y-2"><Label htmlFor="motion-recommendation-label">Recommendation Label</Label><Input id="motion-recommendation-label" value={recommendationForm.label} onChange={(e) => { const label = e.target.value; setRecommendationForm((form) => ({ ...form, label, code: form.code || label.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") })); }} /></div>
+            <div className="space-y-2"><Label htmlFor="motion-recommendation-code">Recommendation Code</Label><Input id="motion-recommendation-code" value={recommendationForm.code} onChange={(e) => setRecommendationForm((form) => ({ ...form, code: e.target.value.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") }))} /></div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsRecommendationDialogOpen(false)}>Cancel</Button>
+            <Button type="button" onClick={handleAddRecommendationSave} disabled={isSaving || !recommendationForm.label.trim()}>{isSaving ? "Saving..." : "Save Recommendation"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
