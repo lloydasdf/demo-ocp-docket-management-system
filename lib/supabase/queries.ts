@@ -3434,3 +3434,94 @@ export async function createNewDocketEntry(input: NewDocketEntryInput): Promise<
     return fail(toQueryError(error, "createNewDocketEntry", "cases"));
   }
 }
+
+export type CourtStatusUpdateDetailInput = { detail: string; value: string };
+export type CourtStatusUpdateCriminalCaseRecord = { id: number | null; criminal_case_no: string; sort_order: number | null };
+export type CourtStatusUpdateStatusRecord = { id: number | null; court_status: string; status_date: string; sort_order: number | null };
+export type CourtStatusUpdateCandidateRecord = {
+  id: number;
+  case_id: number;
+  case_event_id: number;
+  court_name: string;
+  court_branch: string | null;
+  charge_filed: string;
+  date_filed: string;
+  time_filed: string | null;
+  information_count: number | null;
+  criminal_case_no: string | null;
+  court_status: string | null;
+  remarks: string | null;
+  court_status_update_remarks: string | null;
+  additional_details_jsonb: CourtStatusUpdateDetailInput[];
+  approved_filing_decision: string | null;
+  criminal_case_numbers: CourtStatusUpdateCriminalCaseRecord[];
+  court_statuses: CourtStatusUpdateStatusRecord[];
+};
+
+export async function getCourtStatusUpdateCandidates(caseId: number): Promise<SupabaseQueryResult<CourtStatusUpdateCandidateRecord[]>> {
+  return runSupabaseQuery("getCourtStatusUpdateCandidates", "case_court_filings" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase
+      .from("case_court_filings" as never)
+      .select("id, case_id, case_event_id, court_name, court_branch, charge_filed, date_filed, time_filed, information_count, criminal_case_no, court_status, remarks, court_status_update_remarks, additional_details_jsonb, case_events!inner(id, is_voided, details_jsonb), case_court_filing_criminal_cases(id, criminal_case_no, sort_order, is_voided), case_court_filing_statuses(id, court_status, status_date, sort_order, is_voided)" as never)
+      .eq("case_id" as never, caseId)
+      .eq("is_voided" as never, false)
+      .eq("case_events.is_voided" as never, false)
+      .order("date_filed" as never, { ascending: false }) as unknown as { data: any[] | null; error: unknown };
+    if (error) return { data: [], error };
+    const mapped = (data ?? []).map((row) => ({
+      id: Number(row.id),
+      case_id: Number(row.case_id),
+      case_event_id: Number(row.case_event_id),
+      court_name: row.court_name ?? "",
+      court_branch: row.court_branch ?? null,
+      charge_filed: row.charge_filed ?? "",
+      date_filed: row.date_filed ?? "",
+      time_filed: row.time_filed ?? null,
+      information_count: row.information_count ?? null,
+      criminal_case_no: row.criminal_case_no ?? null,
+      court_status: row.court_status ?? null,
+      remarks: row.remarks ?? null,
+      court_status_update_remarks: row.court_status_update_remarks ?? null,
+      additional_details_jsonb: Array.isArray(row.additional_details_jsonb) ? row.additional_details_jsonb : [],
+      approved_filing_decision: row.case_events?.details_jsonb?.approved_filing_decision_label ?? row.case_events?.details_jsonb?.approved_filing_decision ?? null,
+      criminal_case_numbers: (row.case_court_filing_criminal_cases ?? []).filter((item: any) => item.is_voided === false).sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id).map((item: any) => ({ id: Number(item.id), criminal_case_no: item.criminal_case_no ?? "", sort_order: item.sort_order ?? null })),
+      court_statuses: (row.case_court_filing_statuses ?? []).filter((item: any) => item.is_voided === false).sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.id - b.id).map((item: any) => ({ id: Number(item.id), court_status: item.court_status ?? "", status_date: item.status_date ?? "", sort_order: item.sort_order ?? null })),
+    }));
+    return { data: mapped, error: null };
+  }, []);
+}
+
+export interface UpdateCourtFilingStatusDetailsInput {
+  caseId: number;
+  courtFilingId: number;
+  criminalCaseNumbers: { criminal_case_no: string }[];
+  courtStatuses: { court_status: string; status_date: string }[];
+  informationCount?: number | null;
+  additionalDetails: CourtStatusUpdateDetailInput[];
+  remarks?: string | null;
+}
+
+export async function updateCourtFilingStatusDetails(input: UpdateCourtFilingStatusDetailsInput): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table: "case_court_filings" as RelationName, operation: "updateCourtFilingStatusDetails" });
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "updateCourtFilingStatusDetails", "users"));
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("update_court_filing_status_details" as never, {
+      p_case_id: input.caseId,
+      p_court_filing_id: input.courtFilingId,
+      p_criminal_case_numbers: input.criminalCaseNumbers.map((row) => ({ criminal_case_no: row.criminal_case_no.trim() })).filter((row) => row.criminal_case_no),
+      p_court_statuses: input.courtStatuses.map((row) => ({ court_status: row.court_status.trim(), status_date: row.status_date })).filter((row) => row.court_status || row.status_date),
+      p_information_count: input.informationCount ?? null,
+      p_additional_details_jsonb: input.additionalDetails.map((row) => ({ detail: row.detail.trim(), value: row.value.trim() })).filter((row) => row.detail || row.value),
+      p_remarks: input.remarks?.trim() || null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "updateCourtFilingStatusDetails", "case_court_filings" as RelationName));
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "updateCourtFilingStatusDetails", "case_court_filings" as RelationName));
+  }
+}
