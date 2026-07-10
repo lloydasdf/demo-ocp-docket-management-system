@@ -287,6 +287,8 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_old jsonb; v_new jsonb; v_case_id bigint; v_event_type_code text; v_source_table text; v_source_id bigint;
   v_filing_id bigint; v_filing_old jsonb; v_filing_new jsonb; v_approval_id bigint; v_resolution_id bigint;
+  v_assignment_id bigint; v_assignment_old jsonb; v_assignment_new jsonb;
+  v_previous_assignment_id bigint; v_previous_assignment_old jsonb; v_previous_assignment_new jsonb;
   v_status_code text; v_status_label text; v_status_id bigint; v_prev_status_id bigint; v_status_history_id bigint; v_old_details jsonb; v_new_details jsonb;
 BEGIN
   IF nullif(trim(p_void_reason), '') IS NULL THEN RAISE EXCEPTION 'Void reason is required'; END IF;
@@ -321,9 +323,118 @@ BEGIN
     END IF;
   END IF;
 
-  IF lower(coalesce(v_source_table,'')) = 'case_assignments' OR v_event_type_code IN ('CASE_ASSIGNMENT','CASE_REASSIGNMENT') THEN
+  IF v_event_type_code = 'CASE_ASSIGNMENT' THEN
+    SELECT ca.id, to_jsonb(ca) INTO v_assignment_id, v_assignment_old
+    FROM public.case_assignments ca
+    WHERE ca.id = v_source_id OR ca.case_event_id = p_case_event_id
+    ORDER BY CASE WHEN ca.id = v_source_id THEN 0 ELSE 1 END
+    LIMIT 1;
+
+    IF v_assignment_id IS NOT NULL THEN
+      UPDATE public.case_assignments
+      SET is_voided = true,
+          voided_at = now(),
+          voided_by_user_id = p_voided_by_user_id,
+          void_reason = p_void_reason,
+          unassigned_at = COALESCE(unassigned_at, now())
+      WHERE id = v_assignment_id;
+
+      SELECT to_jsonb(ca) INTO v_assignment_new
+      FROM public.case_assignments ca
+      WHERE ca.id = v_assignment_id;
+
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (
+        p_voided_by_user_id,
+        'case_assignments',
+        v_assignment_id,
+        'VOID_CASE_ASSIGNMENT_FROM_EVENT',
+        v_assignment_old,
+        v_assignment_new,
+        v_case_id,
+        'Assignment row voided because the Case Assignment event was voided.',
+        jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason)
+      );
+    END IF;
+  ELSIF v_event_type_code = 'CASE_REASSIGNMENT' THEN
+    v_previous_assignment_id := NULLIF(v_old#>>'{details_jsonb,previous_assignment_id}', '')::bigint;
+
+    SELECT ca.id, to_jsonb(ca) INTO v_assignment_id, v_assignment_old
+    FROM public.case_assignments ca
+    WHERE ca.id = v_source_id OR ca.case_event_id = p_case_event_id
+    ORDER BY CASE WHEN ca.id = v_source_id THEN 0 ELSE 1 END
+    LIMIT 1;
+
+    IF v_assignment_id IS NOT NULL THEN
+      UPDATE public.case_assignments
+      SET is_voided = true,
+          voided_at = now(),
+          voided_by_user_id = p_voided_by_user_id,
+          void_reason = p_void_reason,
+          unassigned_at = COALESCE(unassigned_at, now())
+      WHERE id = v_assignment_id;
+
+      SELECT to_jsonb(ca) INTO v_assignment_new
+      FROM public.case_assignments ca
+      WHERE ca.id = v_assignment_id;
+    END IF;
+
+    IF v_previous_assignment_id IS NOT NULL THEN
+      SELECT to_jsonb(ca) INTO v_previous_assignment_old
+      FROM public.case_assignments ca
+      WHERE ca.id = v_previous_assignment_id
+        AND ca.case_id = v_case_id
+      FOR UPDATE;
+
+      IF v_previous_assignment_old IS NOT NULL THEN
+        UPDATE public.case_assignments
+        SET unassigned_at = NULL,
+            unassigned_by_user_id = NULL,
+            unassignment_reason = NULL
+        WHERE id = v_previous_assignment_id
+          AND case_id = v_case_id
+          AND is_voided IS FALSE;
+
+        SELECT to_jsonb(ca) INTO v_previous_assignment_new
+        FROM public.case_assignments ca
+        WHERE ca.id = v_previous_assignment_id;
+      END IF;
+    END IF;
+
+    INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+    VALUES (
+      p_voided_by_user_id,
+      'case_assignments',
+      v_assignment_id,
+      'VOID_CASE_REASSIGNMENT_NEW_ASSIGNMENT',
+      v_assignment_old,
+      v_assignment_new,
+      v_case_id,
+      'Reassignment-created assignment row voided because the Case Reassignment event was voided.',
+      jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'previous_assignment_id',v_previous_assignment_id)
+    );
+
+    IF v_previous_assignment_old IS NOT NULL THEN
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (
+        p_voided_by_user_id,
+        'case_assignments',
+        v_previous_assignment_id,
+        'RESTORE_PREVIOUS_ASSIGNMENT_FROM_REASSIGNMENT_VOID',
+        v_previous_assignment_old,
+        v_previous_assignment_new,
+        v_case_id,
+        'Previous assignment restored because the Case Reassignment event was voided.',
+        jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'voided_assignment_id',v_assignment_id)
+      );
+    END IF;
+  ELSIF lower(coalesce(v_source_table,'')) = 'case_assignments' THEN
     UPDATE public.case_assignments
-    SET is_voided = true, voided_at = now(), voided_by_user_id = p_voided_by_user_id, void_reason = p_void_reason, unassigned_at = COALESCE(unassigned_at, now())
+    SET is_voided = true,
+        voided_at = now(),
+        voided_by_user_id = p_voided_by_user_id,
+        void_reason = p_void_reason,
+        unassigned_at = COALESCE(unassigned_at, now())
     WHERE id = v_source_id OR case_event_id = p_case_event_id;
   END IF;
 
@@ -347,6 +458,25 @@ BEGIN
   IF v_event_type_code IN ('CASE_RESOLVED','CASE_DECISION_APPROVED','COURT_FILING','CASE_ASSIGNMENT','CASE_REASSIGNMENT')
      OR lower(coalesce(v_source_table,'')) IN ('case_resolutions','case_resolution_approvals','case_court_filings','case_assignments') THEN
     PERFORM public.apply_case_state_recompute(v_case_id, CURRENT_DATE, NULL, p_case_event_id, p_voided_by_user_id);
+
+    IF v_event_type_code = 'CASE_REASSIGNMENT' THEN
+      SELECT to_jsonb(cpd) INTO v_new_details
+      FROM public.case_private_details cpd
+      WHERE cpd.case_id = v_case_id;
+
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (
+        p_voided_by_user_id,
+        'case_private_details',
+        v_case_id,
+        'CASE_REASSIGNMENT_VOID_STATUS_STAGE_RECOMPUTED',
+        v_old_details,
+        v_new_details,
+        v_case_id,
+        'Case Reassignment voided; case status and case stage recomputed from active workflow records.',
+        jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'restored_assignment_id',v_previous_assignment_id,'voided_assignment_id',v_assignment_id)
+      );
+    END IF;
   END IF;
 
 END;
