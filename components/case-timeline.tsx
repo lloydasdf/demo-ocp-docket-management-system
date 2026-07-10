@@ -1511,12 +1511,14 @@ export function CaseTimeline({
           <div className="min-h-0 space-y-3 overflow-y-auto pr-1">
             {eventTypesError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{eventTypesError}</p> : null}
             {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
-            <div className="space-y-2">
-              <Label htmlFor="add-event-type">Event Type</Label>
-              <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : e.target.value === "COURT_FILING" ? "Court Filing" : e.target.value === "MOTION_RECEIVED" ? "Motion Received" : e.target.value === "MOTION_RESOLVED" ? "Motion Resolved" : e.target.value === "MOTION_DECISION_APPROVED" ? "Motion Decision Approved" : form.title }))}>
-                {eventTypes.map((eventType) => <option key={eventType.code} value={eventType.code}>{eventType.display_label}</option>)}
-              </select>
-            </div>
+            {isAddingMotionDecisionApproved && addForm.motionDecisionStep === 3 ? null : (
+              <div className="space-y-2">
+                <Label htmlFor="add-event-type">Event Type</Label>
+                <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : e.target.value === "COURT_FILING" ? "Court Filing" : e.target.value === "MOTION_RECEIVED" ? "Motion Received" : e.target.value === "MOTION_RESOLVED" ? "Motion Resolved" : e.target.value === "MOTION_DECISION_APPROVED" ? "Motion Decision Approved" : form.title }))}>
+                  {eventTypes.map((eventType) => <option key={eventType.code} value={eventType.code}>{eventType.display_label}</option>)}
+                </select>
+              </div>
+            )}
             {isAddingAssignment ? (
               <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">
                 Assigning this case to a prosecutor will automatically change the case status to Pending.
