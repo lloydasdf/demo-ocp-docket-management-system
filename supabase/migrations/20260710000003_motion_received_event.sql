@@ -119,7 +119,8 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.record_motion_received_event(bigint,text,text,date,time without time zone,jsonb,text,bigint) TO authenticated;
 
-CREATE OR REPLACE VIEW public.v_case_motions_detail AS
+DROP VIEW IF EXISTS public.v_case_motions_detail;
+CREATE VIEW public.v_case_motions_detail AS
 SELECT
   id,
   case_id,
