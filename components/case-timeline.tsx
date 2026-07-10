@@ -60,7 +60,14 @@ import {
   recordMotionResolvedEvent,
   getMotionResolutionRecommendations,
   addMotionResolutionRecommendation,
+  recordMotionDecisionApprovedEvent,
+  getMotionResolutionApprovalCandidates,
+  getMotionDecisionCaseStatusOptions,
+  getMotionDecisionCaseStageOptions,
   type MotionResolutionRecommendationRecord,
+  type MotionResolutionApprovalCandidateRecord,
+  type CaseStatusOptionRecord,
+  type CaseStageOptionRecord,
   editCaseEvent,
   getCaseEventTypes,
   voidCaseEvent,
@@ -178,17 +185,29 @@ function motionFiledByLabel(code: string | null | undefined) {
 }
 
 function motionWorkflowEventDetails(event: CaseTimelineEventRecord) {
-  if (event.event_type_code !== "MOTION_RECEIVED" && event.event_type_code !== "MOTION_RESOLVED") return null;
+  if (!["MOTION_RECEIVED", "MOTION_RESOLVED", "MOTION_DECISION_APPROVED"].includes(event.event_type_code ?? "")) return null;
   const details = event.details_jsonb && typeof event.details_jsonb === "object" ? event.details_jsonb as Record<string, unknown> : {};
   return [
     { label: "Motion Title", value: stringDetail(details.motion_title) ?? event.title },
     { label: "Filed By", value: stringDetail(details.filed_by_label) ?? motionFiledByLabel(stringDetail(details.filed_by_code)) },
     { label: "Assigned Prosecutor", value: stringDetail(details.assigned_prosecutor_name) },
-    event.event_type_code === "MOTION_RESOLVED"
-      ? { label: "Recommendation", value: stringDetail(details.recommendation_label) ?? stringDetail(details.recommendation_code) }
-      : { label: "Date Filed", value: formatDate(stringDetail(details.date_filed) ?? event.event_date) },
-    { label: event.event_type_code === "MOTION_RESOLVED" ? "Date Resolved" : "Time Filed", value: event.event_type_code === "MOTION_RESOLVED" ? formatDate(stringDetail(details.date_resolved) ?? event.event_date) : formatTime(stringDetail(details.time_filed) ?? event.event_time) },
-    ...(event.event_type_code === "MOTION_RESOLVED" ? [{ label: "Time Resolved", value: formatTime(stringDetail(details.time_resolved) ?? event.event_time) }] : []),
+    event.event_type_code === "MOTION_DECISION_APPROVED"
+      ? { label: "Original Recommendation", value: stringDetail(details.original_recommendation_label) ?? stringDetail(details.original_recommendation_code) }
+      : event.event_type_code === "MOTION_RESOLVED"
+        ? { label: "Recommendation", value: stringDetail(details.recommendation_label) ?? stringDetail(details.recommendation_code) }
+        : { label: "Date Filed", value: formatDate(stringDetail(details.date_filed) ?? event.event_date) },
+    ...(event.event_type_code === "MOTION_DECISION_APPROVED" ? [
+      { label: "Decision Approved", value: stringDetail(details.approved_decision_label) ?? stringDetail(details.approved_decision_code) },
+      { label: "Approved By", value: stringDetail(details.approved_by_name) },
+      { label: "Date Approved", value: formatDate(stringDetail(details.date_approved) ?? event.event_date) },
+      { label: "Time Approved", value: formatTime(stringDetail(details.time_approved) ?? event.event_time) },
+      { label: "Update Case Status", value: details.updates_case_status === true ? "Yes" : "No" },
+      { label: "Selected Case Status", value: details.updates_case_status === true ? stringDetail(details.selected_case_status_label) : null },
+      { label: "Selected Case Stage", value: details.updates_case_status === true ? stringDetail(details.selected_case_stage_label) : null },
+    ] : [
+      { label: event.event_type_code === "MOTION_RESOLVED" ? "Date Resolved" : "Time Filed", value: event.event_type_code === "MOTION_RESOLVED" ? formatDate(stringDetail(details.date_resolved) ?? event.event_date) : formatTime(stringDetail(details.time_filed) ?? event.event_time) },
+      ...(event.event_type_code === "MOTION_RESOLVED" ? [{ label: "Time Resolved", value: formatTime(stringDetail(details.time_resolved) ?? event.event_time) }] : []),
+    ]),
     { label: "Remarks", value: stringDetail(details.remarks) ?? event.description },
   ];
 }
@@ -422,7 +441,7 @@ function visibleEventDetails(event: CaseTimelineEventRecord) {
 
   const hiddenKeys = event.event_type_code === "CASE_RECEIVED"
     ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
-    : event.event_type_code === "CASE_RESOLVED" || event.event_type_code === "CASE_DECISION_APPROVED" || event.event_type_code === "COURT_FILING" || event.event_type_code === "MOTION_RECEIVED" || event.event_type_code === "MOTION_RESOLVED"
+    : event.event_type_code === "CASE_RESOLVED" || event.event_type_code === "CASE_DECISION_APPROVED" || event.event_type_code === "COURT_FILING" || event.event_type_code === "MOTION_RECEIVED" || event.event_type_code === "MOTION_RESOLVED" || event.event_type_code === "MOTION_DECISION_APPROVED"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
       : eventSourceTable(event) === "case_assignments"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
@@ -929,11 +948,14 @@ export function CaseTimeline({
   const [courtFilingDecisions, setCourtFilingDecisions] = useState<CourtFilingDecisionRecord[]>([]);
   const [courtOptions, setCourtOptions] = useState<CourtReferenceRecord[]>([]);
   const [motionRecommendations, setMotionRecommendations] = useState<MotionResolutionRecommendationRecord[]>([]);
+  const [motionResolutionApprovalCandidates, setMotionResolutionApprovalCandidates] = useState<MotionResolutionApprovalCandidateRecord[]>([]);
+  const [caseStatusOptions, setCaseStatusOptions] = useState<CaseStatusOptionRecord[]>([]);
+  const [caseStageOptions, setCaseStageOptions] = useState<CaseStageOptionRecord[]>([]);
   const [isRecommendationDialogOpen, setIsRecommendationDialogOpen] = useState(false);
   const [recommendationLabel, setRecommendationLabel] = useState("");
   const [isCourtPickerOpen, setIsCourtPickerOpen] = useState(false);
   const initialManilaDateTime = getManilaDateTimeInputValues();
-  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: initialManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDetails: [] as MotionDetailRow[] });
+  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: initialManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalResolutionId: "", motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[] });
   const [manilaNow, setManilaNow] = useState(() => new Date());
   const [isAddDateTimeDirty, setIsAddDateTimeDirty] = useState(false);
   const [editForm, setEditForm] = useState({ eventDate: "", title: "", description: "", editReason: "" });
@@ -979,11 +1001,12 @@ export function CaseTimeline({
     setEventTypesError(null);
     setCaseResolutions([]);
     setCourtFilingDecisions([]);
+    setMotionResolutionApprovalCandidates([]);
     setRecommendationLabel("");
     const currentManilaDateTime = getManilaDateTimeInputValues();
     setManilaNow(new Date());
     setIsAddDateTimeDirty(false);
-    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: currentManilaDateTime.date, eventTime: currentManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDetails: [] as MotionDetailRow[] });
+    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: currentManilaDateTime.date, eventTime: currentManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalResolutionId: "", motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[] });
     setIsAddDialogOpen(true);
 
     if (eventTypes.length === 0) {
@@ -1036,6 +1059,15 @@ export function CaseTimeline({
 
     const motionRecommendationsResult = await getMotionResolutionRecommendations();
     if (!motionRecommendationsResult.error) setMotionRecommendations(motionRecommendationsResult.data);
+
+    const motionResolutionApprovalCandidatesResult = await getMotionResolutionApprovalCandidates(caseId);
+    if (!motionResolutionApprovalCandidatesResult.error) setMotionResolutionApprovalCandidates(motionResolutionApprovalCandidatesResult.data);
+
+    const statusOptionsResult = await getMotionDecisionCaseStatusOptions();
+    if (!statusOptionsResult.error) setCaseStatusOptions(statusOptionsResult.data);
+
+    const stageOptionsResult = await getMotionDecisionCaseStageOptions();
+    if (!stageOptionsResult.error) setCaseStageOptions(stageOptionsResult.data);
   };
 
   useEffect(() => {
@@ -1059,6 +1091,7 @@ export function CaseTimeline({
     const isCourtFiling = addForm.eventTypeCode === "COURT_FILING";
     const isMotionReceived = addForm.eventTypeCode === "MOTION_RECEIVED";
     const isMotionResolved = addForm.eventTypeCode === "MOTION_RESOLVED";
+    const isMotionDecisionApproved = addForm.eventTypeCode === "MOTION_DECISION_APPROVED";
     if (!addForm.eventTypeCode || !addForm.eventDate) return;
     if ((isAssignment || isReassignment) && !addForm.prosecutorId) return;
     if (isReassignment && !addForm.reason.trim()) return;
@@ -1067,11 +1100,12 @@ export function CaseTimeline({
     if (isCourtFiling && (!addForm.courtFilingDecisionId || !addForm.courtName.trim() || !addForm.chargeFiled.trim())) return;
     if (isMotionReceived && (!addForm.motionTitle.trim() || !addForm.filedByCode)) return;
     if (isMotionResolved && (!addForm.motionResolveMotionId || !addForm.motionRecommendationId)) return;
+    if (isMotionDecisionApproved && (addForm.motionDecisionStep !== 5 || !addForm.motionApprovalResolutionId || !addForm.motionApprovalDecisionId || !addForm.motionApprovedByProsecutorId || !addForm.eventDate || !addForm.motionUpdateCaseStatus || (addForm.motionUpdateCaseStatus === "YES" && (!addForm.motionSelectedCaseStatusId || !addForm.motionSelectedCaseStageId)))) return;
     if (isReassignment && currentAssignment?.prosecutor_id === Number(addForm.prosecutorId)) {
       setActionError("The selected prosecutor is already assigned to this case.");
       return;
     }
-    if (!isAssignment && !isReassignment && !isResolved && !isDecisionApproved && !isCourtFiling && !isMotionReceived && !isMotionResolved && !addForm.title.trim()) return;
+    if (!isAssignment && !isReassignment && !isResolved && !isDecisionApproved && !isCourtFiling && !isMotionReceived && !isMotionResolved && !isMotionDecisionApproved && !addForm.title.trim()) return;
     setIsSaving(true);
     setActionError(null);
     const result = isAssignment
@@ -1147,6 +1181,19 @@ export function CaseTimeline({
                     timeResolved: addForm.eventTime || null,
                     remarks: addForm.description,
                   })
+                  : isMotionDecisionApproved
+                    ? await recordMotionDecisionApprovedEvent({
+                      caseId,
+                      motionResolutionId: Number(addForm.motionApprovalResolutionId),
+                      approvedDecisionRecommendationId: Number(addForm.motionApprovalDecisionId),
+                      approvedByProsecutorId: Number(addForm.motionApprovedByProsecutorId),
+                      dateApproved: addForm.eventDate,
+                      timeApproved: addForm.eventTime || null,
+                      updateCaseStatus: addForm.motionUpdateCaseStatus === "YES",
+                      selectedCaseStatusId: addForm.motionSelectedCaseStatusId ? Number(addForm.motionSelectedCaseStatusId) : null,
+                      selectedCaseStageId: addForm.motionSelectedCaseStageId ? Number(addForm.motionSelectedCaseStageId) : null,
+                      remarks: addForm.description,
+                    })
           : await createCaseEvent({
         caseId,
         eventTypeCode: addForm.eventTypeCode,
@@ -1233,6 +1280,7 @@ export function CaseTimeline({
   const isAddingCourtFiling = addForm.eventTypeCode === "COURT_FILING";
   const isAddingMotionReceived = addForm.eventTypeCode === "MOTION_RECEIVED";
   const isAddingMotionResolved = addForm.eventTypeCode === "MOTION_RESOLVED";
+  const isAddingMotionDecisionApproved = addForm.eventTypeCode === "MOTION_DECISION_APPROVED";
   const approvingProsecutors = prosecutors.filter((prosecutor) => {
     const position = prosecutor as { position_code?: string | null; position_group_type?: string | null };
     return position.position_group_type === "PROSECUTOR" && ["CHIEF_PROSECUTOR", "DEPUTY_PROSECUTOR"].includes(String(position.position_code ?? ""));
@@ -1247,6 +1295,12 @@ export function CaseTimeline({
     return rightTime - leftTime || Number(right.id) - Number(left.id);
   })[0] ?? null;
   const eligibleMotions = motions.filter((motion) => !motion.is_voided && motion.case_event_id && !motion.active_motion_resolution_id);
+  const eligibleMotionResolutionApprovals = motionResolutionApprovalCandidates.filter((resolution) => !resolution.active_motion_decision_approval_id);
+  const selectedMotionApprovalResolution = eligibleMotionResolutionApprovals.find((resolution) => Number(resolution.id) === Number(addForm.motionApprovalResolutionId)) ?? null;
+  const selectedMotionApprovalDecision = motionRecommendations.find((recommendation) => Number(recommendation.id) === Number(addForm.motionApprovalDecisionId)) ?? null;
+  const selectedMotionApprover = approvingProsecutors.find((prosecutor) => Number(prosecutor.id) === Number(addForm.motionApprovedByProsecutorId)) ?? null;
+  const selectedMotionStatus = caseStatusOptions.find((status) => Number(status.id) === Number(addForm.motionSelectedCaseStatusId)) ?? null;
+  const selectedMotionStage = caseStageOptions.find((stage) => Number(stage.id) === Number(addForm.motionSelectedCaseStageId)) ?? null;
   const selectedEventTypeLabel = eventTypes.find((eventType) => eventType.code === addForm.eventTypeCode)?.display_label ?? "";
   const selectedApprovalResolution = caseResolutions.find((resolution) => resolution.id === addForm.caseResolutionId) ?? null;
   const filteredCourts = courtOptions.filter((court) => {
@@ -1276,6 +1330,11 @@ export function CaseTimeline({
     setAddForm((form) => ({ ...form, motionResolveMotionId: String(eligibleMotions[0].id) }));
   }, [addForm.eventTypeCode, addForm.motionResolveMotionId, eligibleMotions]);
 
+  useEffect(() => {
+    if (addForm.eventTypeCode !== "MOTION_DECISION_APPROVED" || addForm.motionApprovalResolutionId || eligibleMotionResolutionApprovals.length !== 1) return;
+    setAddForm((form) => ({ ...form, motionApprovalResolutionId: String(eligibleMotionResolutionApprovals[0].id) }));
+  }, [addForm.eventTypeCode, addForm.motionApprovalResolutionId, eligibleMotionResolutionApprovals]);
+
   const handleAddRecommendationSave = async () => {
     if (!recommendationLabel.trim()) return;
     setIsSaving(true);
@@ -1288,7 +1347,7 @@ export function CaseTimeline({
     }
     const recommendationsResult = await getMotionResolutionRecommendations();
     if (!recommendationsResult.error) setMotionRecommendations(recommendationsResult.data);
-    setAddForm((form) => ({ ...form, motionRecommendationId: String(result.data) }));
+    setAddForm((form) => form.eventTypeCode === "MOTION_DECISION_APPROVED" ? { ...form, motionApprovalDecisionId: String(result.data) } : { ...form, motionRecommendationId: String(result.data) });
     setIsRecommendationDialogOpen(false);
   };
 
@@ -1449,7 +1508,7 @@ export function CaseTimeline({
             {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
             <div className="space-y-2">
               <Label htmlFor="add-event-type">Event Type</Label>
-              <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : e.target.value === "COURT_FILING" ? "Court Filing" : e.target.value === "MOTION_RECEIVED" ? "Motion Received" : e.target.value === "MOTION_RESOLVED" ? "Motion Resolved" : form.title }))}>
+              <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : e.target.value === "COURT_FILING" ? "Court Filing" : e.target.value === "MOTION_RECEIVED" ? "Motion Received" : e.target.value === "MOTION_RESOLVED" ? "Motion Resolved" : e.target.value === "MOTION_DECISION_APPROVED" ? "Motion Decision Approved" : form.title }))}>
                 {eventTypes.map((eventType) => <option key={eventType.code} value={eventType.code}>{eventType.display_label}</option>)}
               </select>
             </div>
@@ -1521,6 +1580,35 @@ export function CaseTimeline({
                 <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-motion-date-resolved">Date Resolved</Label><Input id="add-motion-date-resolved" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div><div className="space-y-1"><Label htmlFor="add-motion-time-resolved">Time Resolved</Label><Input id="add-motion-time-resolved" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div></div>
                 <div className="space-y-2"><Label htmlFor="add-motion-resolution-remarks">Remarks</Label><Textarea id="add-motion-resolution-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
               </>
+            ) : isAddingMotionDecisionApproved ? (
+              <>
+                <div className="rounded-md border bg-muted/30 p-3 text-sm font-medium">Step {addForm.motionDecisionStep} of 5</div>
+                {addForm.motionDecisionStep === 1 ? <>
+                  {eligibleMotionResolutionApprovals.length === 0 ? <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">No motion resolution is available for approval.</div> : null}
+                  <div className="space-y-2"><Label htmlFor="motion-approval-resolution">Motion Resolution</Label><select id="motion-approval-resolution" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionApprovalResolutionId} onChange={(e) => setAddForm((form) => ({ ...form, motionApprovalResolutionId: e.target.value }))}><option value="">Select motion resolution</option>{eligibleMotionResolutionApprovals.map((resolution) => <option key={resolution.id} value={resolution.id}>{resolution.motion_title ?? "Motion"} • {motionFiledByLabel(resolution.filed_by_code) ?? resolution.filed_by ?? "—"} • {resolution.recommendation_label ?? resolution.recommendation_code ?? "—"} • {formatDate(resolution.date_resolved)}</option>)}</select></div>
+                  <div className="space-y-2"><Label htmlFor="motion-approved-decision">Decision Approved</Label><select id="motion-approved-decision" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionApprovalDecisionId} onChange={(e) => { if (e.target.value === "__add__") { setRecommendationLabel(""); setIsRecommendationDialogOpen(true); return; } setAddForm((form) => ({ ...form, motionApprovalDecisionId: e.target.value })); }}><option value="">Select decision</option>{motionRecommendations.map((recommendation) => <option key={recommendation.id} value={recommendation.id}>{recommendation.display_label}</option>)}<option value="__add__">+ Add Recommendation</option></select></div>
+                  <div className="space-y-2"><Label htmlFor="motion-approval-remarks">Remarks</Label><Textarea id="motion-approval-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
+                  <div className="flex justify-end"><Button type="button" onClick={() => setAddForm((form) => ({ ...form, motionDecisionStep: 2 }))} disabled={!addForm.motionApprovalResolutionId || !addForm.motionApprovalDecisionId}>Next</Button></div>
+                </> : null}
+                {addForm.motionDecisionStep === 2 ? <>
+                  <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="motion-approved-by">Who Approved</Label><select id="motion-approved-by" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionApprovedByProsecutorId} onChange={(e) => setAddForm((form) => ({ ...form, motionApprovedByProsecutorId: e.target.value }))}><option value="">Select approving prosecutor</option>{approvingProsecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select></div><div className="space-y-2"><Label htmlFor="motion-date-approved">Date Approved</Label><Input id="motion-date-approved" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div></div>
+                  <div className="space-y-2"><Label htmlFor="motion-time-approved">Time Approved</Label><Input id="motion-time-approved" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div>
+                  <div className="flex justify-between"><Button type="button" variant="outline" onClick={() => setAddForm((form) => ({ ...form, motionDecisionStep: 1 }))}>Back</Button><Button type="button" onClick={() => setAddForm((form) => ({ ...form, motionDecisionStep: 3 }))} disabled={!addForm.motionApprovedByProsecutorId || !addForm.eventDate}>Next</Button></div>
+                </> : null}
+                {addForm.motionDecisionStep === 3 ? <>
+                  <p className="text-sm font-medium">Update Case Status?</p>
+                  <div className="grid gap-2 sm:grid-cols-2"><Button type="button" variant={addForm.motionUpdateCaseStatus === "YES" ? "default" : "outline"} onClick={() => setAddForm((form) => ({ ...form, motionUpdateCaseStatus: "YES", motionDecisionStep: 4 }))}>Yes</Button><Button type="button" variant={addForm.motionUpdateCaseStatus === "NO" ? "default" : "outline"} onClick={() => setAddForm((form) => ({ ...form, motionUpdateCaseStatus: "NO", motionDecisionStep: 5, motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "" }))}>No</Button></div>
+                  <div className="flex justify-start"><Button type="button" variant="outline" onClick={() => setAddForm((form) => ({ ...form, motionDecisionStep: 2 }))}>Back</Button></div>
+                </> : null}
+                {addForm.motionDecisionStep === 4 ? <>
+                  <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="motion-selected-status">Case Status</Label><select id="motion-selected-status" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionSelectedCaseStatusId} onChange={(e) => setAddForm((form) => ({ ...form, motionSelectedCaseStatusId: e.target.value }))}><option value="">Select status</option>{caseStatusOptions.map((status) => <option key={status.id} value={status.id}>{status.display_label}</option>)}</select></div><div className="space-y-2"><Label htmlFor="motion-selected-stage">Case Stage</Label><select id="motion-selected-stage" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionSelectedCaseStageId} onChange={(e) => setAddForm((form) => ({ ...form, motionSelectedCaseStageId: e.target.value }))}><option value="">Select stage</option>{caseStageOptions.map((stage) => <option key={stage.id} value={stage.id}>{stage.display_label}</option>)}</select></div></div>
+                  <div className="flex justify-between"><Button type="button" variant="outline" onClick={() => setAddForm((form) => ({ ...form, motionDecisionStep: 3 }))}>Back</Button><Button type="button" onClick={() => setAddForm((form) => ({ ...form, motionDecisionStep: 5 }))} disabled={!addForm.motionSelectedCaseStatusId || !addForm.motionSelectedCaseStageId}>Next</Button></div>
+                </> : null}
+                {addForm.motionDecisionStep === 5 ? <>
+                  <div className="rounded-md border bg-background p-3"><p className="mb-2 text-sm font-medium">Review</p><div className="grid gap-3 sm:grid-cols-2"><OptionalDetailItem label="Motion Title" value={selectedMotionApprovalResolution?.motion_title} /><OptionalDetailItem label="Filed By" value={motionFiledByLabel(selectedMotionApprovalResolution?.filed_by_code) ?? selectedMotionApprovalResolution?.filed_by} /><OptionalDetailItem label="Assigned Prosecutor" value={selectedMotionApprovalResolution?.assigned_prosecutor_name} /><OptionalDetailItem label="Original Motion Resolution recommendation" value={selectedMotionApprovalResolution?.recommendation_label} /><OptionalDetailItem label="Decision Approved" value={selectedMotionApprovalDecision?.display_label} /><OptionalDetailItem label="Who Approved" value={selectedMotionApprover?.short_name ?? selectedMotionApprover?.full_name} /><OptionalDetailItem label="Date Approved" value={formatDate(addForm.eventDate)} /><OptionalDetailItem label="Time Approved" value={formatTime(addForm.eventTime)} /><OptionalDetailItem label="Update Case Status" value={addForm.motionUpdateCaseStatus === "YES" ? "Yes" : "No"} /><OptionalDetailItem label="Selected Case Status" value={addForm.motionUpdateCaseStatus === "YES" ? selectedMotionStatus?.display_label : null} /><OptionalDetailItem label="Selected Case Stage" value={addForm.motionUpdateCaseStatus === "YES" ? selectedMotionStage?.display_label : null} /><OptionalDetailItem label="Remarks" value={addForm.description} /></div></div>
+                  <div className="flex justify-start"><Button type="button" variant="outline" onClick={() => setAddForm((form) => ({ ...form, motionDecisionStep: form.motionUpdateCaseStatus === "YES" ? 4 : 3 }))}>Back</Button></div>
+                </> : null}
+              </>
             ) : (
               <>
                 <div className="space-y-2"><Label htmlFor="add-event-date">Event Date</Label><Input id="add-event-date" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div>
@@ -1531,7 +1619,7 @@ export function CaseTimeline({
           </div>
           <DialogFooter className="border-t pt-3">
             <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
-            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.caseResolutionId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : isAddingCourtFiling ? !addForm.courtFilingDecisionId || !addForm.courtName.trim() || !addForm.chargeFiled.trim() : isAddingMotionReceived ? !addForm.motionTitle.trim() || !addForm.filedByCode : isAddingMotionResolved ? !addForm.motionResolveMotionId || !addForm.motionRecommendationId : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : isAddingCourtFiling ? "Record Court Filing" : isAddingMotionReceived ? "Record Motion Received" : isAddingMotionResolved ? "Record Motion Resolved" : "Add event"}</Button>
+            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.caseResolutionId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : isAddingCourtFiling ? !addForm.courtFilingDecisionId || !addForm.courtName.trim() || !addForm.chargeFiled.trim() : isAddingMotionReceived ? !addForm.motionTitle.trim() || !addForm.filedByCode : isAddingMotionResolved ? !addForm.motionResolveMotionId || !addForm.motionRecommendationId : isAddingMotionDecisionApproved ? addForm.motionDecisionStep !== 5 || !addForm.motionApprovalResolutionId || !addForm.motionApprovalDecisionId || !addForm.motionApprovedByProsecutorId || !addForm.motionUpdateCaseStatus || (addForm.motionUpdateCaseStatus === "YES" && (!addForm.motionSelectedCaseStatusId || !addForm.motionSelectedCaseStageId)) : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : isAddingCourtFiling ? "Record Court Filing" : isAddingMotionReceived ? "Record Motion Received" : isAddingMotionResolved ? "Record Motion Resolved" : isAddingMotionDecisionApproved ? "Save Motion Decision Approval" : "Add event"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -2632,6 +2632,96 @@ export async function recordMotionResolvedEvent(input: RecordMotionResolvedEvent
   }
 }
 
+
+export type MotionResolutionApprovalCandidateRecord = {
+  id: number;
+  case_id: number;
+  case_motion_id: number;
+  recommendation_id: number;
+  recommendation_code: string | null;
+  recommendation_label: string | null;
+  date_resolved: string | null;
+  time_resolved: string | null;
+  motion_title: string | null;
+  filed_by: string | null;
+  filed_by_code: string | null;
+  date_filed: string | null;
+  assigned_prosecutor_id: number | null;
+  assigned_prosecutor_name: string | null;
+  active_motion_decision_approval_id: number | null;
+};
+
+export async function getMotionResolutionApprovalCandidates(caseId: number): Promise<SupabaseQueryResult<MotionResolutionApprovalCandidateRecord[]>> {
+  return runSupabaseQuery("getMotionResolutionApprovalCandidates", "v_case_motion_resolutions_detail" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase
+      .from("v_case_motion_resolutions_detail" as never)
+      .select("id, case_id, case_motion_id, recommendation_id, recommendation_code, recommendation_label, date_resolved, time_resolved, motion_title, filed_by, filed_by_code, date_filed, assigned_prosecutor_id, assigned_prosecutor_name, active_motion_decision_approval_id")
+      .eq("case_id" as never, caseId)
+      .eq("is_voided" as never, false)
+      .is("active_motion_decision_approval_id" as never, null)
+      .order("date_resolved" as never, { ascending: false, nullsFirst: false })
+      .order("id" as never, { ascending: false })) as unknown as { data: MotionResolutionApprovalCandidateRecord[] | null; error: unknown };
+  }, []);
+}
+
+export type CaseStatusOptionRecord = { id: number; code: string; display_label: string; sort_order: number | null; is_active: boolean | null };
+export type CaseStageOptionRecord = { id: number; code: string; display_label: string; sort_order: number | null; is_active: boolean | null };
+
+export async function getMotionDecisionCaseStatusOptions(): Promise<SupabaseQueryResult<CaseStatusOptionRecord[]>> {
+  return runSupabaseQuery("getMotionDecisionCaseStatusOptions", "case_statuses" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("case_statuses" as never).select("id, code, display_label, sort_order, is_active").eq("is_active" as never, true).in("code" as never, ["PENDING", "FILED", "DISMISSED", "MIXED_RESULT"]).order("sort_order" as never, { ascending: true })) as unknown as { data: CaseStatusOptionRecord[] | null; error: unknown };
+  }, []);
+}
+
+export async function getMotionDecisionCaseStageOptions(): Promise<SupabaseQueryResult<CaseStageOptionRecord[]>> {
+  return runSupabaseQuery("getMotionDecisionCaseStageOptions", "case_stages" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase.from("case_stages" as never).select("id, code, display_label, sort_order, is_active").eq("is_active" as never, true).order("sort_order" as never, { ascending: true })) as unknown as { data: CaseStageOptionRecord[] | null; error: unknown };
+  }, []);
+}
+
+export interface RecordMotionDecisionApprovedEventInput {
+  caseId: number;
+  motionResolutionId: number;
+  approvedDecisionRecommendationId: number;
+  approvedByProsecutorId: number;
+  dateApproved: string;
+  timeApproved?: string | null;
+  updateCaseStatus: boolean;
+  selectedCaseStatusId?: number | null;
+  selectedCaseStageId?: number | null;
+  remarks?: string | null;
+}
+
+export async function recordMotionDecisionApprovedEvent(input: RecordMotionDecisionApprovedEventInput): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table: "case_motion_resolution_approvals" as RelationName, operation: "recordMotionDecisionApprovedEvent" });
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "recordMotionDecisionApprovedEvent", "users"));
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("record_motion_decision_approved_event" as never, {
+      p_case_id: input.caseId,
+      p_case_motion_resolution_id: input.motionResolutionId,
+      p_approved_decision_recommendation_id: input.approvedDecisionRecommendationId,
+      p_approved_by_prosecutor_id: input.approvedByProsecutorId,
+      p_date_approved: input.dateApproved,
+      p_time_approved: input.timeApproved?.trim() || null,
+      p_update_case_status: input.updateCaseStatus,
+      p_selected_case_status_id: input.updateCaseStatus ? input.selectedCaseStatusId ?? null : null,
+      p_selected_case_stage_id: input.updateCaseStatus ? input.selectedCaseStageId ?? null : null,
+      p_remarks: input.remarks?.trim() || null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "recordMotionDecisionApprovedEvent", "case_motion_resolution_approvals" as RelationName));
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "recordMotionDecisionApprovedEvent", "case_motion_resolution_approvals" as RelationName));
+  }
+}
+
 export interface CreateCaseEventInput {
   caseId: number;
   eventTypeCode: string;
