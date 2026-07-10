@@ -179,6 +179,7 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
   v_event_type_id bigint; v_event_id bigint; v_filing_id bigint; v_approval_id bigint; v_resolution_id bigint;
   v_status_code text; v_status_label text; v_status_id bigint; v_prev_status_id bigint; v_status_history_id bigint;
+  v_effective_time time without time zone;
   v_old_details jsonb; v_new_details jsonb; v_court_id bigint; v_court_name text; v_court_code text; v_court_code_candidate text; v_code_suffix integer := 0; v_charge text := NULLIF(btrim(COALESCE(p_charge_filed, '')), '');
 BEGIN
   IF p_case_id IS NULL THEN RAISE EXCEPTION 'Case id is required'; END IF;
@@ -186,6 +187,7 @@ BEGIN
   IF p_court_id IS NULL AND NULLIF(btrim(COALESCE(p_court_name, '')), '') IS NULL THEN RAISE EXCEPTION 'Court is required'; END IF;
   IF v_charge IS NULL THEN RAISE EXCEPTION 'Charge filed is required'; END IF;
   IF p_date_filed IS NULL THEN RAISE EXCEPTION 'Date filed is required'; END IF;
+  v_effective_time := COALESCE(p_time_filed, (now() AT TIME ZONE 'Asia/Manila')::time(0));
   IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN RAISE EXCEPTION 'Unknown case id %', p_case_id; END IF;
 
   SELECT aa.approval_id, a.case_resolution_id INTO v_approval_id, v_resolution_id
@@ -234,12 +236,12 @@ BEGIN
   SELECT current_status_id, to_jsonb(cpd) INTO v_prev_status_id, v_old_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
 
   INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,details_jsonb,source,created_by_user_id,updated_by_user_id)
-  VALUES (p_case_id,v_event_type_id,p_date_filed,p_time_filed,'Court Filing','Filed in ' || v_court_name || ' on ' || to_char(p_date_filed, 'Mon FMDD, YYYY'),NULL,
-    jsonb_build_object('court',v_court_name,'court_id',v_court_id,'court_branch',NULLIF(btrim(COALESCE(p_court_branch,'')),''),'charge_filed',v_charge,'date_filed',p_date_filed,'time_filed',p_time_filed,'information_count',p_information_count,'criminal_case_no',NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),'remarks',NULLIF(btrim(COALESCE(p_remarks,'')),''),'case_resolution_approval_id',v_approval_id,'case_resolution_approval_action_id',p_case_resolution_approval_action_id),
+  VALUES (p_case_id,v_event_type_id,p_date_filed,v_effective_time,'Court Filing','Filed in ' || v_court_name || ' on ' || to_char(p_date_filed, 'Mon FMDD, YYYY'),NULL,
+    jsonb_build_object('court',v_court_name,'court_id',v_court_id,'court_branch',NULLIF(btrim(COALESCE(p_court_branch,'')),''),'charge_filed',v_charge,'date_filed',p_date_filed,'time_filed',v_effective_time,'information_count',p_information_count,'criminal_case_no',NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),'remarks',NULLIF(btrim(COALESCE(p_remarks,'')),''),'case_resolution_approval_id',v_approval_id,'case_resolution_approval_action_id',p_case_resolution_approval_action_id),
     'MANUAL_ENTRY',p_user_id,p_user_id) RETURNING id INTO v_event_id;
 
   INSERT INTO public.case_court_filings(case_id,case_event_id,case_resolution_approval_id,case_resolution_approval_action_id,court_id,court_name,court_branch,charge_filed,date_filed,time_filed,information_count,criminal_case_no,remarks,created_by_user_id,updated_by_user_id)
-  VALUES (p_case_id,v_event_id,v_approval_id,p_case_resolution_approval_action_id,v_court_id,v_court_name,NULLIF(btrim(COALESCE(p_court_branch,'')),''),v_charge,p_date_filed,p_time_filed,p_information_count,NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),NULLIF(btrim(COALESCE(p_remarks,'')),''),p_user_id,p_user_id) RETURNING id INTO v_filing_id;
+  VALUES (p_case_id,v_event_id,v_approval_id,p_case_resolution_approval_action_id,v_court_id,v_court_name,NULLIF(btrim(COALESCE(p_court_branch,'')),''),v_charge,p_date_filed,v_effective_time,p_information_count,NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),NULLIF(btrim(COALESCE(p_remarks,'')),''),p_user_id,p_user_id) RETURNING id INTO v_filing_id;
 
   UPDATE public.case_events SET source_table='case_court_filings', source_id=v_filing_id, updated_at=now(), updated_by_user_id=p_user_id WHERE id=v_event_id;
 

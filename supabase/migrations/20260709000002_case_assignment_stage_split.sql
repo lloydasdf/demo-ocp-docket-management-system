@@ -42,6 +42,7 @@ DECLARE
   v_previous_case_status_id bigint;
   v_previous_stage_id bigint;
   v_assigned_at timestamptz;
+  v_assignment_time time without time zone;
   v_prosecutor_name text;
   v_staff_name text;
   v_old_details jsonb;
@@ -98,7 +99,8 @@ BEGIN
   FROM public.case_private_details cpd
   WHERE cpd.case_id = p_case_id;
 
-  v_assigned_at := (p_assignment_date::timestamp + COALESCE(p_assignment_time, '00:00'::time))::timestamptz;
+  v_assignment_time := COALESCE(p_assignment_time, (now() AT TIME ZONE 'Asia/Manila')::time(0));
+  v_assigned_at := ((p_assignment_date::timestamp + v_assignment_time) AT TIME ZONE 'Asia/Manila');
 
   SELECT COALESCE(short_name, full_name) INTO v_prosecutor_name
   FROM public.prosecutors
@@ -126,7 +128,7 @@ BEGIN
     p_case_id,
     v_event_type_id,
     p_assignment_date,
-    p_assignment_time,
+    v_assignment_time,
     'Case Assignment',
     'Assigned to Prosec ' || COALESCE(v_prosecutor_name, p_prosecutor_id::text) || ' on ' || to_char(p_assignment_date, 'Mon DD, YYYY'),
     v_pending_status_id,

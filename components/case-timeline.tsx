@@ -60,6 +60,7 @@ import {
   getCaseEventTypes,
   voidCaseEvent,
 } from "@/lib/supabase/queries";
+import { formatManilaClock, getManilaDateTimeInputValues } from "@/lib/philippine-time";
 import type { TableRow } from "@/lib/supabase/types";
 
 export type CaseTimelineProps = {
@@ -885,12 +886,33 @@ export function CaseTimeline({
   const [courtFilingDecisions, setCourtFilingDecisions] = useState<CourtFilingDecisionRecord[]>([]);
   const [courtOptions, setCourtOptions] = useState<CourtReferenceRecord[]>([]);
   const [isCourtPickerOpen, setIsCourtPickerOpen] = useState(false);
-  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "" });
+  const initialManilaDateTime = getManilaDateTimeInputValues();
+  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: initialManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "" });
+  const [manilaNow, setManilaNow] = useState(() => new Date());
+  const [isAddDateTimeDirty, setIsAddDateTimeDirty] = useState(false);
   const [editForm, setEditForm] = useState({ eventDate: "", title: "", description: "", editReason: "" });
   const [voidReason, setVoidReason] = useState("");
   const [voidConfirmed, setVoidConfirmed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+
+  useEffect(() => {
+    if (!isAddDialogOpen) return;
+
+    const tick = () => {
+      const now = new Date();
+      setManilaNow(now);
+      if (!isAddDateTimeDirty) {
+        const current = getManilaDateTimeInputValues(now);
+        setAddForm((form) => ({ ...form, eventDate: current.date, eventTime: current.time }));
+      }
+    };
+
+    tick();
+    const intervalId = window.setInterval(tick, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [isAddDateTimeDirty, isAddDialogOpen]);
 
   useEffect(() => {
     let isActive = true;
@@ -911,7 +933,10 @@ export function CaseTimeline({
     setEventTypesError(null);
     setCaseResolutions([]);
     setCourtFilingDecisions([]);
-    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: new Date().toISOString().slice(0, 10), eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "" });
+    const currentManilaDateTime = getManilaDateTimeInputValues();
+    setManilaNow(new Date());
+    setIsAddDateTimeDirty(false);
+    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: currentManilaDateTime.date, eventTime: currentManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "" });
     setIsAddDialogOpen(true);
 
     if (eventTypes.length === 0) {
@@ -1308,6 +1333,7 @@ export function CaseTimeline({
           <DialogHeader className="gap-1">
             <DialogTitle>Add event</DialogTitle>
             <DialogDescription>Add a new activity to this case timeline.</DialogDescription>
+            <p className="text-xs text-muted-foreground">Current Philippine time: {formatManilaClock(manilaNow)}</p>
           </DialogHeader>
           <div className="min-h-0 space-y-3 overflow-y-auto pr-1">
             {eventTypesError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{eventTypesError}</p> : null}
@@ -1336,7 +1362,7 @@ export function CaseTimeline({
             {isAddingAssignmentLike ? (
               <>
                 <div className="space-y-2"><Label htmlFor="add-assigned-prosecutor">{isAddingReassignment ? "New Prosecutor" : "Assigned Prosecutor"}</Label><select id="add-assigned-prosecutor" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.prosecutorId} onChange={(e) => setAddForm((form) => ({ ...form, prosecutorId: e.target.value }))}><option value="">Select prosecutor</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select></div>
-                <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="add-assignment-date">{isAddingReassignment ? "Reassignment Date" : "Assignment Date"}</Label><Input id="add-assignment-date" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="add-assignment-time">{isAddingReassignment ? "Reassignment Time" : "Assignment Time"}</Label><Input id="add-assignment-time" type="time" value={addForm.eventTime} onChange={(e) => setAddForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
+                <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="add-assignment-date">{isAddingReassignment ? "Reassignment Date" : "Assignment Date"}</Label><Input id="add-assignment-date" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div><div className="space-y-2"><Label htmlFor="add-assignment-time">{isAddingReassignment ? "Reassignment Time" : "Assignment Time"}</Label><Input id="add-assignment-time" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div></div>
                 <div className="space-y-2"><Label htmlFor="add-assigned-staff">{isAddingReassignment ? "New Staff" : "Assigned Staff"}</Label><select id="add-assigned-staff" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.staffId} onChange={(e) => setAddForm((form) => ({ ...form, staffId: e.target.value }))}><option value="">No staff selected</option>{staffMembers.map((staff) => <option key={staff.id} value={staff.id}>{staff.short_name ?? staff.full_name}</option>)}</select></div>
                 {isAddingReassignment ? <div className="space-y-2"><Label htmlFor="add-reassignment-reason">Reason</Label><Textarea id="add-reassignment-reason" required value={addForm.reason} onChange={(e) => setAddForm((form) => ({ ...form, reason: e.target.value }))} /></div> : null}
                 <div className="space-y-2"><Label htmlFor="add-assignment-remarks">Remarks</Label><Textarea id="add-assignment-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
@@ -1344,7 +1370,7 @@ export function CaseTimeline({
             ) : isAddingResolved ? (
               <>
                 <div className="space-y-2"><Label htmlFor="add-resolution-recommendation">Recommendation</Label><select id="add-resolution-recommendation" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.recommendationCode} onChange={(e) => setAddForm((form) => ({ ...form, recommendationCode: e.target.value }))}><option value="">Select recommendation</option><option value="CASE_FOR_FILING">Case for Filing</option><option value="CASE_DISMISSAL">Case Dismissal</option><option value="MIXED_RESULT">Mixed Result</option></select></div>
-                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-date-resolved">Date Resolved</Label><Input id="add-date-resolved" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-1"><Label htmlFor="add-time-resolved">Time Resolved</Label><Input id="add-time-resolved" type="time" value={addForm.eventTime} onChange={(e) => setAddForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-date-resolved">Date Resolved</Label><Input id="add-date-resolved" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div><div className="space-y-1"><Label htmlFor="add-time-resolved">Time Resolved</Label><Input id="add-time-resolved" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div></div>
                 {showChargesForFiling ? <ChargeEntries title="Charges for Filing" charges={addForm.chargesForFiling} caseViolations={caseViolations} violations={violations} onChange={(charges) => setAddForm((form) => ({ ...form, chargesForFiling: charges }))} /> : null}
                 {showChargesForDismissal ? <ChargeEntries title="Charges for Dismissal" charges={addForm.chargesForDismissal} caseViolations={caseViolations} violations={violations} onChange={(charges) => setAddForm((form) => ({ ...form, chargesForDismissal: charges }))} /> : null}
                 <div className="space-y-1"><Label htmlFor="add-resolution-remarks">Remarks</Label><Textarea id="add-resolution-remarks" className="min-h-20" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
@@ -1354,7 +1380,7 @@ export function CaseTimeline({
                 {caseResolutions.length === 0 ? <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">No active unapproved case resolution available to approve.</div> : null}
                 <div className="space-y-2"><Label htmlFor="add-approval-resolution">Resolution to Approve</Label><select id="add-approval-resolution" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.caseResolutionId ?? ""} onChange={(e) => { const resolutionId = e.target.value ? Number(e.target.value) : null; const resolution = caseResolutions.find((item) => item.id === resolutionId) ?? null; setAddForm((form) => ({ ...form, caseResolutionId: resolutionId, approvalActions: resolution ? approvalActionsFromResolution(resolution) : [emptyApprovalAction()] })); }}><option value="">Select resolution</option>{caseResolutions.map((resolution) => <option key={resolution.id} value={resolution.id}>{formatRecommendationLabel(resolution.recommendation_code)} • {formatDate(resolution.date_resolved)} • Resolution #{resolution.id}</option>)}</select>{selectedApprovalResolution ? <p className="text-xs text-muted-foreground">Loaded {selectedApprovalResolution.charge_actions.length} recommended action{selectedApprovalResolution.charge_actions.length === 1 ? "" : "s"} from the selected resolution.</p> : null}</div>
                 <div className="space-y-2"><Label htmlFor="add-approved-by">Approved By</Label><select id="add-approved-by" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.prosecutorId} onChange={(e) => setAddForm((form) => ({ ...form, prosecutorId: e.target.value }))}><option value="">Select approving prosecutor</option>{approvingProsecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select>{approvingProsecutors.length === 0 ? <p className="text-xs text-muted-foreground">No active Chief Prosecutor or Deputy Prosecutor records found.</p> : null}</div>
-                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-date-approved">Date Approved</Label><Input id="add-date-approved" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-1"><Label htmlFor="add-time-approved">Time Approved</Label><Input id="add-time-approved" type="time" value={addForm.eventTime} onChange={(e) => setAddForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-date-approved">Date Approved</Label><Input id="add-date-approved" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div><div className="space-y-1"><Label htmlFor="add-time-approved">Time Approved</Label><Input id="add-time-approved" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div></div>
                 <ApprovalDecisionEntries actions={addForm.approvalActions} onChange={(approvalActions) => setAddForm((form) => ({ ...form, approvalActions }))} />
                 <div className="space-y-1"><Label htmlFor="add-approval-remarks">Remarks</Label><Textarea id="add-approval-remarks" className="min-h-20" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
               </>
@@ -1365,13 +1391,13 @@ export function CaseTimeline({
                 <div className="space-y-2"><Label htmlFor="add-court">Court</Label><div className="flex rounded-md shadow-sm"><Input id="add-court" value={addForm.courtName} className="rounded-r-none" placeholder="Search or type new court" onFocus={() => setIsCourtPickerOpen(true)} onChange={(e) => { setIsCourtPickerOpen(true); setAddForm((form) => ({ ...form, courtName: e.target.value, courtId: null })); }} /><Button type="button" variant="outline" className="rounded-l-none border-l-0 px-3" aria-label="Show courts" onClick={() => setIsCourtPickerOpen((open) => !open)}>▼</Button></div>{isCourtPickerOpen ? <div className="max-h-44 overflow-y-auto rounded-md border bg-popover p-1 shadow-md">{filteredCourts.length === 0 ? <p className="px-2 py-1 text-xs text-muted-foreground">No matching courts. The typed name will be added as a new court.</p> : null}{filteredCourts.map((court) => <button key={court.id} type="button" className="block w-full rounded-sm px-2 py-1 text-left text-sm hover:bg-accent hover:text-accent-foreground" onClick={() => { setAddForm((form) => ({ ...form, courtId: Number(court.id), courtName: court.name })); setIsCourtPickerOpen(false); }}>{court.name}{court.court_type ? <span className="text-muted-foreground"> • {court.court_type}</span> : null}</button>)}{addForm.courtName.trim() && !hasExactCourtMatch ? <button type="button" className="block w-full rounded-sm px-2 py-1 text-left text-sm font-medium text-primary hover:bg-accent hover:text-accent-foreground" onClick={() => setIsCourtPickerOpen(false)}>Use “{addForm.courtName.trim()}” as new court</button> : null}</div> : null}</div>
                 <div className="space-y-2"><Label htmlFor="add-court-branch">Court Branch</Label><Input id="add-court-branch" value={addForm.courtBranch} onChange={(e) => setAddForm((form) => ({ ...form, courtBranch: e.target.value }))} /></div>
                 <div className="space-y-2"><Label htmlFor="add-charge-filed">Charge Filed</Label><Input id="add-charge-filed" value={addForm.chargeFiled} onChange={(e) => setAddForm((form) => ({ ...form, chargeFiled: e.target.value }))} /></div>
-                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-date-filed">Date Filed</Label><Input id="add-date-filed" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-1"><Label htmlFor="add-time-filed">Time Filed</Label><Input id="add-time-filed" type="time" value={addForm.eventTime} onChange={(e) => setAddForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-date-filed">Date Filed</Label><Input id="add-date-filed" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div><div className="space-y-1"><Label htmlFor="add-time-filed">Time Filed</Label><Input id="add-time-filed" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div></div>
                 <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-information-count">Information Count</Label><Input id="add-information-count" type="number" min="0" value={addForm.informationCount} onChange={(e) => setAddForm((form) => ({ ...form, informationCount: e.target.value }))} /></div><div className="space-y-1"><Label htmlFor="add-criminal-case-no">Criminal Case No.</Label><Input id="add-criminal-case-no" value={addForm.criminalCaseNo} onChange={(e) => setAddForm((form) => ({ ...form, criminalCaseNo: e.target.value }))} /></div></div>
                 <div className="space-y-2"><Label htmlFor="add-court-filing-remarks">Remarks</Label><Textarea id="add-court-filing-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
               </>
             ) : (
               <>
-                <div className="space-y-2"><Label htmlFor="add-event-date">Event Date</Label><Input id="add-event-date" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div>
+                <div className="space-y-2"><Label htmlFor="add-event-date">Event Date</Label><Input id="add-event-date" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div>
                 <div className="space-y-2"><Label htmlFor="add-event-title">Title</Label><Input id="add-event-title" value={addForm.title} placeholder={selectedEventTypeLabel || undefined} onChange={(e) => setAddForm((form) => ({ ...form, title: e.target.value }))} /></div>
                 <div className="space-y-2"><Label htmlFor="add-event-description">Description / Remarks</Label><Textarea id="add-event-description" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
               </>

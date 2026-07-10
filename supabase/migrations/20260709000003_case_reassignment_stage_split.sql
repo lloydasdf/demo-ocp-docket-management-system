@@ -53,6 +53,7 @@ DECLARE
   v_old_details jsonb;
   v_new_details jsonb;
   v_reassigned_at timestamptz;
+  v_reassignment_time time without time zone;
   v_previous_prosecutor_name text;
   v_new_prosecutor_name text;
   v_staff_name text;
@@ -92,7 +93,8 @@ BEGIN
 
   IF v_previous_assignment_id IS NULL THEN RAISE EXCEPTION 'This case has no active assignment to reassign.'; END IF;
 
-  v_reassigned_at := (p_reassignment_date::timestamp + COALESCE(p_reassignment_time, '00:00'::time))::timestamptz;
+  v_reassignment_time := COALESCE(p_reassignment_time, (now() AT TIME ZONE 'Asia/Manila')::time(0));
+  v_reassigned_at := ((p_reassignment_date::timestamp + v_reassignment_time) AT TIME ZONE 'Asia/Manila');
 
   SELECT COALESCE(short_name, full_name) INTO v_new_prosecutor_name FROM public.prosecutors WHERE id = p_new_prosecutor_id;
   SELECT COALESCE(short_name, full_name) INTO v_staff_name FROM public.staff WHERE id = p_new_staff_id;
@@ -113,7 +115,7 @@ BEGIN
     prosecutor_id, staff_id, details_jsonb, source, source_table, source_id,
     created_by_user_id, updated_by_user_id
   ) VALUES (
-    p_case_id, v_event_type_id, p_reassignment_date, p_reassignment_time,
+    p_case_id, v_event_type_id, p_reassignment_date, v_reassignment_time,
     'Case Reassignment',
     'Reassigned from Prosec ' || COALESCE(v_previous_prosecutor_name, v_previous_prosecutor_id::text) || ' to Prosec ' || COALESCE(v_new_prosecutor_name, p_new_prosecutor_id::text) || ' on ' || to_char(p_reassignment_date, 'Mon FMDD, YYYY'),
     v_pending_status_id, v_pending_status_id, v_case_reassigned_stage_id,
@@ -129,7 +131,7 @@ BEGIN
       'staff_id', p_new_staff_id,
       'staff_name', v_staff_name,
       'reassignment_date', p_reassignment_date,
-      'reassignment_time', p_reassignment_time,
+      'reassignment_time', v_reassignment_time,
       'reason', v_reason,
       'remarks', v_remarks,
       'automatic_case_status', 'Pending',

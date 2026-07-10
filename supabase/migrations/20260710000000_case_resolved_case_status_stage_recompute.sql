@@ -152,6 +152,7 @@ DECLARE
   v_resolution_id bigint;
   v_status_history_id bigint;
   v_recommendation_label text;
+  v_effective_time time without time zone;
   v_remarks text := NULLIF(btrim(COALESCE(p_remarks, '')), '');
   v_old_details jsonb;
   v_new_details jsonb;
@@ -179,6 +180,8 @@ BEGIN
   SELECT id INTO v_reso_stage_id FROM public.case_stages WHERE code = 'RESO_FOR_APPROVAL' AND is_active IS TRUE LIMIT 1;
   IF v_reso_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage RESO_FOR_APPROVAL'; END IF;
 
+  v_effective_time := COALESCE(p_time_resolved, (now() AT TIME ZONE 'Asia/Manila')::time(0));
+
   v_recommendation_label := CASE p_recommendation_code
     WHEN 'CASE_FOR_FILING' THEN 'Case for Filing'
     WHEN 'CASE_DISMISSAL' THEN 'Case Dismissal'
@@ -194,7 +197,7 @@ BEGIN
     case_id, event_type_id, event_date, event_time, title, description, status_id, case_status_id, case_stage_id,
     details_jsonb, source, created_by_user_id, updated_by_user_id
   ) VALUES (
-    p_case_id, v_event_type_id, p_date_resolved, p_time_resolved, 'Case Resolved',
+    p_case_id, v_event_type_id, p_date_resolved, v_effective_time, 'Case Resolved',
     'Case resolved as ' || v_recommendation_label || ' on ' || to_char(p_date_resolved, 'Mon FMDD, YYYY'),
     v_pending_status_id, v_pending_status_id, v_reso_stage_id,
     jsonb_build_object('recommendation_code', p_recommendation_code, 'recommendation_label', v_recommendation_label, 'remarks', v_remarks),
@@ -202,7 +205,7 @@ BEGIN
   ) RETURNING id INTO v_event_id;
 
   INSERT INTO public.case_resolutions (case_id, case_event_id, recommendation_code, date_resolved, time_resolved, remarks, created_by_user_id, updated_by_user_id)
-  VALUES (p_case_id, v_event_id, p_recommendation_code, p_date_resolved, p_time_resolved, v_remarks, p_user_id, p_user_id)
+  VALUES (p_case_id, v_event_id, p_recommendation_code, p_date_resolved, v_effective_time, v_remarks, p_user_id, p_user_id)
   RETURNING id INTO v_resolution_id;
 
   IF p_recommendation_code IN ('CASE_FOR_FILING', 'MIXED_RESULT') THEN
@@ -288,7 +291,7 @@ DECLARE
   v_old jsonb; v_new jsonb; v_case_id bigint; v_event_type_code text; v_source_table text; v_source_id bigint;
   v_filing_id bigint; v_filing_old jsonb; v_filing_new jsonb; v_approval_id bigint; v_resolution_id bigint;
   v_assignment_id bigint; v_assignment_old jsonb; v_assignment_new jsonb;
-  v_previous_assignment_id bigint; v_previous_assignment_old jsonb; v_previous_assignment_new jsonb;
+  v_previous_assignment_id bigint; v_previous_assignment_old jsonb; v_previous_assignment_new jsonb; v_latest_assignment_id bigint;
   v_status_code text; v_status_label text; v_status_id bigint; v_prev_status_id bigint; v_status_history_id bigint; v_old_details jsonb; v_new_details jsonb;
 BEGIN
   IF nullif(trim(p_void_reason), '') IS NULL THEN RAISE EXCEPTION 'Void reason is required'; END IF;
@@ -365,19 +368,28 @@ BEGIN
     ORDER BY CASE WHEN ca.id = v_source_id THEN 0 ELSE 1 END
     LIMIT 1;
 
-    IF v_assignment_id IS NOT NULL THEN
-      UPDATE public.case_assignments
-      SET is_voided = true,
-          voided_at = now(),
-          voided_by_user_id = p_voided_by_user_id,
-          void_reason = p_void_reason,
-          unassigned_at = COALESCE(unassigned_at, now())
-      WHERE id = v_assignment_id;
+    SELECT ca.id INTO v_latest_assignment_id
+    FROM public.case_assignments ca
+    WHERE ca.case_id = v_case_id
+      AND ca.is_voided IS FALSE
+    ORDER BY ca.assigned_at DESC NULLS LAST, ca.id DESC
+    LIMIT 1;
 
-      SELECT to_jsonb(ca) INTO v_assignment_new
-      FROM public.case_assignments ca
-      WHERE ca.id = v_assignment_id;
+    IF v_assignment_id IS NULL OR v_latest_assignment_id IS DISTINCT FROM v_assignment_id THEN
+      RAISE EXCEPTION 'This reassignment has already been superseded by a later assignment. Void the latest reassignment first.';
     END IF;
+
+    UPDATE public.case_assignments
+    SET is_voided = true,
+        voided_at = now(),
+        voided_by_user_id = p_voided_by_user_id,
+        void_reason = p_void_reason,
+        unassigned_at = COALESCE(unassigned_at, now())
+    WHERE id = v_assignment_id;
+
+    SELECT to_jsonb(ca) INTO v_assignment_new
+    FROM public.case_assignments ca
+    WHERE ca.id = v_assignment_id;
 
     IF v_previous_assignment_id IS NOT NULL THEN
       SELECT to_jsonb(ca) INTO v_previous_assignment_old
@@ -497,5 +509,15 @@ COMMENT ON FUNCTION public.compute_current_case_state(bigint) IS 'Verification c
 -- 4. Void CASE_RESOLVED while another active resolution has no active approval -> stage RESO_FOR_APPROVAL.
 -- 5. Void CASE_RESOLVED while an active approval action decision_code = FOR_FILING has no active case_court_filings row -> stage FOR_FILING.
 -- 6. With no unfinished workflow, public.compute_current_case_state(case_id) returns FILED/FILED when every FOR_FILING action is filed, DISMISSED/DISMISSED when only dismissal actions remain, and MIXED_RESULT/MIXED_RESULT when filed and dismissal outcomes coexist.
+
+-- Additional verification notes for Philippine time and CASE_REASSIGNMENT latest-assignment rollback:
+-- 7. Reassignment A creates assignment assigned_at 2026-07-10 09:00:01+08, then Reassignment B creates assignment assigned_at 2026-07-10 09:00:02+08.
+-- 8. public.void_case_event(reassignment_a_event_id, ...) raises: This reassignment has already been superseded by a later assignment. Void the latest reassignment first.
+-- 9. public.void_case_event(reassignment_b_event_id, ...) succeeds, voids B's assignment, and clears unassigned_at, unassigned_by_user_id, and unassignment_reason on A's assignment.
+-- 10. If two non-voided assignments share the same assigned_at, the latest assignment check orders by assigned_at DESC, id DESC and blocks voiding the lower id first.
+-- 11. Add Event defaults event date/time from Asia/Manila with seconds, displays a ticking Philippine clock, and stops auto-replacing date/time after manual edit.
+-- 12. Browser timezone changes do not affect Add Event defaults because Intl conversion explicitly uses Asia/Manila.
+-- 13. created_at, updated_at, voided_at, changed_at, and audit timestamps remain database-generated timestamptz transaction instants; no timestamp is manually offset by +08:00.
+-- 14. Voiding sets voided_at with now() in PostgreSQL and successful reassignment rollback invokes public.apply_case_state_recompute(...) once.
 
 COMMIT;

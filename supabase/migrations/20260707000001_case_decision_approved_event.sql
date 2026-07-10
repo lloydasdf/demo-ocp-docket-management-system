@@ -130,6 +130,7 @@ DECLARE
   v_event_final_status_label text;
   v_case_final_status_code text;
   v_case_final_status_label text;
+  v_effective_time time without time zone;
   v_remarks text := NULLIF(btrim(COALESCE(p_remarks, '')), '');
   v_old_details jsonb;
   v_new_details jsonb;
@@ -149,6 +150,7 @@ BEGIN
   IF p_case_id IS NULL THEN RAISE EXCEPTION 'Case id is required'; END IF;
   IF p_approved_by_prosecutor_id IS NULL THEN RAISE EXCEPTION 'Approved by prosecutor is required'; END IF;
   IF p_date_approved IS NULL THEN RAISE EXCEPTION 'Date approved is required'; END IF;
+  v_effective_time := COALESCE(p_time_approved, (now() AT TIME ZONE 'Asia/Manila')::time(0));
   IF jsonb_typeof(COALESCE(p_approval_actions, '[]'::jsonb)) <> 'array' THEN RAISE EXCEPTION 'Approval actions must be an array'; END IF;
 
   IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN
@@ -263,13 +265,13 @@ BEGIN
   FROM public.case_private_details cpd WHERE cpd.case_id = p_case_id;
 
   INSERT INTO public.case_events (case_id, event_type_id, event_date, event_time, title, description, status_id, details_jsonb, source, created_by_user_id, updated_by_user_id)
-  VALUES (p_case_id, v_event_type_id, p_date_approved, p_time_approved, 'Case Decision Approved', 'Decision approved by Prosec ' || v_approver_name || ' on ' || to_char(p_date_approved, 'Mon FMDD, YYYY'), v_status_id,
-    jsonb_build_object('approved_by_prosecutor_id', p_approved_by_prosecutor_id, 'approved_by_name', v_approver_name, 'date_approved', p_date_approved, 'time_approved', p_time_approved, 'final_status_code', v_case_final_status_code, 'final_status_label', v_case_final_status_label, 'event_final_status_code', v_event_final_status_code, 'event_final_status_label', v_event_final_status_label, 'case_final_status_code', v_case_final_status_code, 'case_final_status_label', v_case_final_status_label, 'remarks', v_remarks),
+  VALUES (p_case_id, v_event_type_id, p_date_approved, v_effective_time, 'Case Decision Approved', 'Decision approved by Prosec ' || v_approver_name || ' on ' || to_char(p_date_approved, 'Mon FMDD, YYYY'), v_status_id,
+    jsonb_build_object('approved_by_prosecutor_id', p_approved_by_prosecutor_id, 'approved_by_name', v_approver_name, 'date_approved', p_date_approved, 'time_approved', v_effective_time, 'final_status_code', v_case_final_status_code, 'final_status_label', v_case_final_status_label, 'event_final_status_code', v_event_final_status_code, 'event_final_status_label', v_event_final_status_label, 'case_final_status_code', v_case_final_status_code, 'case_final_status_label', v_case_final_status_label, 'remarks', v_remarks),
     'MANUAL_ENTRY', p_user_id, p_user_id)
   RETURNING id INTO v_event_id;
 
   INSERT INTO public.case_resolution_approvals (case_id, case_event_id, case_resolution_id, approved_by_prosecutor_id, date_approved, time_approved, final_status_code, remarks, created_by_user_id, updated_by_user_id)
-  VALUES (p_case_id, v_event_id, p_case_resolution_id, p_approved_by_prosecutor_id, p_date_approved, p_time_approved, v_event_final_status_code, v_remarks, p_user_id, p_user_id)
+  VALUES (p_case_id, v_event_id, p_case_resolution_id, p_approved_by_prosecutor_id, p_date_approved, v_effective_time, v_event_final_status_code, v_remarks, p_user_id, p_user_id)
   RETURNING id INTO v_approval_id;
 
   FOR v_action IN SELECT * FROM jsonb_array_elements(COALESCE(p_approval_actions, '[]'::jsonb)) LOOP
