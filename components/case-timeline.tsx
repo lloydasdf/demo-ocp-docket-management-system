@@ -1266,8 +1266,13 @@ export function CaseTimeline({
       return;
     }
     const shouldPromptStatusUpdate = isAssignmentEvent(voidingEvent);
+    const shouldRefreshMotionApprovalCandidates = voidingEvent.event_type_code === "MOTION_DECISION_APPROVED";
     setVoidingEvent(null);
     await onChanged?.();
+    if (shouldRefreshMotionApprovalCandidates) {
+      const candidatesResult = await getMotionResolutionApprovalCandidates(caseId);
+      if (!candidatesResult.error) setMotionResolutionApprovalCandidates(candidatesResult.data);
+    }
     if (shouldPromptStatusUpdate) {
       onUpdateStatus?.();
     }

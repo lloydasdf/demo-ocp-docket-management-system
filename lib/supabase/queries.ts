@@ -2659,7 +2659,6 @@ export async function getMotionResolutionApprovalCandidates(caseId: number): Pro
       .select("id, case_id, case_motion_id, recommendation_id, recommendation_code, recommendation_label, date_resolved, time_resolved, motion_title, filed_by, filed_by_code, date_filed, assigned_prosecutor_id, assigned_prosecutor_name, active_motion_decision_approval_id")
       .eq("case_id" as never, caseId)
       .eq("is_voided" as never, false)
-      .is("active_motion_decision_approval_id" as never, null)
       .order("date_resolved" as never, { ascending: false, nullsFirst: false })
       .order("id" as never, { ascending: false })) as unknown as { data: MotionResolutionApprovalCandidateRecord[] | null; error: unknown };
   }, []);
