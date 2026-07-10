@@ -92,7 +92,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.apply_case_state_recompute(
   p_case_id bigint,
   p_status_date date DEFAULT CURRENT_DATE,
-  p_remarks text DEFAULT 'Case state recomputed.',
+  p_remarks text DEFAULT NULL,
   p_case_event_id bigint DEFAULT NULL,
   p_user_id bigint DEFAULT NULL
 ) RETURNS void
@@ -361,7 +361,7 @@ BEGIN
 
   IF v_event_type_code IN ('CASE_RESOLVED','CASE_DECISION_APPROVED','COURT_FILING','CASE_ASSIGNMENT','CASE_REASSIGNMENT')
      OR lower(coalesce(v_source_table,'')) IN ('case_resolutions','case_resolution_approvals','case_court_filings','case_assignments') THEN
-    PERFORM public.apply_case_state_recompute(v_case_id, CURRENT_DATE, 'Timeline event voided. Case status and stage recomputed.', p_case_event_id, p_voided_by_user_id);
+    PERFORM public.apply_case_state_recompute(v_case_id, CURRENT_DATE, NULL, p_case_event_id, p_voided_by_user_id);
   END IF;
 
 END;
