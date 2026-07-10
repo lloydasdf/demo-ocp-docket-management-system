@@ -2,10 +2,10 @@
 -- PostgreSQL database dump
 --
 
-\restrict t7blyZqqpaxPa9pImFQQnS3OZKJcXpLd2GvRFQn9O77jrdsEtcm0OE8pH0btyb4
+\restrict 9uiXo0JQ3fNdY2egtNMvaRzBRlxluqnK7Au4lIptrCHnEecQbMLGKf8C2c6RfHW
 
 -- Dumped from database version 17.6
--- Dumped by pg_dump version 18.3
+-- Dumped by pg_dump version 18.1
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -759,6 +759,44 @@ CREATE FUNCTION pgbouncer.get_auth(p_usename text) RETURNS TABLE(username text, 
       WHERE rolname=$1 and rolcanlogin;
   END;
   $_$;
+
+
+--
+-- Name: apply_case_state_recompute(bigint, date, text, bigint, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apply_case_state_recompute(p_case_id bigint, p_status_date date DEFAULT CURRENT_DATE, p_remarks text DEFAULT NULL::text, p_case_event_id bigint DEFAULT NULL::bigint, p_user_id bigint DEFAULT NULL::bigint) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_status_code text; v_stage_code text; v_status_id bigint; v_stage_id bigint;
+  v_prev_legacy_status_id bigint; v_prev_case_status_id bigint; v_prev_stage_id bigint;
+BEGIN
+  SELECT case_status_code, case_stage_code INTO v_status_code, v_stage_code FROM public.compute_current_case_state(p_case_id) LIMIT 1;
+  SELECT id INTO v_status_id FROM public.case_statuses WHERE code = v_status_code;
+  SELECT id INTO v_stage_id FROM public.case_stages WHERE code = v_stage_code;
+  IF v_status_id IS NULL THEN RAISE EXCEPTION 'Missing active case status %', v_status_code; END IF;
+  IF v_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage %', v_stage_code; END IF;
+
+  SELECT current_status_id, current_case_status_id, current_case_stage_id
+  INTO v_prev_legacy_status_id, v_prev_case_status_id, v_prev_stage_id
+  FROM public.case_private_details WHERE case_id = p_case_id;
+
+  INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,current_case_status_id,current_case_status_date,current_case_status_remarks,current_case_stage_id,current_case_stage_date,current_case_stage_remarks,updated_at)
+  VALUES (p_case_id,v_status_id,p_status_date,p_remarks,v_status_id,p_status_date,p_remarks,v_stage_id,p_status_date,p_remarks,now())
+  ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,current_case_status_remarks=EXCLUDED.current_case_status_remarks,current_case_stage_id=EXCLUDED.current_case_stage_id,current_case_stage_date=EXCLUDED.current_case_stage_date,current_case_stage_remarks=EXCLUDED.current_case_stage_remarks,updated_at=now();
+
+  IF v_prev_case_status_id IS DISTINCT FROM v_status_id THEN
+    INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id)
+    VALUES (p_case_id,v_prev_case_status_id,v_status_id,p_user_id,now(),p_status_date,p_remarks,p_case_event_id);
+  END IF;
+  IF v_prev_stage_id IS DISTINCT FROM v_stage_id THEN
+    INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id)
+    VALUES (p_case_id,v_prev_stage_id,v_stage_id,p_user_id,now(),p_status_date,p_remarks,p_case_event_id);
+  END IF;
+END;
+$$;
 
 
 --
@@ -1563,6 +1601,84 @@ CREATE FUNCTION public.clearance_token_variant_equal(a text, b text) RETURNS boo
     OR replace(aa, 'PH', 'F') = replace(bb, 'PH', 'F')
   FROM x;
 $$;
+
+
+--
+-- Name: compute_current_case_state(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compute_current_case_state(p_case_id bigint) RETURNS TABLE(case_status_code text, case_stage_code text)
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_unapproved_resolution_count integer;
+  v_unfiled_for_filing_count integer;
+  v_filed_for_filing_count integer;
+  v_dismissal_count integer;
+  v_active_assignment_count integer;
+BEGIN
+  SELECT count(*) INTO v_unapproved_resolution_count
+  FROM public.case_resolutions cr
+  WHERE cr.case_id = p_case_id
+    AND cr.is_voided = false
+    AND NOT EXISTS (
+      SELECT 1 FROM public.case_resolution_approvals a
+      WHERE a.case_resolution_id = cr.id AND a.is_voided = false
+    );
+
+  SELECT
+    count(*) FILTER (WHERE aa.decision_code = 'FOR_FILING' AND EXISTS (
+      SELECT 1 FROM public.case_court_filings cf
+      WHERE cf.case_resolution_approval_action_id = aa.id AND cf.is_voided = false
+    )),
+    count(*) FILTER (WHERE aa.decision_code = 'FOR_FILING' AND NOT EXISTS (
+      SELECT 1 FROM public.case_court_filings cf
+      WHERE cf.case_resolution_approval_action_id = aa.id AND cf.is_voided = false
+    )),
+    count(*) FILTER (WHERE aa.decision_code = 'DISMISSAL')
+  INTO v_filed_for_filing_count, v_unfiled_for_filing_count, v_dismissal_count
+  FROM public.case_resolution_approval_actions aa
+  JOIN public.case_resolution_approvals a ON a.id = aa.approval_id AND a.is_voided = false
+  JOIN public.case_resolutions cr ON cr.id = a.case_resolution_id AND cr.is_voided = false
+  WHERE aa.case_id = p_case_id;
+
+  SELECT count(*) INTO v_active_assignment_count
+  FROM public.case_assignments ca
+  WHERE ca.case_id = p_case_id AND ca.unassigned_at IS NULL AND ca.is_voided IS FALSE;
+
+  IF COALESCE(v_unapproved_resolution_count, 0) > 0 THEN
+    IF COALESCE(v_filed_for_filing_count, 0) > 0 THEN
+      RETURN QUERY SELECT 'PENDING'::text, 'FILED_OTHER_RESO_FOR_APPROVAL'::text;
+    ELSE
+      RETURN QUERY SELECT 'PENDING'::text, 'RESO_FOR_APPROVAL'::text;
+    END IF;
+  ELSIF COALESCE(v_unfiled_for_filing_count, 0) > 0 THEN
+    IF COALESCE(v_filed_for_filing_count, 0) > 0 THEN
+      RETURN QUERY SELECT 'PENDING'::text, 'FILED_OTHER_INFO_FOR_FILING'::text;
+    ELSE
+      RETURN QUERY SELECT 'PENDING'::text, 'FOR_FILING'::text;
+    END IF;
+  ELSIF COALESCE(v_filed_for_filing_count, 0) > 0 AND COALESCE(v_dismissal_count, 0) > 0 THEN
+    RETURN QUERY SELECT 'MIXED_RESULT'::text, 'MIXED_RESULT'::text;
+  ELSIF COALESCE(v_filed_for_filing_count, 0) > 0 THEN
+    RETURN QUERY SELECT 'FILED'::text, 'FILED'::text;
+  ELSIF COALESCE(v_dismissal_count, 0) > 0 THEN
+    RETURN QUERY SELECT 'DISMISSED'::text, 'DISMISSED'::text;
+  ELSIF COALESCE(v_active_assignment_count, 0) > 0 THEN
+    RETURN QUERY SELECT 'PENDING'::text, 'CASE_RAFFLED'::text;
+  ELSE
+    RETURN QUERY SELECT 'PENDING'::text, 'FOR_RAFFLE'::text;
+  END IF;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION compute_current_case_state(p_case_id bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.compute_current_case_state(p_case_id bigint) IS 'Verification coverage: recording CASE_RESOLVED yields PENDING/RESO_FOR_APPROVAL; voiding it recomputes CASE_RAFFLED when only assignment remains, FOR_RAFFLE with no assignment, RESO_FOR_APPROVAL when another resolution awaits approval, FOR_FILING when approved filing remains, and final FILED/DISMISSED/MIXED_RESULT from active linked resolution approvals and filings.';
 
 
 --
@@ -7279,6 +7395,7 @@ DECLARE
   v_previous_case_status_id bigint;
   v_previous_stage_id bigint;
   v_assigned_at timestamptz;
+  v_assignment_time time without time zone;
   v_prosecutor_name text;
   v_staff_name text;
   v_old_details jsonb;
@@ -7335,7 +7452,8 @@ BEGIN
   FROM public.case_private_details cpd
   WHERE cpd.case_id = p_case_id;
 
-  v_assigned_at := (p_assignment_date::timestamp + COALESCE(p_assignment_time, '00:00'::time))::timestamptz;
+  v_assignment_time := COALESCE(p_assignment_time, (now() AT TIME ZONE 'Asia/Manila')::time(0));
+  v_assigned_at := ((p_assignment_date::timestamp + v_assignment_time) AT TIME ZONE 'Asia/Manila');
 
   SELECT COALESCE(short_name, full_name) INTO v_prosecutor_name
   FROM public.prosecutors
@@ -7363,7 +7481,7 @@ BEGIN
     p_case_id,
     v_event_type_id,
     p_assignment_date,
-    p_assignment_time,
+    v_assignment_time,
     'Case Assignment',
     'Assigned to Prosec ' || COALESCE(v_prosecutor_name, p_prosecutor_id::text) || ' on ' || to_char(p_assignment_date, 'Mon DD, YYYY'),
     v_pending_status_id,
@@ -7489,17 +7607,24 @@ CREATE FUNCTION public.record_case_decision_approved_event(p_case_id bigint, p_c
 DECLARE
   v_event_type_id bigint;
   v_status_id bigint;
+  v_stage_id bigint;
   v_previous_status_id bigint;
+  v_previous_case_status_id bigint;
+  v_previous_stage_id bigint;
   v_event_id bigint;
   v_approval_id bigint;
   v_status_history_id bigint;
+  v_stage_history_id bigint;
   v_approver_name text;
   v_approver_position_code text;
   v_approver_position_group_type text;
   v_event_final_status_code text;
   v_event_final_status_label text;
-  v_case_final_status_code text;
-  v_case_final_status_label text;
+  v_case_status_code text;
+  v_case_stage_code text;
+  v_case_status_label text;
+  v_case_stage_label text;
+  v_effective_time time without time zone;
   v_remarks text := NULLIF(btrim(COALESCE(p_remarks, '')), '');
   v_old_details jsonb;
   v_new_details jsonb;
@@ -7507,18 +7632,12 @@ DECLARE
   v_action_count integer;
   v_for_filing_count integer;
   v_dismissal_count integer;
-  v_existing_for_filing_count integer;
-  v_existing_dismissal_count integer;
-  v_total_for_filing_count integer;
-  v_total_dismissal_count integer;
-  v_total_action_count integer;
-  v_pending_unapproved_resolution_count integer;
-  v_active_assignment_count integer;
   v_display_order integer := 0;
 BEGIN
   IF p_case_id IS NULL THEN RAISE EXCEPTION 'Case id is required'; END IF;
   IF p_approved_by_prosecutor_id IS NULL THEN RAISE EXCEPTION 'Approved by prosecutor is required'; END IF;
   IF p_date_approved IS NULL THEN RAISE EXCEPTION 'Date approved is required'; END IF;
+  v_effective_time := COALESCE(p_time_approved, (now() AT TIME ZONE 'Asia/Manila')::time(0));
   IF jsonb_typeof(COALESCE(p_approval_actions, '[]'::jsonb)) <> 'array' THEN RAISE EXCEPTION 'Approval actions must be an array'; END IF;
 
   IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN
@@ -7537,18 +7656,13 @@ BEGIN
     RAISE EXCEPTION 'Approver must be a Chief Prosecutor or Deputy Prosecutor';
   END IF;
 
-  IF p_case_resolution_id IS NULL THEN
-    RAISE EXCEPTION 'Case resolution id is required';
-  END IF;
-
+  IF p_case_resolution_id IS NULL THEN RAISE EXCEPTION 'Case resolution id is required'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.case_resolutions WHERE id = p_case_resolution_id AND case_id = p_case_id) THEN
     RAISE EXCEPTION 'Resolution % does not belong to case %', p_case_resolution_id, p_case_id;
   END IF;
-
   IF EXISTS (SELECT 1 FROM public.case_resolutions WHERE id = p_case_resolution_id AND case_id = p_case_id AND is_voided = true) THEN
     RAISE EXCEPTION 'Voided resolution cannot be approved.';
   END IF;
-
   IF EXISTS (SELECT 1 FROM public.case_resolution_approvals WHERE case_resolution_id = p_case_resolution_id AND is_voided = false) THEN
     RAISE EXCEPTION 'This resolution already has an active approved decision.';
   END IF;
@@ -7568,85 +7682,29 @@ BEGIN
   END;
   v_event_final_status_label := CASE v_event_final_status_code WHEN 'FOR_FILING' THEN 'For Filing' WHEN 'DISMISSED' THEN 'Dismissed' ELSE 'Mixed Result' END;
 
-  SELECT
-    count(*) FILTER (WHERE decision_code = 'FOR_FILING'),
-    count(*) FILTER (WHERE decision_code = 'DISMISSAL')
-  INTO v_existing_for_filing_count, v_existing_dismissal_count
-  FROM public.case_resolution_approval_actions aa
-  JOIN public.case_resolution_approvals a ON a.id = aa.approval_id
-  WHERE aa.case_id = p_case_id
-    AND a.is_voided = false;
-
-  v_total_for_filing_count := COALESCE(v_existing_for_filing_count, 0) + COALESCE(v_for_filing_count, 0);
-  v_total_dismissal_count := COALESCE(v_existing_dismissal_count, 0) + COALESCE(v_dismissal_count, 0);
-  v_total_action_count := v_total_for_filing_count + v_total_dismissal_count;
-
-  SELECT count(*)
-  INTO v_pending_unapproved_resolution_count
-  FROM public.case_resolutions cr
-  WHERE cr.case_id = p_case_id
-    AND cr.id <> p_case_resolution_id
-    AND cr.is_voided = false
-    AND NOT EXISTS (
-      SELECT 1
-      FROM public.case_resolution_approvals a
-      WHERE a.case_resolution_id = cr.id
-        AND a.is_voided = false
-    );
-
-  IF COALESCE(v_pending_unapproved_resolution_count, 0) > 0 THEN
-    v_case_final_status_code := 'RESO_FOR_APPROVAL';
-  ELSIF v_total_action_count < 1 THEN
-    SELECT count(*)
-    INTO v_active_assignment_count
-    FROM public.case_assignments ca
-    WHERE ca.case_id = p_case_id
-      AND ca.unassigned_at IS NULL
-      AND ca.is_voided IS FALSE;
-
-    IF COALESCE(v_active_assignment_count, 0) > 0 THEN
-      v_case_final_status_code := 'PENDING';
-    ELSE
-      RAISE EXCEPTION 'At least one approval action is required';
-    END IF;
-  ELSIF v_total_for_filing_count > 0 AND v_total_dismissal_count > 0 THEN
-    v_case_final_status_code := 'MIXED_RESULT';
-  ELSIF v_total_for_filing_count > 0 THEN
-    v_case_final_status_code := 'FOR_FILING';
-  ELSIF v_total_dismissal_count > 0 THEN
-    v_case_final_status_code := 'DISMISSED';
-  END IF;
-
-  v_case_final_status_label := CASE v_case_final_status_code WHEN 'PENDING' THEN 'Pending' WHEN 'RESO_FOR_APPROVAL' THEN 'Reso for Approval' WHEN 'FOR_FILING' THEN 'For Filing' WHEN 'DISMISSED' THEN 'Dismissed' ELSE 'Mixed Result' END;
+  SELECT cpd.current_status_id, cpd.current_case_status_id, cpd.current_case_stage_id, to_jsonb(cpd)
+  INTO v_previous_status_id, v_previous_case_status_id, v_previous_stage_id, v_old_details
+  FROM public.case_private_details cpd WHERE cpd.case_id = p_case_id;
 
   INSERT INTO public.case_event_types (code, display_label, category, description, sort_order, is_system, is_active)
   VALUES ('CASE_DECISION_APPROVED', 'Case Decision Approved', 'CASE', 'Manual timeline event for approving a prosecutor recommendation or final case decision.', 130, true, true)
   ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, category = EXCLUDED.category, description = EXCLUDED.description, sort_order = EXCLUDED.sort_order, is_active = true, updated_at = now()
   RETURNING id INTO v_event_type_id;
 
-  INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active)
-  VALUES (v_case_final_status_code, v_case_final_status_label, CASE v_case_final_status_code WHEN 'PENDING' THEN 20 WHEN 'RESO_FOR_APPROVAL' THEN 80 WHEN 'FOR_FILING' THEN 90 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_case_final_status_code NOT IN ('PENDING', 'RESO_FOR_APPROVAL'), v_case_final_status_code <> 'PENDING', true)
-  ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, is_final = EXCLUDED.is_final, is_milestone = EXCLUDED.is_milestone, is_active = true
-  RETURNING id INTO v_status_id;
-
-  SELECT cpd.current_status_id, to_jsonb(cpd) INTO v_previous_status_id, v_old_details
-  FROM public.case_private_details cpd WHERE cpd.case_id = p_case_id;
-
-  INSERT INTO public.case_events (case_id, event_type_id, event_date, event_time, title, description, status_id, details_jsonb, source, created_by_user_id, updated_by_user_id)
-  VALUES (p_case_id, v_event_type_id, p_date_approved, p_time_approved, 'Case Decision Approved', 'Decision approved by Prosec ' || v_approver_name || ' on ' || to_char(p_date_approved, 'Mon FMDD, YYYY'), v_status_id,
-    jsonb_build_object('approved_by_prosecutor_id', p_approved_by_prosecutor_id, 'approved_by_name', v_approver_name, 'date_approved', p_date_approved, 'time_approved', p_time_approved, 'final_status_code', v_case_final_status_code, 'final_status_label', v_case_final_status_label, 'event_final_status_code', v_event_final_status_code, 'event_final_status_label', v_event_final_status_label, 'case_final_status_code', v_case_final_status_code, 'case_final_status_label', v_case_final_status_label, 'remarks', v_remarks),
+  INSERT INTO public.case_events (case_id, event_type_id, event_date, event_time, title, description, details_jsonb, source, created_by_user_id, updated_by_user_id)
+  VALUES (p_case_id, v_event_type_id, p_date_approved, v_effective_time, 'Case Decision Approved', 'Decision approved by Prosec ' || v_approver_name || ' on ' || to_char(p_date_approved, 'Mon FMDD, YYYY'),
+    jsonb_build_object('approved_by_prosecutor_id', p_approved_by_prosecutor_id, 'approved_by_name', v_approver_name, 'date_approved', p_date_approved, 'time_approved', v_effective_time, 'final_status_code', v_event_final_status_code, 'final_status_label', v_event_final_status_label, 'event_final_status_code', v_event_final_status_code, 'event_final_status_label', v_event_final_status_label, 'remarks', v_remarks),
     'MANUAL_ENTRY', p_user_id, p_user_id)
   RETURNING id INTO v_event_id;
 
   INSERT INTO public.case_resolution_approvals (case_id, case_event_id, case_resolution_id, approved_by_prosecutor_id, date_approved, time_approved, final_status_code, remarks, created_by_user_id, updated_by_user_id)
-  VALUES (p_case_id, v_event_id, p_case_resolution_id, p_approved_by_prosecutor_id, p_date_approved, p_time_approved, v_event_final_status_code, v_remarks, p_user_id, p_user_id)
+  VALUES (p_case_id, v_event_id, p_case_resolution_id, p_approved_by_prosecutor_id, p_date_approved, v_effective_time, v_event_final_status_code, v_remarks, p_user_id, p_user_id)
   RETURNING id INTO v_approval_id;
 
   FOR v_action IN SELECT * FROM jsonb_array_elements(COALESCE(p_approval_actions, '[]'::jsonb)) LOOP
     IF NULLIF(btrim(COALESCE(v_action->>'charge_text', '')), '') IS NOT NULL AND v_action->>'decision_code' IN ('FOR_FILING', 'DISMISSAL') THEN
       IF NULLIF(v_action->>'source_resolution_charge_action_id', '') IS NOT NULL AND NOT EXISTS (
-        SELECT 1
-        FROM public.case_resolution_charge_actions src
+        SELECT 1 FROM public.case_resolution_charge_actions src
         WHERE src.id = NULLIF(v_action->>'source_resolution_charge_action_id', '')::bigint
           AND src.case_id = p_case_id
           AND src.case_resolution_id = p_case_resolution_id
@@ -7660,28 +7718,73 @@ BEGIN
     END IF;
   END LOOP;
 
+  SELECT case_status_code, case_stage_code INTO v_case_status_code, v_case_stage_code
+  FROM public.compute_current_case_state(p_case_id) LIMIT 1;
+  SELECT id, display_label INTO v_status_id, v_case_status_label FROM public.case_statuses WHERE code = v_case_status_code AND is_active IS TRUE LIMIT 1;
+  SELECT id, display_label INTO v_stage_id, v_case_stage_label FROM public.case_stages WHERE code = v_case_stage_code AND is_active IS TRUE LIMIT 1;
+  IF v_status_id IS NULL THEN RAISE EXCEPTION 'Missing active case status %', v_case_status_code; END IF;
+  IF v_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage %', v_case_stage_code; END IF;
+
   UPDATE public.case_events
-  SET source_table = 'case_resolution_approvals', source_id = v_approval_id,
-      details_jsonb = details_jsonb || jsonb_build_object('approval_actions', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', aa.id, 'source_resolution_charge_action_id', aa.source_resolution_charge_action_id, 'case_violation_id', aa.case_violation_id, 'violation_id', aa.violation_id, 'charge_text', aa.charge_text, 'decision_code', aa.decision_code, 'display_order', aa.display_order, 'remarks', aa.remarks) ORDER BY aa.display_order, aa.id) FROM public.case_resolution_approval_actions aa WHERE aa.approval_id = v_approval_id), '[]'::jsonb)),
-      updated_by_user_id = p_user_id, updated_at = now()
+  SET source_table = 'case_resolution_approvals',
+      source_id = v_approval_id,
+      status_id = v_status_id,
+      case_status_id = v_status_id,
+      case_stage_id = v_stage_id,
+      details_jsonb = details_jsonb || jsonb_build_object(
+        'case_status_code', v_case_status_code,
+        'case_status_label', v_case_status_label,
+        'case_stage_code', v_case_stage_code,
+        'case_stage_label', v_case_stage_label,
+        'case_final_status_code', v_case_status_code,
+        'case_final_status_label', v_case_status_label,
+        'approval_actions', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', aa.id, 'source_resolution_charge_action_id', aa.source_resolution_charge_action_id, 'case_violation_id', aa.case_violation_id, 'violation_id', aa.violation_id, 'charge_text', aa.charge_text, 'decision_code', aa.decision_code, 'display_order', aa.display_order, 'remarks', aa.remarks) ORDER BY aa.display_order, aa.id) FROM public.case_resolution_approval_actions aa WHERE aa.approval_id = v_approval_id), '[]'::jsonb)
+      ),
+      updated_by_user_id = p_user_id,
+      updated_at = now()
   WHERE id = v_event_id;
 
-  INSERT INTO public.case_private_details (case_id, current_status_id, current_status_date, current_status_remarks, updated_at)
-  VALUES (p_case_id, v_status_id, p_date_approved, v_remarks, now())
-  ON CONFLICT (case_id) DO UPDATE SET current_status_id = EXCLUDED.current_status_id, current_status_date = EXCLUDED.current_status_date, current_status_remarks = EXCLUDED.current_status_remarks, updated_at = now();
+  INSERT INTO public.case_private_details (case_id, current_status_id, current_status_date, current_status_remarks, current_case_status_id, current_case_status_date, current_case_status_remarks, current_case_stage_id, current_case_stage_date, current_case_stage_remarks, updated_at)
+  VALUES (p_case_id, v_status_id, p_date_approved, v_remarks, v_status_id, p_date_approved, v_remarks, v_stage_id, p_date_approved, v_remarks, now())
+  ON CONFLICT (case_id) DO UPDATE SET
+    current_status_id = EXCLUDED.current_status_id,
+    current_status_date = EXCLUDED.current_status_date,
+    current_status_remarks = EXCLUDED.current_status_remarks,
+    current_case_status_id = EXCLUDED.current_case_status_id,
+    current_case_status_date = EXCLUDED.current_case_status_date,
+    current_case_status_remarks = EXCLUDED.current_case_status_remarks,
+    current_case_stage_id = EXCLUDED.current_case_stage_id,
+    current_case_stage_date = EXCLUDED.current_case_stage_date,
+    current_case_stage_remarks = EXCLUDED.current_case_stage_remarks,
+    updated_at = now();
 
-  INSERT INTO public.case_status_history (case_id, from_status_id, to_status_id, changed_by_user_id, changed_at, status_date, remarks, case_event_id)
-  VALUES (p_case_id, v_previous_status_id, v_status_id, p_user_id, now(), p_date_approved, v_remarks, v_event_id)
-  RETURNING id INTO v_status_history_id;
+  IF COALESCE(v_previous_case_status_id, v_previous_status_id) IS DISTINCT FROM v_status_id THEN
+    INSERT INTO public.case_status_history (case_id, from_status_id, to_status_id, changed_by_user_id, changed_at, status_date, remarks, case_event_id)
+    VALUES (p_case_id, COALESCE(v_previous_case_status_id, v_previous_status_id), v_status_id, p_user_id, now(), p_date_approved, v_remarks, v_event_id)
+    RETURNING id INTO v_status_history_id;
+  END IF;
+
+  IF v_previous_stage_id IS DISTINCT FROM v_stage_id THEN
+    INSERT INTO public.case_stage_history (case_id, from_stage_id, to_stage_id, changed_by_user_id, changed_at, stage_date, remarks, case_event_id)
+    VALUES (p_case_id, v_previous_stage_id, v_stage_id, p_user_id, now(), p_date_approved, v_remarks, v_event_id)
+    RETURNING id INTO v_stage_history_id;
+  END IF;
 
   SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE cpd.case_id = p_case_id;
 
   INSERT INTO public.audit_logs (actor_user_id, entity_name, entity_id, action, old_data, new_data, case_id, summary, metadata)
-  VALUES (p_user_id, 'case_resolution_approvals', v_approval_id, 'CASE_DECISION_APPROVED', v_old_details, v_new_details, p_case_id, 'Case decision approved as ' || v_case_final_status_label || '.', jsonb_build_object('case_event_id', v_event_id, 'status_history_id', v_status_history_id, 'event_final_status_code', v_event_final_status_code, 'case_final_status_code', v_case_final_status_code));
+  VALUES (p_user_id, 'case_resolution_approvals', v_approval_id, 'CASE_DECISION_APPROVED', v_old_details, v_new_details, p_case_id, 'Case decision approved as ' || v_event_final_status_label || '.', jsonb_build_object('case_event_id', v_event_id, 'status_history_id', v_status_history_id, 'case_stage_history_id', v_stage_history_id, 'event_final_status_code', v_event_final_status_code, 'case_status_code', v_case_status_code, 'case_stage_code', v_case_stage_code));
 
   RETURN v_event_id;
 END;
 $$;
+
+
+--
+-- Name: FUNCTION record_case_decision_approved_event(p_case_id bigint, p_case_resolution_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone, p_approval_actions jsonb, p_remarks text, p_user_id bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.record_case_decision_approved_event(p_case_id bigint, p_case_resolution_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone, p_approval_actions jsonb, p_remarks text, p_user_id bigint) IS 'Records CASE_DECISION_APPROVED using split Case Status / Case Stage: approval action outcome remains on the approval row while case_events, case_private_details, case_status_history, and case_stage_history use public.compute_current_case_state().';
 
 
 --
@@ -7712,6 +7815,7 @@ DECLARE
   v_old_details jsonb;
   v_new_details jsonb;
   v_reassigned_at timestamptz;
+  v_reassignment_time time without time zone;
   v_previous_prosecutor_name text;
   v_new_prosecutor_name text;
   v_staff_name text;
@@ -7751,7 +7855,8 @@ BEGIN
 
   IF v_previous_assignment_id IS NULL THEN RAISE EXCEPTION 'This case has no active assignment to reassign.'; END IF;
 
-  v_reassigned_at := (p_reassignment_date::timestamp + COALESCE(p_reassignment_time, '00:00'::time))::timestamptz;
+  v_reassignment_time := COALESCE(p_reassignment_time, (now() AT TIME ZONE 'Asia/Manila')::time(0));
+  v_reassigned_at := ((p_reassignment_date::timestamp + v_reassignment_time) AT TIME ZONE 'Asia/Manila');
 
   SELECT COALESCE(short_name, full_name) INTO v_new_prosecutor_name FROM public.prosecutors WHERE id = p_new_prosecutor_id;
   SELECT COALESCE(short_name, full_name) INTO v_staff_name FROM public.staff WHERE id = p_new_staff_id;
@@ -7772,7 +7877,7 @@ BEGIN
     prosecutor_id, staff_id, details_jsonb, source, source_table, source_id,
     created_by_user_id, updated_by_user_id
   ) VALUES (
-    p_case_id, v_event_type_id, p_reassignment_date, p_reassignment_time,
+    p_case_id, v_event_type_id, p_reassignment_date, v_reassignment_time,
     'Case Reassignment',
     'Reassigned from Prosec ' || COALESCE(v_previous_prosecutor_name, v_previous_prosecutor_id::text) || ' to Prosec ' || COALESCE(v_new_prosecutor_name, p_new_prosecutor_id::text) || ' on ' || to_char(p_reassignment_date, 'Mon FMDD, YYYY'),
     v_pending_status_id, v_pending_status_id, v_case_reassigned_stage_id,
@@ -7788,7 +7893,7 @@ BEGIN
       'staff_id', p_new_staff_id,
       'staff_name', v_staff_name,
       'reassignment_date', p_reassignment_date,
-      'reassignment_time', p_reassignment_time,
+      'reassignment_time', v_reassignment_time,
       'reason', v_reason,
       'remarks', v_remarks,
       'automatic_case_status', 'Pending',
@@ -7834,12 +7939,15 @@ CREATE FUNCTION public.record_case_resolved_event(p_case_id bigint, p_recommenda
     AS $$
 DECLARE
   v_event_type_id bigint;
-  v_reso_for_approval_status_id bigint;
-  v_previous_status_id bigint;
+  v_pending_status_id bigint;
+  v_reso_stage_id bigint;
+  v_previous_case_status_id bigint;
+  v_previous_stage_id bigint;
   v_event_id bigint;
   v_resolution_id bigint;
   v_status_history_id bigint;
   v_recommendation_label text;
+  v_effective_time time without time zone;
   v_remarks text := NULLIF(btrim(COALESCE(p_remarks, '')), '');
   v_old_details jsonb;
   v_new_details jsonb;
@@ -7860,9 +7968,14 @@ BEGIN
   RETURNING id INTO v_event_type_id;
 
   INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active)
-  VALUES ('RESO_FOR_APPROVAL', 'Reso for Approval', 80, false, true, true)
-  ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, is_final = false, is_milestone = true, is_active = true
-  RETURNING id INTO v_reso_for_approval_status_id;
+  VALUES ('PENDING', 'Pending', 20, false, false, true)
+  ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, is_final = false, is_milestone = false, is_active = true
+  RETURNING id INTO v_pending_status_id;
+
+  SELECT id INTO v_reso_stage_id FROM public.case_stages WHERE code = 'RESO_FOR_APPROVAL' AND is_active IS TRUE LIMIT 1;
+  IF v_reso_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage RESO_FOR_APPROVAL'; END IF;
+
+  v_effective_time := COALESCE(p_time_resolved, (now() AT TIME ZONE 'Asia/Manila')::time(0));
 
   v_recommendation_label := CASE p_recommendation_code
     WHEN 'CASE_FOR_FILING' THEN 'Case for Filing'
@@ -7870,24 +7983,24 @@ BEGIN
     ELSE 'Mixed Result'
   END;
 
-  SELECT cpd.current_status_id, to_jsonb(cpd)
-  INTO v_previous_status_id, v_old_details
+  SELECT cpd.current_case_status_id, cpd.current_case_stage_id, to_jsonb(cpd)
+  INTO v_previous_case_status_id, v_previous_stage_id, v_old_details
   FROM public.case_private_details cpd
   WHERE cpd.case_id = p_case_id;
 
   INSERT INTO public.case_events (
-    case_id, event_type_id, event_date, event_time, title, description, status_id,
+    case_id, event_type_id, event_date, event_time, title, description, status_id, case_status_id, case_stage_id,
     details_jsonb, source, created_by_user_id, updated_by_user_id
   ) VALUES (
-    p_case_id, v_event_type_id, p_date_resolved, p_time_resolved, 'Case Resolved',
+    p_case_id, v_event_type_id, p_date_resolved, v_effective_time, 'Case Resolved',
     'Case resolved as ' || v_recommendation_label || ' on ' || to_char(p_date_resolved, 'Mon FMDD, YYYY'),
-    v_reso_for_approval_status_id,
+    v_pending_status_id, v_pending_status_id, v_reso_stage_id,
     jsonb_build_object('recommendation_code', p_recommendation_code, 'recommendation_label', v_recommendation_label, 'remarks', v_remarks),
     'MANUAL_ENTRY', p_user_id, p_user_id
   ) RETURNING id INTO v_event_id;
 
   INSERT INTO public.case_resolutions (case_id, case_event_id, recommendation_code, date_resolved, time_resolved, remarks, created_by_user_id, updated_by_user_id)
-  VALUES (p_case_id, v_event_id, p_recommendation_code, p_date_resolved, p_time_resolved, v_remarks, p_user_id, p_user_id)
+  VALUES (p_case_id, v_event_id, p_recommendation_code, p_date_resolved, v_effective_time, v_remarks, p_user_id, p_user_id)
   RETURNING id INTO v_resolution_id;
 
   IF p_recommendation_code IN ('CASE_FOR_FILING', 'MIXED_RESULT') THEN
@@ -7933,17 +8046,30 @@ BEGIN
       updated_at = now()
   WHERE id = v_event_id;
 
-  INSERT INTO public.case_private_details (case_id, current_status_id, current_status_date, current_status_remarks, updated_at)
-  VALUES (p_case_id, v_reso_for_approval_status_id, p_date_resolved, v_remarks, now())
+  INSERT INTO public.case_private_details (case_id, current_status_id, current_status_date, current_status_remarks, current_case_status_id, current_case_status_date, current_case_status_remarks, current_case_stage_id, current_case_stage_date, current_case_stage_remarks, updated_at)
+  VALUES (p_case_id, v_pending_status_id, p_date_resolved, v_remarks, v_pending_status_id, p_date_resolved, v_remarks, v_reso_stage_id, p_date_resolved, v_remarks, now())
   ON CONFLICT (case_id) DO UPDATE SET
     current_status_id = EXCLUDED.current_status_id,
     current_status_date = EXCLUDED.current_status_date,
     current_status_remarks = EXCLUDED.current_status_remarks,
+    current_case_status_id = v_pending_status_id,
+    current_case_status_date = p_date_resolved,
+    current_case_status_remarks = v_remarks,
+    current_case_stage_id = v_reso_stage_id,
+    current_case_stage_date = p_date_resolved,
+    current_case_stage_remarks = v_remarks,
     updated_at = now();
 
-  INSERT INTO public.case_status_history (case_id, from_status_id, to_status_id, changed_by_user_id, changed_at, status_date, remarks, case_event_id)
-  VALUES (p_case_id, v_previous_status_id, v_reso_for_approval_status_id, p_user_id, now(), p_date_resolved, v_remarks, v_event_id)
-  RETURNING id INTO v_status_history_id;
+  IF v_previous_case_status_id IS DISTINCT FROM v_pending_status_id THEN
+    INSERT INTO public.case_status_history (case_id, from_status_id, to_status_id, changed_by_user_id, changed_at, status_date, remarks, case_event_id)
+    VALUES (p_case_id, v_previous_case_status_id, v_pending_status_id, p_user_id, now(), p_date_resolved, v_remarks, v_event_id)
+    RETURNING id INTO v_status_history_id;
+  END IF;
+
+  IF v_previous_stage_id IS DISTINCT FROM v_reso_stage_id THEN
+    INSERT INTO public.case_stage_history (case_id, from_stage_id, to_stage_id, changed_by_user_id, changed_at, stage_date, remarks, case_event_id)
+    VALUES (p_case_id, v_previous_stage_id, v_reso_stage_id, p_user_id, now(), p_date_resolved, v_remarks, v_event_id);
+  END IF;
 
   SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE cpd.case_id = p_case_id;
 
@@ -7965,7 +8091,11 @@ CREATE FUNCTION public.record_court_filing_event(p_case_id bigint, p_case_resolu
     AS $$
 DECLARE
   v_event_type_id bigint; v_event_id bigint; v_filing_id bigint; v_approval_id bigint; v_resolution_id bigint;
-  v_status_code text; v_status_label text; v_status_id bigint; v_prev_status_id bigint; v_status_history_id bigint;
+  v_case_status_code text; v_case_stage_code text; v_case_status_label text; v_case_stage_label text;
+  v_status_id bigint; v_stage_id bigint; v_prev_status_id bigint; v_prev_case_status_id bigint; v_prev_stage_id bigint;
+  v_status_history_id bigint; v_stage_history_id bigint;
+  v_effective_time time without time zone;
+  v_remarks text := NULLIF(btrim(COALESCE(p_remarks, '')), '');
   v_old_details jsonb; v_new_details jsonb; v_court_id bigint; v_court_name text; v_court_code text; v_court_code_candidate text; v_code_suffix integer := 0; v_charge text := NULLIF(btrim(COALESCE(p_charge_filed, '')), '');
 BEGIN
   IF p_case_id IS NULL THEN RAISE EXCEPTION 'Case id is required'; END IF;
@@ -7973,6 +8103,7 @@ BEGIN
   IF p_court_id IS NULL AND NULLIF(btrim(COALESCE(p_court_name, '')), '') IS NULL THEN RAISE EXCEPTION 'Court is required'; END IF;
   IF v_charge IS NULL THEN RAISE EXCEPTION 'Charge filed is required'; END IF;
   IF p_date_filed IS NULL THEN RAISE EXCEPTION 'Date filed is required'; END IF;
+  v_effective_time := COALESCE(p_time_filed, (now() AT TIME ZONE 'Asia/Manila')::time(0));
   IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN RAISE EXCEPTION 'Unknown case id %', p_case_id; END IF;
 
   SELECT aa.approval_id, a.case_resolution_id INTO v_approval_id, v_resolution_id
@@ -7985,22 +8116,12 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.case_court_filings WHERE case_resolution_approval_action_id = p_case_resolution_approval_action_id AND is_voided = false) THEN
     RAISE EXCEPTION 'This approved filing decision already has a court filing.';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM public.case_resolution_approval_actions aa JOIN public.case_resolution_approvals a ON a.id=aa.approval_id JOIN public.case_resolutions cr ON cr.id=a.case_resolution_id WHERE aa.case_id=p_case_id AND aa.decision_code='FOR_FILING' AND a.is_voided=false AND cr.is_voided=false) THEN
-    RAISE EXCEPTION 'No active approved FOR_FILING decision was found for this case.';
-  END IF;
 
   IF p_court_id IS NOT NULL THEN
-    SELECT c.id, c.name INTO v_court_id, v_court_name
-    FROM public.courts c
-    WHERE c.id = p_court_id;
+    SELECT c.id, c.name INTO v_court_id, v_court_name FROM public.courts c WHERE c.id = p_court_id;
     IF v_court_id IS NULL THEN RAISE EXCEPTION 'Unknown court id %', p_court_id; END IF;
   ELSE
-    SELECT c.id, c.name INTO v_court_id, v_court_name
-    FROM public.courts c
-    WHERE lower(btrim(c.name)) = lower(btrim(p_court_name))
-    ORDER BY c.id
-    LIMIT 1;
-
+    SELECT c.id, c.name INTO v_court_id, v_court_name FROM public.courts c WHERE lower(btrim(c.name)) = lower(btrim(p_court_name)) ORDER BY c.id LIMIT 1;
     IF v_court_id IS NULL THEN
       v_court_name := NULLIF(btrim(p_court_name), '');
       v_court_code_candidate := upper(regexp_replace(v_court_name, '[^a-zA-Z0-9]+', '_', 'g'));
@@ -8010,38 +8131,48 @@ BEGIN
         v_code_suffix := v_code_suffix + 1;
         v_court_code := left(v_court_code_candidate, greatest(1, 63 - length(v_code_suffix::text))) || '_' || v_code_suffix::text;
       END LOOP;
-      INSERT INTO public.courts(code, name, court_type, is_active)
-      VALUES (v_court_code, v_court_name, NULL, true)
-      RETURNING id, name INTO v_court_id, v_court_name;
+      INSERT INTO public.courts(code, name, court_type, is_active) VALUES (v_court_code, v_court_name, NULL, true) RETURNING id, name INTO v_court_id, v_court_name;
     END IF;
   END IF;
 
   INSERT INTO public.case_event_types (code, display_label, category, description, sort_order, is_system, is_active) VALUES ('COURT_FILING','Court Filing','COURT','Manual timeline event for recording filing in court.',140,true,true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,is_active=true,updated_at=now() RETURNING id INTO v_event_type_id;
 
-  SELECT current_status_id, to_jsonb(cpd) INTO v_prev_status_id, v_old_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
+  SELECT current_status_id, current_case_status_id, current_case_stage_id, to_jsonb(cpd) INTO v_prev_status_id, v_prev_case_status_id, v_prev_stage_id, v_old_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
 
-  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,details_jsonb,source,created_by_user_id,updated_by_user_id)
-  VALUES (p_case_id,v_event_type_id,p_date_filed,p_time_filed,'Court Filing','Filed in ' || v_court_name || ' on ' || to_char(p_date_filed, 'Mon FMDD, YYYY'),NULL,
-    jsonb_build_object('court',v_court_name,'court_id',v_court_id,'court_branch',NULLIF(btrim(COALESCE(p_court_branch,'')),''),'charge_filed',v_charge,'date_filed',p_date_filed,'time_filed',p_time_filed,'information_count',p_information_count,'criminal_case_no',NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),'remarks',NULLIF(btrim(COALESCE(p_remarks,'')),''),'case_resolution_approval_id',v_approval_id,'case_resolution_approval_action_id',p_case_resolution_approval_action_id),
+  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,case_status_id,case_stage_id,details_jsonb,source,created_by_user_id,updated_by_user_id)
+  VALUES (p_case_id,v_event_type_id,p_date_filed,v_effective_time,'Court Filing','Filed in ' || v_court_name || ' on ' || to_char(p_date_filed, 'Mon FMDD, YYYY'),NULL,NULL,NULL,
+    jsonb_build_object('court',v_court_name,'court_id',v_court_id,'court_branch',NULLIF(btrim(COALESCE(p_court_branch,'')),''),'charge_filed',v_charge,'date_filed',p_date_filed,'time_filed',v_effective_time,'information_count',p_information_count,'criminal_case_no',NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),'remarks',v_remarks,'case_resolution_approval_id',v_approval_id,'case_resolution_approval_action_id',p_case_resolution_approval_action_id),
     'MANUAL_ENTRY',p_user_id,p_user_id) RETURNING id INTO v_event_id;
 
   INSERT INTO public.case_court_filings(case_id,case_event_id,case_resolution_approval_id,case_resolution_approval_action_id,court_id,court_name,court_branch,charge_filed,date_filed,time_filed,information_count,criminal_case_no,remarks,created_by_user_id,updated_by_user_id)
-  VALUES (p_case_id,v_event_id,v_approval_id,p_case_resolution_approval_action_id,v_court_id,v_court_name,NULLIF(btrim(COALESCE(p_court_branch,'')),''),v_charge,p_date_filed,p_time_filed,p_information_count,NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),NULLIF(btrim(COALESCE(p_remarks,'')),''),p_user_id,p_user_id) RETURNING id INTO v_filing_id;
+  VALUES (p_case_id,v_event_id,v_approval_id,p_case_resolution_approval_action_id,v_court_id,v_court_name,NULLIF(btrim(COALESCE(p_court_branch,'')),''),v_charge,p_date_filed,v_effective_time,p_information_count,NULLIF(btrim(COALESCE(p_criminal_case_no,'')),''),v_remarks,p_user_id,p_user_id) RETURNING id INTO v_filing_id;
 
-  UPDATE public.case_events SET source_table='case_court_filings', source_id=v_filing_id, updated_at=now(), updated_by_user_id=p_user_id WHERE id=v_event_id;
+  SELECT case_status_code, case_stage_code INTO v_case_status_code, v_case_stage_code FROM public.compute_current_case_state(p_case_id) LIMIT 1;
+  SELECT id, display_label INTO v_status_id, v_case_status_label FROM public.case_statuses WHERE code = v_case_status_code AND is_active IS TRUE LIMIT 1;
+  SELECT id, display_label INTO v_stage_id, v_case_stage_label FROM public.case_stages WHERE code = v_case_stage_code AND is_active IS TRUE LIMIT 1;
+  IF v_status_id IS NULL THEN RAISE EXCEPTION 'Missing active case status %', v_case_status_code; END IF;
+  IF v_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage %', v_case_stage_code; END IF;
 
-  SELECT status_code, status_label INTO v_status_code, v_status_label FROM public.recompute_case_status_after_court_filing(p_case_id) LIMIT 1;
-  IF v_status_code IS NOT NULL THEN
-    INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'RESO_FOR_APPROVAL' THEN 80 WHEN 'FOR_FILING' THEN 90 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
-    UPDATE public.case_events SET status_id=v_status_id, updated_at=now(), updated_by_user_id=p_user_id WHERE id=v_event_id;
-    INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,updated_at) VALUES (p_case_id,v_status_id,p_date_filed,NULLIF(btrim(COALESCE(p_remarks,'')),''),now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,updated_at=now();
-  END IF;
-  IF v_prev_status_id IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (p_case_id,v_prev_status_id,v_status_id,p_user_id,now(),p_date_filed,'Court filing recorded. Status recomputed.',v_event_id) RETURNING id INTO v_status_history_id; END IF;
+  UPDATE public.case_events SET source_table='case_court_filings', source_id=v_filing_id, status_id=v_status_id, case_status_id=v_status_id, case_stage_id=v_stage_id, details_jsonb=details_jsonb || jsonb_build_object('case_status_code',v_case_status_code,'case_status_label',v_case_status_label,'case_stage_code',v_case_stage_code,'case_stage_label',v_case_stage_label), updated_at=now(), updated_by_user_id=p_user_id WHERE id=v_event_id;
+
+  INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,current_case_status_id,current_case_status_date,current_case_status_remarks,current_case_stage_id,current_case_stage_date,current_case_stage_remarks,updated_at)
+  VALUES (p_case_id,v_status_id,p_date_filed,v_remarks,v_status_id,p_date_filed,v_remarks,v_stage_id,p_date_filed,v_remarks,now())
+  ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,current_case_status_remarks=EXCLUDED.current_case_status_remarks,current_case_stage_id=EXCLUDED.current_case_stage_id,current_case_stage_date=EXCLUDED.current_case_stage_date,current_case_stage_remarks=EXCLUDED.current_case_stage_remarks,updated_at=now();
+
+  IF COALESCE(v_prev_case_status_id, v_prev_status_id) IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (p_case_id,COALESCE(v_prev_case_status_id, v_prev_status_id),v_status_id,p_user_id,now(),p_date_filed,v_remarks,v_event_id) RETURNING id INTO v_status_history_id; END IF;
+  IF v_prev_stage_id IS DISTINCT FROM v_stage_id THEN INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id) VALUES (p_case_id,v_prev_stage_id,v_stage_id,p_user_id,now(),p_date_filed,v_remarks,v_event_id) RETURNING id INTO v_stage_history_id; END IF;
   SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
-  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES (p_user_id,'case_court_filings',v_filing_id,'COURT_FILING',v_old_details,v_new_details,p_case_id,'Court filing recorded.',jsonb_build_object('case_event_id',v_event_id,'status_history_id',v_status_history_id,'case_resolution_approval_id',v_approval_id,'case_resolution_approval_action_id',p_case_resolution_approval_action_id));
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES (p_user_id,'case_court_filings',v_filing_id,'COURT_FILING',v_old_details,v_new_details,p_case_id,'Court filing recorded.',jsonb_build_object('case_event_id',v_event_id,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id,'case_resolution_approval_id',v_approval_id,'case_resolution_approval_action_id',p_case_resolution_approval_action_id,'case_status_code',v_case_status_code,'case_stage_code',v_case_stage_code));
   RETURN v_event_id;
 END;
 $$;
+
+
+--
+-- Name: FUNCTION record_court_filing_event(p_case_id bigint, p_case_resolution_approval_action_id bigint, p_court_id bigint, p_court_name text, p_court_branch text, p_charge_filed text, p_date_filed date, p_time_filed time without time zone, p_information_count integer, p_criminal_case_no text, p_remarks text, p_user_id bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.record_court_filing_event(p_case_id bigint, p_case_resolution_approval_action_id bigint, p_court_id bigint, p_court_name text, p_court_branch text, p_charge_filed text, p_date_filed date, p_time_filed time without time zone, p_information_count integer, p_criminal_case_no text, p_remarks text, p_user_id bigint) IS 'Records COURT_FILING using split Case Status / Case Stage from public.compute_current_case_state().';
 
 
 --
@@ -8859,8 +8990,9 @@ CREATE FUNCTION public.void_case_event(p_case_event_id bigint, p_void_reason tex
 DECLARE
   v_old jsonb; v_new jsonb; v_case_id bigint; v_event_type_code text; v_source_table text; v_source_id bigint;
   v_filing_id bigint; v_filing_old jsonb; v_filing_new jsonb; v_approval_id bigint; v_resolution_id bigint;
+  v_assignment_id bigint; v_assignment_old jsonb; v_assignment_new jsonb;
+  v_previous_assignment_id bigint; v_previous_assignment_old jsonb; v_previous_assignment_new jsonb; v_latest_assignment_id bigint;
   v_status_code text; v_status_label text; v_status_id bigint; v_prev_status_id bigint; v_status_history_id bigint; v_old_details jsonb; v_new_details jsonb;
-  v_assignment_id bigint; v_assignment_old jsonb; v_assignment_new jsonb; v_previous_assignment_id bigint; v_previous_assignment_old jsonb; v_previous_assignment_new jsonb; v_prev_case_status_id bigint; v_prev_stage_id bigint; v_pending_status_id bigint; v_for_raffle_stage_id bigint; v_case_raffled_stage_id bigint; v_case_reassigned_stage_id bigint; v_target_stage_id bigint; v_active_assignment_count integer; v_stage_history_id bigint;
 BEGIN
   IF nullif(trim(p_void_reason), '') IS NULL THEN RAISE EXCEPTION 'Void reason is required'; END IF;
   SELECT to_jsonb(ce), ce.case_id, cet.code, ce.source_table, ce.source_id INTO v_old, v_case_id, v_event_type_code, v_source_table, v_source_id
@@ -8880,7 +9012,7 @@ BEGIN
     END IF;
   END IF;
 
-  SELECT current_status_id, current_case_status_id, current_case_stage_id, to_jsonb(cpd) INTO v_prev_status_id, v_prev_case_status_id, v_prev_stage_id, v_old_details FROM public.case_private_details cpd WHERE cpd.case_id = v_case_id;
+  SELECT current_status_id, to_jsonb(cpd) INTO v_prev_status_id, v_old_details FROM public.case_private_details cpd WHERE cpd.case_id = v_case_id;
   UPDATE public.case_events SET is_voided = true, void_reason = p_void_reason, voided_at = now(), voided_by_user_id = p_voided_by_user_id, updated_by_user_id = p_voided_by_user_id, updated_at = now() WHERE id = p_case_event_id;
   SELECT to_jsonb(ce) INTO v_new FROM public.case_events ce WHERE ce.id = p_case_event_id;
   INSERT INTO public.audit_logs(actor_user_id, entity_name, entity_id, action, old_data, new_data, case_id, summary, metadata) VALUES (p_voided_by_user_id, 'case_events', p_case_event_id, 'VOID_CASE_EVENT', v_old, v_new, v_case_id, 'Voided case timeline activity', jsonb_build_object('reason', p_void_reason));
@@ -8890,14 +9022,15 @@ BEGIN
     IF v_filing_id IS NOT NULL THEN
       UPDATE public.case_court_filings SET is_voided = true, voided_at = now(), voided_by_user_id = p_voided_by_user_id, void_reason = p_void_reason, updated_by_user_id = p_voided_by_user_id, updated_at = now() WHERE id = v_filing_id;
       SELECT to_jsonb(cf) INTO v_filing_new FROM public.case_court_filings cf WHERE cf.id = v_filing_id;
-      SELECT status_code, status_label INTO v_status_code, v_status_label FROM public.recompute_case_status_after_court_filing(v_case_id) LIMIT 1;
-      IF v_status_code IS NOT NULL THEN
-        INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'RESO_FOR_APPROVAL' THEN 80 WHEN 'FOR_FILING' THEN 90 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
-        INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_case_status_id,current_case_status_date,updated_at) VALUES (v_case_id,v_status_id,CURRENT_DATE,v_status_id,CURRENT_DATE,now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,updated_at=now();
-        IF COALESCE(v_prev_case_status_id, v_prev_status_id) IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (v_case_id,COALESCE(v_prev_case_status_id, v_prev_status_id),v_status_id,p_voided_by_user_id,now(),CURRENT_DATE,'Court filing voided. Status recomputed.',p_case_event_id) RETURNING id INTO v_status_history_id; END IF;
-        SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE cpd.case_id = v_case_id;
-      END IF;
-      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES (p_voided_by_user_id,'case_court_filings',v_filing_id,'VOID_COURT_FILING_FROM_EVENT',v_filing_old,jsonb_build_object('court_filing',v_filing_new,'case_private_details',v_new_details),v_case_id,'Court filing voided and case status recomputed.',jsonb_build_object('case_event_id',p_case_event_id,'status_history_id',v_status_history_id,'reason',p_void_reason,'recomputed_status_code',v_status_code));
+
+      PERFORM public.apply_case_state_recompute(v_case_id, CURRENT_DATE, NULL, p_case_event_id, p_voided_by_user_id);
+
+      SELECT to_jsonb(cpd) INTO v_new_details
+      FROM public.case_private_details cpd
+      WHERE cpd.case_id = v_case_id;
+
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (p_voided_by_user_id,'case_court_filings',v_filing_id,'VOID_COURT_FILING_FROM_EVENT',v_filing_old,jsonb_build_object('court_filing',v_filing_new,'case_private_details',v_new_details),v_case_id,'Court filing voided and case status recomputed.',jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason));
     END IF;
   END IF;
 
@@ -8910,59 +9043,30 @@ BEGIN
 
     IF v_assignment_id IS NOT NULL THEN
       UPDATE public.case_assignments
-      SET is_voided = true, voided_at = now(), voided_by_user_id = p_voided_by_user_id, void_reason = p_void_reason, unassigned_at = COALESCE(unassigned_at, now())
+      SET is_voided = true,
+          voided_at = now(),
+          voided_by_user_id = p_voided_by_user_id,
+          void_reason = p_void_reason,
+          unassigned_at = COALESCE(unassigned_at, now())
       WHERE id = v_assignment_id;
 
       SELECT to_jsonb(ca) INTO v_assignment_new
       FROM public.case_assignments ca
       WHERE ca.id = v_assignment_id;
+
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (
+        p_voided_by_user_id,
+        'case_assignments',
+        v_assignment_id,
+        'VOID_CASE_ASSIGNMENT_FROM_EVENT',
+        v_assignment_old,
+        v_assignment_new,
+        v_case_id,
+        'Assignment row voided because the Case Assignment event was voided.',
+        jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason)
+      );
     END IF;
-
-    SELECT id INTO v_pending_status_id FROM public.case_statuses WHERE code = 'PENDING' AND is_active IS TRUE LIMIT 1;
-    SELECT id INTO v_for_raffle_stage_id FROM public.case_stages WHERE code = 'FOR_RAFFLE' AND is_active IS TRUE LIMIT 1;
-    SELECT id INTO v_case_raffled_stage_id FROM public.case_stages WHERE code = 'CASE_RAFFLED' AND is_active IS TRUE LIMIT 1;
-    IF v_pending_status_id IS NULL THEN RAISE EXCEPTION 'Missing active case status PENDING'; END IF;
-    IF v_for_raffle_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage FOR_RAFFLE'; END IF;
-    IF v_case_raffled_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage CASE_RAFFLED'; END IF;
-
-    SELECT count(*) INTO v_active_assignment_count
-    FROM public.case_assignments ca
-    WHERE ca.case_id = v_case_id
-      AND ca.unassigned_at IS NULL
-      AND ca.is_voided IS FALSE;
-
-    v_target_stage_id := CASE WHEN COALESCE(v_active_assignment_count, 0) > 0 THEN v_case_raffled_stage_id ELSE v_for_raffle_stage_id END;
-
-    INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_case_status_id,current_case_status_date,current_case_stage_id,current_case_stage_date,updated_at)
-    VALUES (v_case_id,v_pending_status_id,CURRENT_DATE,v_pending_status_id,CURRENT_DATE,v_target_stage_id,CURRENT_DATE,now())
-    ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=NULL,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,current_case_status_remarks=NULL,current_case_stage_id=EXCLUDED.current_case_stage_id,current_case_stage_date=EXCLUDED.current_case_stage_date,current_case_stage_remarks=NULL,updated_at=now();
-
-    IF COALESCE(v_prev_case_status_id, v_prev_status_id) IS DISTINCT FROM v_pending_status_id THEN
-      INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id)
-      VALUES (v_case_id,COALESCE(v_prev_case_status_id, v_prev_status_id),v_pending_status_id,p_voided_by_user_id,now(),CURRENT_DATE,'Case Assignment voided. Broad case status remains Pending.',p_case_event_id)
-      RETURNING id INTO v_status_history_id;
-    END IF;
-
-    IF v_prev_stage_id IS DISTINCT FROM v_target_stage_id THEN
-      INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id)
-      VALUES (v_case_id,v_prev_stage_id,v_target_stage_id,p_voided_by_user_id,now(),CURRENT_DATE,'Case Assignment voided. Workflow stage recomputed.',p_case_event_id)
-      RETURNING id INTO v_stage_history_id;
-    END IF;
-
-    SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE cpd.case_id = v_case_id;
-
-    INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
-    VALUES (
-      p_voided_by_user_id,
-      'case_assignments',
-      v_assignment_id,
-      'VOID_CASE_ASSIGNMENT_STAGE_RECOMPUTED',
-      v_assignment_old,
-      jsonb_build_object('assignment', v_assignment_new, 'case_private_details', v_new_details),
-      v_case_id,
-      'Assignment row voided; case status kept Pending and case stage recomputed.',
-      jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'case_status_id',v_pending_status_id,'case_stage_id',v_target_stage_id,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id,'active_assignment_count',v_active_assignment_count)
-    );
   ELSIF v_event_type_code = 'CASE_REASSIGNMENT' THEN
     v_previous_assignment_id := NULLIF(v_old#>>'{details_jsonb,previous_assignment_id}', '')::bigint;
 
@@ -8972,15 +9076,28 @@ BEGIN
     ORDER BY CASE WHEN ca.id = v_source_id THEN 0 ELSE 1 END
     LIMIT 1;
 
-    IF v_assignment_id IS NOT NULL THEN
-      UPDATE public.case_assignments
-      SET is_voided = true, voided_at = now(), voided_by_user_id = p_voided_by_user_id, void_reason = p_void_reason, unassigned_at = COALESCE(unassigned_at, now())
-      WHERE id = v_assignment_id;
+    SELECT ca.id INTO v_latest_assignment_id
+    FROM public.case_assignments ca
+    WHERE ca.case_id = v_case_id
+      AND ca.is_voided IS FALSE
+    ORDER BY ca.assigned_at DESC NULLS LAST, ca.id DESC
+    LIMIT 1;
 
-      SELECT to_jsonb(ca) INTO v_assignment_new
-      FROM public.case_assignments ca
-      WHERE ca.id = v_assignment_id;
+    IF v_assignment_id IS NULL OR v_latest_assignment_id IS DISTINCT FROM v_assignment_id THEN
+      RAISE EXCEPTION 'This reassignment has already been superseded by a later assignment. Void the latest reassignment first.';
     END IF;
+
+    UPDATE public.case_assignments
+    SET is_voided = true,
+        voided_at = now(),
+        voided_by_user_id = p_voided_by_user_id,
+        void_reason = p_void_reason,
+        unassigned_at = COALESCE(unassigned_at, now())
+    WHERE id = v_assignment_id;
+
+    SELECT to_jsonb(ca) INTO v_assignment_new
+    FROM public.case_assignments ca
+    WHERE ca.id = v_assignment_id;
 
     IF v_previous_assignment_id IS NOT NULL THEN
       SELECT to_jsonb(ca) INTO v_previous_assignment_old
@@ -9003,39 +9120,6 @@ BEGIN
         WHERE ca.id = v_previous_assignment_id;
       END IF;
     END IF;
-
-    SELECT id INTO v_pending_status_id FROM public.case_statuses WHERE code = 'PENDING' AND is_active IS TRUE LIMIT 1;
-    SELECT id INTO v_for_raffle_stage_id FROM public.case_stages WHERE code = 'FOR_RAFFLE' AND is_active IS TRUE LIMIT 1;
-    SELECT id INTO v_case_raffled_stage_id FROM public.case_stages WHERE code = 'CASE_RAFFLED' AND is_active IS TRUE LIMIT 1;
-    IF v_pending_status_id IS NULL THEN RAISE EXCEPTION 'Missing active case status PENDING'; END IF;
-    IF v_for_raffle_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage FOR_RAFFLE'; END IF;
-    IF v_case_raffled_stage_id IS NULL THEN RAISE EXCEPTION 'Missing active case stage CASE_RAFFLED'; END IF;
-
-    SELECT count(*) INTO v_active_assignment_count
-    FROM public.case_assignments ca
-    WHERE ca.case_id = v_case_id
-      AND ca.unassigned_at IS NULL
-      AND ca.is_voided IS FALSE;
-
-    v_target_stage_id := CASE WHEN COALESCE(v_active_assignment_count, 0) > 0 THEN v_case_raffled_stage_id ELSE v_for_raffle_stage_id END;
-
-    INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_case_status_id,current_case_status_date,current_case_stage_id,current_case_stage_date,updated_at)
-    VALUES (v_case_id,v_pending_status_id,CURRENT_DATE,v_pending_status_id,CURRENT_DATE,v_target_stage_id,CURRENT_DATE,now())
-    ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=NULL,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,current_case_status_remarks=NULL,current_case_stage_id=EXCLUDED.current_case_stage_id,current_case_stage_date=EXCLUDED.current_case_stage_date,current_case_stage_remarks=NULL,updated_at=now();
-
-    IF COALESCE(v_prev_case_status_id, v_prev_status_id) IS DISTINCT FROM v_pending_status_id THEN
-      INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id)
-      VALUES (v_case_id,COALESCE(v_prev_case_status_id, v_prev_status_id),v_pending_status_id,p_voided_by_user_id,now(),CURRENT_DATE,'Case Reassignment voided. Broad case status remains Pending.',p_case_event_id)
-      RETURNING id INTO v_status_history_id;
-    END IF;
-
-    IF v_prev_stage_id IS DISTINCT FROM v_target_stage_id THEN
-      INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id)
-      VALUES (v_case_id,v_prev_stage_id,v_target_stage_id,p_voided_by_user_id,now(),CURRENT_DATE,'Case Reassignment voided. Workflow stage recomputed.',p_case_event_id)
-      RETURNING id INTO v_stage_history_id;
-    END IF;
-
-    SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE cpd.case_id = v_case_id;
 
     INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
     VALUES (
@@ -9064,22 +9148,13 @@ BEGIN
         jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'voided_assignment_id',v_assignment_id)
       );
     END IF;
-
-    INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
-    VALUES (
-      p_voided_by_user_id,
-      'case_private_details',
-      v_case_id,
-      'CASE_REASSIGNMENT_VOID_STATUS_STAGE_RECOMPUTED',
-      v_old_details,
-      v_new_details,
-      v_case_id,
-      'Case Reassignment voided; case status kept Pending and case stage recomputed from active assignments.',
-      jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'case_status_id',v_pending_status_id,'case_stage_id',v_target_stage_id,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id,'active_assignment_count',v_active_assignment_count,'restored_assignment_id',v_previous_assignment_id)
-    );
   ELSIF lower(coalesce(v_source_table,'')) = 'case_assignments' THEN
     UPDATE public.case_assignments
-    SET is_voided = true, voided_at = now(), voided_by_user_id = p_voided_by_user_id, void_reason = p_void_reason, unassigned_at = COALESCE(unassigned_at, now())
+    SET is_voided = true,
+        voided_at = now(),
+        voided_by_user_id = p_voided_by_user_id,
+        void_reason = p_void_reason,
+        unassigned_at = COALESCE(unassigned_at, now())
     WHERE id = v_source_id OR case_event_id = p_case_event_id;
   END IF;
 
@@ -9100,14 +9175,30 @@ BEGIN
     END IF;
   END IF;
 
-  IF v_event_type_code IN ('CASE_RESOLVED','CASE_DECISION_APPROVED') OR lower(coalesce(v_source_table,'')) IN ('case_resolutions','case_resolution_approvals') THEN
-    SELECT status_code, status_label INTO v_status_code, v_status_label FROM public.recompute_case_status_after_court_filing(v_case_id) LIMIT 1;
-    IF v_status_code IS NOT NULL THEN
-      INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active) VALUES (v_status_code, v_status_label, CASE v_status_code WHEN 'PENDING' THEN 20 WHEN 'RESO_FOR_APPROVAL' THEN 80 WHEN 'FOR_FILING' THEN 90 WHEN 'FILED_OTHER_RESO_FOR_APPROVAL' THEN 92 WHEN 'FILED_OTHER_INFO_FOR_FILING' THEN 94 WHEN 'FILED' THEN 96 WHEN 'DISMISSED' THEN 100 ELSE 110 END, v_status_code IN ('FILED','DISMISSED','MIXED_RESULT'), v_status_code <> 'PENDING', true) ON CONFLICT (code) DO UPDATE SET display_label=EXCLUDED.display_label,sort_order=EXCLUDED.sort_order,is_final=EXCLUDED.is_final,is_milestone=EXCLUDED.is_milestone,is_active=true RETURNING id INTO v_status_id;
-      INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_case_status_id,current_case_status_date,updated_at) VALUES (v_case_id,v_status_id,CURRENT_DATE,v_status_id,CURRENT_DATE,now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,updated_at=now();
-      IF COALESCE(v_prev_case_status_id, v_prev_status_id) IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (v_case_id,COALESCE(v_prev_case_status_id, v_prev_status_id),v_status_id,p_voided_by_user_id,now(),CURRENT_DATE,'Timeline event voided. Status recomputed.',p_case_event_id); END IF;
+  IF v_event_type_code IN ('CASE_RESOLVED','CASE_DECISION_APPROVED','CASE_ASSIGNMENT','CASE_REASSIGNMENT')
+     OR lower(coalesce(v_source_table,'')) IN ('case_resolutions','case_resolution_approvals','case_assignments') THEN
+    PERFORM public.apply_case_state_recompute(v_case_id, CURRENT_DATE, NULL, p_case_event_id, p_voided_by_user_id);
+
+    IF v_event_type_code = 'CASE_REASSIGNMENT' THEN
+      SELECT to_jsonb(cpd) INTO v_new_details
+      FROM public.case_private_details cpd
+      WHERE cpd.case_id = v_case_id;
+
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (
+        p_voided_by_user_id,
+        'case_private_details',
+        v_case_id,
+        'CASE_REASSIGNMENT_VOID_STATUS_STAGE_RECOMPUTED',
+        v_old_details,
+        v_new_details,
+        v_case_id,
+        'Case Reassignment voided; case status and case stage recomputed from active workflow records.',
+        jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason,'restored_assignment_id',v_previous_assignment_id,'voided_assignment_id',v_assignment_id)
+      );
     END IF;
   END IF;
+
 END;
 $$;
 
@@ -21102,6 +21193,6205 @@ CREATE PUBLICATION supabase_realtime WITH (publish = 'insert, update, delete, tr
 
 
 --
+-- Name: SCHEMA auth; Type: ACL; Schema: -; Owner: -
+--
+
+GRANT USAGE ON SCHEMA auth TO anon;
+GRANT USAGE ON SCHEMA auth TO authenticated;
+GRANT USAGE ON SCHEMA auth TO service_role;
+GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
+GRANT ALL ON SCHEMA auth TO dashboard_user;
+GRANT USAGE ON SCHEMA auth TO postgres;
+
+
+--
+-- Name: SCHEMA extensions; Type: ACL; Schema: -; Owner: -
+--
+
+GRANT USAGE ON SCHEMA extensions TO anon;
+GRANT USAGE ON SCHEMA extensions TO authenticated;
+GRANT USAGE ON SCHEMA extensions TO service_role;
+GRANT ALL ON SCHEMA extensions TO dashboard_user;
+
+
+--
+-- Name: SCHEMA public; Type: ACL; Schema: -; Owner: -
+--
+
+GRANT USAGE ON SCHEMA public TO postgres;
+GRANT USAGE ON SCHEMA public TO anon;
+GRANT USAGE ON SCHEMA public TO authenticated;
+GRANT USAGE ON SCHEMA public TO service_role;
+
+
+--
+-- Name: SCHEMA realtime; Type: ACL; Schema: -; Owner: -
+--
+
+GRANT USAGE ON SCHEMA realtime TO postgres;
+GRANT USAGE ON SCHEMA realtime TO anon;
+GRANT USAGE ON SCHEMA realtime TO authenticated;
+GRANT USAGE ON SCHEMA realtime TO service_role;
+GRANT ALL ON SCHEMA realtime TO supabase_realtime_admin;
+
+
+--
+-- Name: SCHEMA storage; Type: ACL; Schema: -; Owner: -
+--
+
+GRANT USAGE ON SCHEMA storage TO postgres WITH GRANT OPTION;
+GRANT USAGE ON SCHEMA storage TO anon;
+GRANT USAGE ON SCHEMA storage TO authenticated;
+GRANT USAGE ON SCHEMA storage TO service_role;
+GRANT ALL ON SCHEMA storage TO supabase_storage_admin WITH GRANT OPTION;
+GRANT ALL ON SCHEMA storage TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA storage TO anon;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA storage TO authenticated;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA storage TO service_role;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA storage TO supabase_storage_admin WITH GRANT OPTION;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA storage TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: SCHEMA vault; Type: ACL; Schema: -; Owner: -
+--
+
+GRANT USAGE ON SCHEMA vault TO postgres WITH GRANT OPTION;
+GRANT USAGE ON SCHEMA vault TO service_role;
+SET SESSION AUTHORIZATION postgres;
+GRANT USAGE ON SCHEMA vault TO service_role;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: FUNCTION gtrgm_in(cstring); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gtrgm_in(cstring) TO postgres;
+GRANT ALL ON FUNCTION public.gtrgm_in(cstring) TO anon;
+GRANT ALL ON FUNCTION public.gtrgm_in(cstring) TO authenticated;
+GRANT ALL ON FUNCTION public.gtrgm_in(cstring) TO service_role;
+
+
+--
+-- Name: FUNCTION gtrgm_out(public.gtrgm); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gtrgm_out(public.gtrgm) TO postgres;
+GRANT ALL ON FUNCTION public.gtrgm_out(public.gtrgm) TO anon;
+GRANT ALL ON FUNCTION public.gtrgm_out(public.gtrgm) TO authenticated;
+GRANT ALL ON FUNCTION public.gtrgm_out(public.gtrgm) TO service_role;
+
+
+--
+-- Name: FUNCTION email(); Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON FUNCTION auth.email() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION jwt(); Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON FUNCTION auth.jwt() TO postgres;
+GRANT ALL ON FUNCTION auth.jwt() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION role(); Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON FUNCTION auth.role() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION uid(); Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON FUNCTION auth.uid() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION armor(bytea); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.armor(bytea) FROM postgres;
+GRANT ALL ON FUNCTION extensions.armor(bytea) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.armor(bytea) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION armor(bytea, text[], text[]); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.armor(bytea, text[], text[]) FROM postgres;
+GRANT ALL ON FUNCTION extensions.armor(bytea, text[], text[]) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.armor(bytea, text[], text[]) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION crypt(text, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.crypt(text, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.crypt(text, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.crypt(text, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION dearmor(text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.dearmor(text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.dearmor(text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.dearmor(text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION decrypt(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.decrypt(bytea, bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.decrypt(bytea, bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.decrypt(bytea, bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION decrypt_iv(bytea, bytea, bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.decrypt_iv(bytea, bytea, bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.decrypt_iv(bytea, bytea, bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.decrypt_iv(bytea, bytea, bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION digest(bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.digest(bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.digest(bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.digest(bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION digest(text, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.digest(text, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.digest(text, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.digest(text, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION encrypt(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.encrypt(bytea, bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.encrypt(bytea, bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.encrypt(bytea, bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION encrypt_iv(bytea, bytea, bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.encrypt_iv(bytea, bytea, bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.encrypt_iv(bytea, bytea, bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.encrypt_iv(bytea, bytea, bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION gen_random_bytes(integer); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.gen_random_bytes(integer) FROM postgres;
+GRANT ALL ON FUNCTION extensions.gen_random_bytes(integer) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.gen_random_bytes(integer) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION gen_random_uuid(); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.gen_random_uuid() FROM postgres;
+GRANT ALL ON FUNCTION extensions.gen_random_uuid() TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.gen_random_uuid() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION gen_salt(text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.gen_salt(text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.gen_salt(text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.gen_salt(text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION gen_salt(text, integer); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.gen_salt(text, integer) FROM postgres;
+GRANT ALL ON FUNCTION extensions.gen_salt(text, integer) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.gen_salt(text, integer) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION grant_pg_cron_access(); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.grant_pg_cron_access() FROM supabase_admin;
+GRANT ALL ON FUNCTION extensions.grant_pg_cron_access() TO supabase_admin WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.grant_pg_cron_access() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION grant_pg_graphql_access(); Type: ACL; Schema: extensions; Owner: -
+--
+
+GRANT ALL ON FUNCTION extensions.grant_pg_graphql_access() TO postgres WITH GRANT OPTION;
+
+
+--
+-- Name: FUNCTION grant_pg_net_access(); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.grant_pg_net_access() FROM supabase_admin;
+GRANT ALL ON FUNCTION extensions.grant_pg_net_access() TO supabase_admin WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.grant_pg_net_access() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION hmac(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.hmac(bytea, bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.hmac(bytea, bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.hmac(bytea, bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION hmac(text, text, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.hmac(text, text, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.hmac(text, text, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.hmac(text, text, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pg_stat_statements(showtext boolean, OUT userid oid, OUT dbid oid, OUT toplevel boolean, OUT queryid bigint, OUT query text, OUT plans bigint, OUT total_plan_time double precision, OUT min_plan_time double precision, OUT max_plan_time double precision, OUT mean_plan_time double precision, OUT stddev_plan_time double precision, OUT calls bigint, OUT total_exec_time double precision, OUT min_exec_time double precision, OUT max_exec_time double precision, OUT mean_exec_time double precision, OUT stddev_exec_time double precision, OUT rows bigint, OUT shared_blks_hit bigint, OUT shared_blks_read bigint, OUT shared_blks_dirtied bigint, OUT shared_blks_written bigint, OUT local_blks_hit bigint, OUT local_blks_read bigint, OUT local_blks_dirtied bigint, OUT local_blks_written bigint, OUT temp_blks_read bigint, OUT temp_blks_written bigint, OUT shared_blk_read_time double precision, OUT shared_blk_write_time double precision, OUT local_blk_read_time double precision, OUT local_blk_write_time double precision, OUT temp_blk_read_time double precision, OUT temp_blk_write_time double precision, OUT wal_records bigint, OUT wal_fpi bigint, OUT wal_bytes numeric, OUT jit_functions bigint, OUT jit_generation_time double precision, OUT jit_inlining_count bigint, OUT jit_inlining_time double precision, OUT jit_optimization_count bigint, OUT jit_optimization_time double precision, OUT jit_emission_count bigint, OUT jit_emission_time double precision, OUT jit_deform_count bigint, OUT jit_deform_time double precision, OUT stats_since timestamp with time zone, OUT minmax_stats_since timestamp with time zone); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pg_stat_statements(showtext boolean, OUT userid oid, OUT dbid oid, OUT toplevel boolean, OUT queryid bigint, OUT query text, OUT plans bigint, OUT total_plan_time double precision, OUT min_plan_time double precision, OUT max_plan_time double precision, OUT mean_plan_time double precision, OUT stddev_plan_time double precision, OUT calls bigint, OUT total_exec_time double precision, OUT min_exec_time double precision, OUT max_exec_time double precision, OUT mean_exec_time double precision, OUT stddev_exec_time double precision, OUT rows bigint, OUT shared_blks_hit bigint, OUT shared_blks_read bigint, OUT shared_blks_dirtied bigint, OUT shared_blks_written bigint, OUT local_blks_hit bigint, OUT local_blks_read bigint, OUT local_blks_dirtied bigint, OUT local_blks_written bigint, OUT temp_blks_read bigint, OUT temp_blks_written bigint, OUT shared_blk_read_time double precision, OUT shared_blk_write_time double precision, OUT local_blk_read_time double precision, OUT local_blk_write_time double precision, OUT temp_blk_read_time double precision, OUT temp_blk_write_time double precision, OUT wal_records bigint, OUT wal_fpi bigint, OUT wal_bytes numeric, OUT jit_functions bigint, OUT jit_generation_time double precision, OUT jit_inlining_count bigint, OUT jit_inlining_time double precision, OUT jit_optimization_count bigint, OUT jit_optimization_time double precision, OUT jit_emission_count bigint, OUT jit_emission_time double precision, OUT jit_deform_count bigint, OUT jit_deform_time double precision, OUT stats_since timestamp with time zone, OUT minmax_stats_since timestamp with time zone) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pg_stat_statements(showtext boolean, OUT userid oid, OUT dbid oid, OUT toplevel boolean, OUT queryid bigint, OUT query text, OUT plans bigint, OUT total_plan_time double precision, OUT min_plan_time double precision, OUT max_plan_time double precision, OUT mean_plan_time double precision, OUT stddev_plan_time double precision, OUT calls bigint, OUT total_exec_time double precision, OUT min_exec_time double precision, OUT max_exec_time double precision, OUT mean_exec_time double precision, OUT stddev_exec_time double precision, OUT rows bigint, OUT shared_blks_hit bigint, OUT shared_blks_read bigint, OUT shared_blks_dirtied bigint, OUT shared_blks_written bigint, OUT local_blks_hit bigint, OUT local_blks_read bigint, OUT local_blks_dirtied bigint, OUT local_blks_written bigint, OUT temp_blks_read bigint, OUT temp_blks_written bigint, OUT shared_blk_read_time double precision, OUT shared_blk_write_time double precision, OUT local_blk_read_time double precision, OUT local_blk_write_time double precision, OUT temp_blk_read_time double precision, OUT temp_blk_write_time double precision, OUT wal_records bigint, OUT wal_fpi bigint, OUT wal_bytes numeric, OUT jit_functions bigint, OUT jit_generation_time double precision, OUT jit_inlining_count bigint, OUT jit_inlining_time double precision, OUT jit_optimization_count bigint, OUT jit_optimization_time double precision, OUT jit_emission_count bigint, OUT jit_emission_time double precision, OUT jit_deform_count bigint, OUT jit_deform_time double precision, OUT stats_since timestamp with time zone, OUT minmax_stats_since timestamp with time zone) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pg_stat_statements(showtext boolean, OUT userid oid, OUT dbid oid, OUT toplevel boolean, OUT queryid bigint, OUT query text, OUT plans bigint, OUT total_plan_time double precision, OUT min_plan_time double precision, OUT max_plan_time double precision, OUT mean_plan_time double precision, OUT stddev_plan_time double precision, OUT calls bigint, OUT total_exec_time double precision, OUT min_exec_time double precision, OUT max_exec_time double precision, OUT mean_exec_time double precision, OUT stddev_exec_time double precision, OUT rows bigint, OUT shared_blks_hit bigint, OUT shared_blks_read bigint, OUT shared_blks_dirtied bigint, OUT shared_blks_written bigint, OUT local_blks_hit bigint, OUT local_blks_read bigint, OUT local_blks_dirtied bigint, OUT local_blks_written bigint, OUT temp_blks_read bigint, OUT temp_blks_written bigint, OUT shared_blk_read_time double precision, OUT shared_blk_write_time double precision, OUT local_blk_read_time double precision, OUT local_blk_write_time double precision, OUT temp_blk_read_time double precision, OUT temp_blk_write_time double precision, OUT wal_records bigint, OUT wal_fpi bigint, OUT wal_bytes numeric, OUT jit_functions bigint, OUT jit_generation_time double precision, OUT jit_inlining_count bigint, OUT jit_inlining_time double precision, OUT jit_optimization_count bigint, OUT jit_optimization_time double precision, OUT jit_emission_count bigint, OUT jit_emission_time double precision, OUT jit_deform_count bigint, OUT jit_deform_time double precision, OUT stats_since timestamp with time zone, OUT minmax_stats_since timestamp with time zone) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pg_stat_statements_info(OUT dealloc bigint, OUT stats_reset timestamp with time zone); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pg_stat_statements_info(OUT dealloc bigint, OUT stats_reset timestamp with time zone) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pg_stat_statements_info(OUT dealloc bigint, OUT stats_reset timestamp with time zone) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pg_stat_statements_info(OUT dealloc bigint, OUT stats_reset timestamp with time zone) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pg_stat_statements_reset(userid oid, dbid oid, queryid bigint, minmax_only boolean); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pg_stat_statements_reset(userid oid, dbid oid, queryid bigint, minmax_only boolean) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pg_stat_statements_reset(userid oid, dbid oid, queryid bigint, minmax_only boolean) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pg_stat_statements_reset(userid oid, dbid oid, queryid bigint, minmax_only boolean) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_armor_headers(text, OUT key text, OUT value text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_armor_headers(text, OUT key text, OUT value text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_armor_headers(text, OUT key text, OUT value text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_armor_headers(text, OUT key text, OUT value text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_key_id(bytea); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_key_id(bytea) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_key_id(bytea) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_key_id(bytea) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_pub_decrypt(bytea, bytea); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_pub_decrypt(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_pub_decrypt(bytea, bytea, text, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt(bytea, bytea, text, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_pub_decrypt_bytea(bytea, bytea); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_pub_decrypt_bytea(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_pub_decrypt_bytea(bytea, bytea, text, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_pub_decrypt_bytea(bytea, bytea, text, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_pub_encrypt(text, bytea); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_pub_encrypt(text, bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt(text, bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_pub_encrypt_bytea(bytea, bytea); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_pub_encrypt_bytea(bytea, bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_pub_encrypt_bytea(bytea, bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_sym_decrypt(bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_sym_decrypt(bytea, text, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt(bytea, text, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_sym_decrypt_bytea(bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_sym_decrypt_bytea(bytea, text, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_sym_decrypt_bytea(bytea, text, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_sym_encrypt(text, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_sym_encrypt(text, text, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt(text, text, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_sym_encrypt_bytea(bytea, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgp_sym_encrypt_bytea(bytea, text, text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text, text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text, text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.pgp_sym_encrypt_bytea(bytea, text, text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION pgrst_ddl_watch(); Type: ACL; Schema: extensions; Owner: -
+--
+
+GRANT ALL ON FUNCTION extensions.pgrst_ddl_watch() TO postgres WITH GRANT OPTION;
+
+
+--
+-- Name: FUNCTION pgrst_drop_watch(); Type: ACL; Schema: extensions; Owner: -
+--
+
+GRANT ALL ON FUNCTION extensions.pgrst_drop_watch() TO postgres WITH GRANT OPTION;
+
+
+--
+-- Name: FUNCTION set_graphql_placeholder(); Type: ACL; Schema: extensions; Owner: -
+--
+
+GRANT ALL ON FUNCTION extensions.set_graphql_placeholder() TO postgres WITH GRANT OPTION;
+
+
+--
+-- Name: FUNCTION uuid_generate_v1(); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.uuid_generate_v1() FROM postgres;
+GRANT ALL ON FUNCTION extensions.uuid_generate_v1() TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.uuid_generate_v1() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION uuid_generate_v1mc(); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.uuid_generate_v1mc() FROM postgres;
+GRANT ALL ON FUNCTION extensions.uuid_generate_v1mc() TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.uuid_generate_v1mc() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION uuid_generate_v3(namespace uuid, name text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.uuid_generate_v3(namespace uuid, name text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.uuid_generate_v3(namespace uuid, name text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.uuid_generate_v3(namespace uuid, name text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION uuid_generate_v4(); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.uuid_generate_v4() FROM postgres;
+GRANT ALL ON FUNCTION extensions.uuid_generate_v4() TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.uuid_generate_v4() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION uuid_generate_v5(namespace uuid, name text); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.uuid_generate_v5(namespace uuid, name text) FROM postgres;
+GRANT ALL ON FUNCTION extensions.uuid_generate_v5(namespace uuid, name text) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.uuid_generate_v5(namespace uuid, name text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION uuid_nil(); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.uuid_nil() FROM postgres;
+GRANT ALL ON FUNCTION extensions.uuid_nil() TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.uuid_nil() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION uuid_ns_dns(); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.uuid_ns_dns() FROM postgres;
+GRANT ALL ON FUNCTION extensions.uuid_ns_dns() TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.uuid_ns_dns() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION uuid_ns_oid(); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.uuid_ns_oid() FROM postgres;
+GRANT ALL ON FUNCTION extensions.uuid_ns_oid() TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.uuid_ns_oid() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION uuid_ns_url(); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.uuid_ns_url() FROM postgres;
+GRANT ALL ON FUNCTION extensions.uuid_ns_url() TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.uuid_ns_url() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION uuid_ns_x500(); Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON FUNCTION extensions.uuid_ns_x500() FROM postgres;
+GRANT ALL ON FUNCTION extensions.uuid_ns_x500() TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION extensions.uuid_ns_x500() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION graphql("operationName" text, query text, variables jsonb, extensions jsonb); Type: ACL; Schema: graphql_public; Owner: -
+--
+
+GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO postgres;
+GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO anon;
+GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO authenticated;
+GRANT ALL ON FUNCTION graphql_public.graphql("operationName" text, query text, variables jsonb, extensions jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION pg_reload_conf(); Type: ACL; Schema: pg_catalog; Owner: -
+--
+
+GRANT ALL ON FUNCTION pg_catalog.pg_reload_conf() TO postgres WITH GRANT OPTION;
+
+
+--
+-- Name: FUNCTION get_auth(p_usename text); Type: ACL; Schema: pgbouncer; Owner: -
+--
+
+REVOKE ALL ON FUNCTION pgbouncer.get_auth(p_usename text) FROM PUBLIC;
+GRANT ALL ON FUNCTION pgbouncer.get_auth(p_usename text) TO pgbouncer;
+
+
+--
+-- Name: FUNCTION apply_case_state_recompute(p_case_id bigint, p_status_date date, p_remarks text, p_case_event_id bigint, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.apply_case_state_recompute(p_case_id bigint, p_status_date date, p_remarks text, p_case_event_id bigint, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.apply_case_state_recompute(p_case_id bigint, p_status_date date, p_remarks text, p_case_event_id bigint, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.apply_case_state_recompute(p_case_id bigint, p_status_date date, p_remarks text, p_case_event_id bigint, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION apply_clearance_common_name_variants_to_possible_tokens(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.apply_clearance_common_name_variants_to_possible_tokens() TO anon;
+GRANT ALL ON FUNCTION public.apply_clearance_common_name_variants_to_possible_tokens() TO authenticated;
+GRANT ALL ON FUNCTION public.apply_clearance_common_name_variants_to_possible_tokens() TO service_role;
+
+
+--
+-- Name: FUNCTION can_assign_case(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_assign_case() TO anon;
+GRANT ALL ON FUNCTION public.can_assign_case() TO authenticated;
+GRANT ALL ON FUNCTION public.can_assign_case() TO service_role;
+
+
+--
+-- Name: FUNCTION can_assign_role(p_target_role_code text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_assign_role(p_target_role_code text) TO anon;
+GRANT ALL ON FUNCTION public.can_assign_role(p_target_role_code text) TO authenticated;
+GRANT ALL ON FUNCTION public.can_assign_role(p_target_role_code text) TO service_role;
+
+
+--
+-- Name: FUNCTION can_create_case(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_create_case() TO anon;
+GRANT ALL ON FUNCTION public.can_create_case() TO authenticated;
+GRANT ALL ON FUNCTION public.can_create_case() TO service_role;
+
+
+--
+-- Name: FUNCTION can_delete_case(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_delete_case() TO anon;
+GRANT ALL ON FUNCTION public.can_delete_case() TO authenticated;
+GRANT ALL ON FUNCTION public.can_delete_case() TO service_role;
+
+
+--
+-- Name: FUNCTION can_delete_seed_data(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_delete_seed_data() TO anon;
+GRANT ALL ON FUNCTION public.can_delete_seed_data() TO authenticated;
+GRANT ALL ON FUNCTION public.can_delete_seed_data() TO service_role;
+
+
+--
+-- Name: FUNCTION can_edit_case_details(p_case_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_edit_case_details(p_case_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.can_edit_case_details(p_case_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.can_edit_case_details(p_case_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION can_edit_case_header(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_edit_case_header() TO anon;
+GRANT ALL ON FUNCTION public.can_edit_case_header() TO authenticated;
+GRANT ALL ON FUNCTION public.can_edit_case_header() TO service_role;
+
+
+--
+-- Name: FUNCTION can_edit_case_participant_details(p_case_participant_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_edit_case_participant_details(p_case_participant_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.can_edit_case_participant_details(p_case_participant_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.can_edit_case_participant_details(p_case_participant_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION can_manage_master_identity_data(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_manage_master_identity_data() TO anon;
+GRANT ALL ON FUNCTION public.can_manage_master_identity_data() TO authenticated;
+GRANT ALL ON FUNCTION public.can_manage_master_identity_data() TO service_role;
+
+
+--
+-- Name: FUNCTION can_manage_seed_data(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_manage_seed_data() TO anon;
+GRANT ALL ON FUNCTION public.can_manage_seed_data() TO authenticated;
+GRANT ALL ON FUNCTION public.can_manage_seed_data() TO service_role;
+
+
+--
+-- Name: FUNCTION can_manage_system_internal(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_manage_system_internal() TO anon;
+GRANT ALL ON FUNCTION public.can_manage_system_internal() TO authenticated;
+GRANT ALL ON FUNCTION public.can_manage_system_internal() TO service_role;
+
+
+--
+-- Name: FUNCTION can_manage_users(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_manage_users() TO anon;
+GRANT ALL ON FUNCTION public.can_manage_users() TO authenticated;
+GRANT ALL ON FUNCTION public.can_manage_users() TO service_role;
+
+
+--
+-- Name: FUNCTION can_view_address_details(p_address_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_view_address_details(p_address_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.can_view_address_details(p_address_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.can_view_address_details(p_address_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION can_view_audit_logs(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_view_audit_logs() TO anon;
+GRANT ALL ON FUNCTION public.can_view_audit_logs() TO authenticated;
+GRANT ALL ON FUNCTION public.can_view_audit_logs() TO service_role;
+
+
+--
+-- Name: FUNCTION can_view_case_details(p_case_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_view_case_details(p_case_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.can_view_case_details(p_case_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.can_view_case_details(p_case_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION can_view_case_participant_details(p_case_participant_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_view_case_participant_details(p_case_participant_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.can_view_case_participant_details(p_case_participant_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.can_view_case_participant_details(p_case_participant_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION can_view_organization_details(p_organization_id integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_view_organization_details(p_organization_id integer) TO anon;
+GRANT ALL ON FUNCTION public.can_view_organization_details(p_organization_id integer) TO authenticated;
+GRANT ALL ON FUNCTION public.can_view_organization_details(p_organization_id integer) TO service_role;
+
+
+--
+-- Name: FUNCTION can_view_person_details(p_person_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.can_view_person_details(p_person_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.can_view_person_details(p_person_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.can_view_person_details(p_person_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_bv_key(input_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_bv_key(input_text text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_bv_key(input_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_bv_key(input_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_ck_key(input_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_ck_key(input_text text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_ck_key(input_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_ck_key(input_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_common_name_variants(input_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_common_name_variants(input_text text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_common_name_variants(input_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_common_name_variants(input_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_edit_distance_limit(input_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_edit_distance_limit(input_text text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_edit_distance_limit(input_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_edit_distance_limit(input_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_exact_norm(input_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_exact_norm(input_text text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_exact_norm(input_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_exact_norm(input_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_exact_tokens(input_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_exact_tokens(input_text text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_exact_tokens(input_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_exact_tokens(input_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_phf_key(input_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_phf_key(input_text text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_phf_key(input_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_phf_key(input_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_phonetic_codes(input_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_phonetic_codes(input_text text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_phonetic_codes(input_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_phonetic_codes(input_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_possible_token_score_v3(query_token text, record_token text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_possible_token_score_v3(query_token text, record_token text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_possible_token_score_v3(query_token text, record_token text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_possible_token_score_v3(query_token text, record_token text) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_sz_key(input_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_sz_key(input_text text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_sz_key(input_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_sz_key(input_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_token_match_score(query_token text, record_token text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_token_match_score(query_token text, record_token text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_token_match_score(query_token text, record_token text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_token_match_score(query_token text, record_token text) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_token_skeleton(input_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_token_skeleton(input_text text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_token_skeleton(input_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_token_skeleton(input_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION clearance_token_variant_equal(a text, b text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.clearance_token_variant_equal(a text, b text) TO anon;
+GRANT ALL ON FUNCTION public.clearance_token_variant_equal(a text, b text) TO authenticated;
+GRANT ALL ON FUNCTION public.clearance_token_variant_equal(a text, b text) TO service_role;
+
+
+--
+-- Name: FUNCTION compute_current_case_state(p_case_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.compute_current_case_state(p_case_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.compute_current_case_state(p_case_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.compute_current_case_state(p_case_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION create_case_event(p_case_id bigint, p_event_type_code text, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_created_by_user_id bigint, p_event_time time without time zone); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.create_case_event(p_case_id bigint, p_event_type_code text, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_created_by_user_id bigint, p_event_time time without time zone) TO anon;
+GRANT ALL ON FUNCTION public.create_case_event(p_case_id bigint, p_event_type_code text, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_created_by_user_id bigint, p_event_time time without time zone) TO authenticated;
+GRANT ALL ON FUNCTION public.create_case_event(p_case_id bigint, p_event_type_code text, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_created_by_user_id bigint, p_event_time time without time zone) TO service_role;
+
+
+--
+-- Name: FUNCTION create_new_docket_entry(p_payload jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.create_new_docket_entry(p_payload jsonb) TO anon;
+GRANT ALL ON FUNCTION public.create_new_docket_entry(p_payload jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.create_new_docket_entry(p_payload jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION current_app_prosecutor_id(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.current_app_prosecutor_id() TO anon;
+GRANT ALL ON FUNCTION public.current_app_prosecutor_id() TO authenticated;
+GRANT ALL ON FUNCTION public.current_app_prosecutor_id() TO service_role;
+
+
+--
+-- Name: FUNCTION current_app_staff_id(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.current_app_staff_id() TO anon;
+GRANT ALL ON FUNCTION public.current_app_staff_id() TO authenticated;
+GRANT ALL ON FUNCTION public.current_app_staff_id() TO service_role;
+
+
+--
+-- Name: FUNCTION current_app_user_id(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.current_app_user_id() TO anon;
+GRANT ALL ON FUNCTION public.current_app_user_id() TO authenticated;
+GRANT ALL ON FUNCTION public.current_app_user_id() TO service_role;
+
+
+--
+-- Name: FUNCTION daitch_mokotoff(text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.daitch_mokotoff(text) TO postgres;
+GRANT ALL ON FUNCTION public.daitch_mokotoff(text) TO anon;
+GRANT ALL ON FUNCTION public.daitch_mokotoff(text) TO authenticated;
+GRANT ALL ON FUNCTION public.daitch_mokotoff(text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_clean_line(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_clean_line(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_clean_line(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_clean_line(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_line_count_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_line_count_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_line_count_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_line_count_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_line_value(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_line_value(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_line_value(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_line_value(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_line_value_raw(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_line_value_raw(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_line_value_raw(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_line_value_raw(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_make_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_make_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_make_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_make_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_normalize_prosecutor(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_normalize_prosecutor(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_normalize_prosecutor(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_normalize_prosecutor(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_normalize_status_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_normalize_status_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_normalize_status_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_normalize_status_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_normalize_status_label(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_normalize_status_label(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_normalize_status_label(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_normalize_status_label(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_nullif_legacy_null(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_nullif_legacy_null(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_nullif_legacy_null(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_nullif_legacy_null(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_parse_docket_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_parse_docket_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_parse_docket_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_parse_docket_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_parse_year(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_parse_year(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_parse_year(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_parse_year(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_split_lines(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_split_lines(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_split_lines(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_split_lines(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_split_lines_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_split_lines_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_split_lines_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_split_lines_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_split_persons(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_split_persons(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_split_persons(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_split_persons(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_strip_person_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_strip_person_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_strip_person_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_strip_person_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION dc2025_try_date(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dc2025_try_date(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.dc2025_try_date(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.dc2025_try_date(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION difference(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.difference(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.difference(text, text) TO anon;
+GRANT ALL ON FUNCTION public.difference(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.difference(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION dmetaphone(text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dmetaphone(text) TO postgres;
+GRANT ALL ON FUNCTION public.dmetaphone(text) TO anon;
+GRANT ALL ON FUNCTION public.dmetaphone(text) TO authenticated;
+GRANT ALL ON FUNCTION public.dmetaphone(text) TO service_role;
+
+
+--
+-- Name: FUNCTION dmetaphone_alt(text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.dmetaphone_alt(text) TO postgres;
+GRANT ALL ON FUNCTION public.dmetaphone_alt(text) TO anon;
+GRANT ALL ON FUNCTION public.dmetaphone_alt(text) TO authenticated;
+GRANT ALL ON FUNCTION public.dmetaphone_alt(text) TO service_role;
+
+
+--
+-- Name: FUNCTION edit_case_event(p_case_event_id bigint, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_edit_reason text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.edit_case_event(p_case_event_id bigint, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_edit_reason text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.edit_case_event(p_case_event_id bigint, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_edit_reason text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.edit_case_event(p_case_event_id bigint, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_edit_reason text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION edit_case_overview_section(p_payload jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.edit_case_overview_section(p_payload jsonb) TO anon;
+GRANT ALL ON FUNCTION public.edit_case_overview_section(p_payload jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.edit_case_overview_section(p_payload jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION format_clearance_search_results(p_candidates jsonb, p_limit integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.format_clearance_search_results(p_candidates jsonb, p_limit integer) TO anon;
+GRANT ALL ON FUNCTION public.format_clearance_search_results(p_candidates jsonb, p_limit integer) TO authenticated;
+GRANT ALL ON FUNCTION public.format_clearance_search_results(p_candidates jsonb, p_limit integer) TO service_role;
+
+
+--
+-- Name: FUNCTION gin_extract_query_trgm(text, internal, smallint, internal, internal, internal, internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gin_extract_query_trgm(text, internal, smallint, internal, internal, internal, internal) TO postgres;
+GRANT ALL ON FUNCTION public.gin_extract_query_trgm(text, internal, smallint, internal, internal, internal, internal) TO anon;
+GRANT ALL ON FUNCTION public.gin_extract_query_trgm(text, internal, smallint, internal, internal, internal, internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gin_extract_query_trgm(text, internal, smallint, internal, internal, internal, internal) TO service_role;
+
+
+--
+-- Name: FUNCTION gin_extract_value_trgm(text, internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gin_extract_value_trgm(text, internal) TO postgres;
+GRANT ALL ON FUNCTION public.gin_extract_value_trgm(text, internal) TO anon;
+GRANT ALL ON FUNCTION public.gin_extract_value_trgm(text, internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gin_extract_value_trgm(text, internal) TO service_role;
+
+
+--
+-- Name: FUNCTION gin_trgm_consistent(internal, smallint, text, integer, internal, internal, internal, internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gin_trgm_consistent(internal, smallint, text, integer, internal, internal, internal, internal) TO postgres;
+GRANT ALL ON FUNCTION public.gin_trgm_consistent(internal, smallint, text, integer, internal, internal, internal, internal) TO anon;
+GRANT ALL ON FUNCTION public.gin_trgm_consistent(internal, smallint, text, integer, internal, internal, internal, internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gin_trgm_consistent(internal, smallint, text, integer, internal, internal, internal, internal) TO service_role;
+
+
+--
+-- Name: FUNCTION gin_trgm_triconsistent(internal, smallint, text, integer, internal, internal, internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gin_trgm_triconsistent(internal, smallint, text, integer, internal, internal, internal) TO postgres;
+GRANT ALL ON FUNCTION public.gin_trgm_triconsistent(internal, smallint, text, integer, internal, internal, internal) TO anon;
+GRANT ALL ON FUNCTION public.gin_trgm_triconsistent(internal, smallint, text, integer, internal, internal, internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gin_trgm_triconsistent(internal, smallint, text, integer, internal, internal, internal) TO service_role;
+
+
+--
+-- Name: FUNCTION gtrgm_compress(internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gtrgm_compress(internal) TO postgres;
+GRANT ALL ON FUNCTION public.gtrgm_compress(internal) TO anon;
+GRANT ALL ON FUNCTION public.gtrgm_compress(internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gtrgm_compress(internal) TO service_role;
+
+
+--
+-- Name: FUNCTION gtrgm_consistent(internal, text, smallint, oid, internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gtrgm_consistent(internal, text, smallint, oid, internal) TO postgres;
+GRANT ALL ON FUNCTION public.gtrgm_consistent(internal, text, smallint, oid, internal) TO anon;
+GRANT ALL ON FUNCTION public.gtrgm_consistent(internal, text, smallint, oid, internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gtrgm_consistent(internal, text, smallint, oid, internal) TO service_role;
+
+
+--
+-- Name: FUNCTION gtrgm_decompress(internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gtrgm_decompress(internal) TO postgres;
+GRANT ALL ON FUNCTION public.gtrgm_decompress(internal) TO anon;
+GRANT ALL ON FUNCTION public.gtrgm_decompress(internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gtrgm_decompress(internal) TO service_role;
+
+
+--
+-- Name: FUNCTION gtrgm_distance(internal, text, smallint, oid, internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gtrgm_distance(internal, text, smallint, oid, internal) TO postgres;
+GRANT ALL ON FUNCTION public.gtrgm_distance(internal, text, smallint, oid, internal) TO anon;
+GRANT ALL ON FUNCTION public.gtrgm_distance(internal, text, smallint, oid, internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gtrgm_distance(internal, text, smallint, oid, internal) TO service_role;
+
+
+--
+-- Name: FUNCTION gtrgm_options(internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gtrgm_options(internal) TO postgres;
+GRANT ALL ON FUNCTION public.gtrgm_options(internal) TO anon;
+GRANT ALL ON FUNCTION public.gtrgm_options(internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gtrgm_options(internal) TO service_role;
+
+
+--
+-- Name: FUNCTION gtrgm_penalty(internal, internal, internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gtrgm_penalty(internal, internal, internal) TO postgres;
+GRANT ALL ON FUNCTION public.gtrgm_penalty(internal, internal, internal) TO anon;
+GRANT ALL ON FUNCTION public.gtrgm_penalty(internal, internal, internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gtrgm_penalty(internal, internal, internal) TO service_role;
+
+
+--
+-- Name: FUNCTION gtrgm_picksplit(internal, internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gtrgm_picksplit(internal, internal) TO postgres;
+GRANT ALL ON FUNCTION public.gtrgm_picksplit(internal, internal) TO anon;
+GRANT ALL ON FUNCTION public.gtrgm_picksplit(internal, internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gtrgm_picksplit(internal, internal) TO service_role;
+
+
+--
+-- Name: FUNCTION gtrgm_same(public.gtrgm, public.gtrgm, internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gtrgm_same(public.gtrgm, public.gtrgm, internal) TO postgres;
+GRANT ALL ON FUNCTION public.gtrgm_same(public.gtrgm, public.gtrgm, internal) TO anon;
+GRANT ALL ON FUNCTION public.gtrgm_same(public.gtrgm, public.gtrgm, internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gtrgm_same(public.gtrgm, public.gtrgm, internal) TO service_role;
+
+
+--
+-- Name: FUNCTION gtrgm_union(internal, internal); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.gtrgm_union(internal, internal) TO postgres;
+GRANT ALL ON FUNCTION public.gtrgm_union(internal, internal) TO anon;
+GRANT ALL ON FUNCTION public.gtrgm_union(internal, internal) TO authenticated;
+GRANT ALL ON FUNCTION public.gtrgm_union(internal, internal) TO service_role;
+
+
+--
+-- Name: FUNCTION has_any_app_role(p_role_codes text[]); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.has_any_app_role(p_role_codes text[]) TO anon;
+GRANT ALL ON FUNCTION public.has_any_app_role(p_role_codes text[]) TO authenticated;
+GRANT ALL ON FUNCTION public.has_any_app_role(p_role_codes text[]) TO service_role;
+
+
+--
+-- Name: FUNCTION has_app_role(p_role_code text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.has_app_role(p_role_code text) TO anon;
+GRANT ALL ON FUNCTION public.has_app_role(p_role_code text) TO authenticated;
+GRANT ALL ON FUNCTION public.has_app_role(p_role_code text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_clean_line(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_clean_line(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_clean_line(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_clean_line(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_line_count_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_line_count_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_line_count_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_line_count_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_line_value(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_line_value(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_line_value(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_line_value(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_line_value_raw(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_line_value_raw(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_line_value_raw(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_line_value_raw(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_make_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_make_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_make_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_make_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_normalize_prosecutor(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_normalize_prosecutor(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_normalize_prosecutor(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_normalize_prosecutor(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_normalize_status_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_normalize_status_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_normalize_status_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_normalize_status_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_normalize_status_label(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_normalize_status_label(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_normalize_status_label(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_normalize_status_label(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_nullif_legacy_null(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_nullif_legacy_null(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_nullif_legacy_null(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_nullif_legacy_null(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_parse_docket_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_parse_docket_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_parse_docket_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_parse_docket_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_parse_year(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_parse_year(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_parse_year(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_parse_year(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_split_lines(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_split_lines(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_split_lines(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_split_lines(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_split_lines_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_split_lines_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_split_lines_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_split_lines_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_split_persons(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_split_persons(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_split_persons(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_split_persons(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_strip_person_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_strip_person_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_strip_person_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_strip_person_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2022_try_date(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2022_try_date(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2022_try_date(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2022_try_date(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_clean_line(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_clean_line(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_clean_line(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_clean_line(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_line_count_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_line_count_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_line_count_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_line_count_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_line_value(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_line_value(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_line_value(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_line_value(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_line_value_raw(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_line_value_raw(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_line_value_raw(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_line_value_raw(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_make_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_make_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_make_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_make_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_normalize_prosecutor(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_normalize_prosecutor(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_normalize_prosecutor(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_normalize_prosecutor(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_normalize_status_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_normalize_status_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_normalize_status_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_normalize_status_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_normalize_status_label(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_normalize_status_label(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_normalize_status_label(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_normalize_status_label(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_nullif_legacy_null(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_nullif_legacy_null(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_nullif_legacy_null(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_nullif_legacy_null(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_parse_docket_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_parse_docket_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_parse_docket_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_parse_docket_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_parse_year(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_parse_year(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_parse_year(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_parse_year(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_split_lines(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_split_lines(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_split_lines(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_split_lines(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_split_lines_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_split_lines_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_split_lines_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_split_lines_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_split_persons(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_split_persons(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_split_persons(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_split_persons(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_strip_person_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_strip_person_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_strip_person_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_strip_person_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2023_try_date(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2023_try_date(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2023_try_date(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2023_try_date(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_clean_line(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_clean_line(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_clean_line(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_clean_line(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_line_count_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_line_count_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_line_count_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_line_count_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_line_value(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_line_value(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_line_value(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_line_value(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_line_value_raw(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_line_value_raw(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_line_value_raw(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_line_value_raw(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_make_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_make_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_make_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_make_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_normalize_prosecutor(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_normalize_prosecutor(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_normalize_prosecutor(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_normalize_prosecutor(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_normalize_status_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_normalize_status_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_normalize_status_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_normalize_status_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_normalize_status_label(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_normalize_status_label(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_normalize_status_label(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_normalize_status_label(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_nullif_legacy_null(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_nullif_legacy_null(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_nullif_legacy_null(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_nullif_legacy_null(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_parse_docket_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_parse_docket_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_parse_docket_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_parse_docket_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_parse_year(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_parse_year(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_parse_year(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_parse_year(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_split_lines(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_split_lines(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_split_lines(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_split_lines(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_split_lines_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_split_lines_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_split_lines_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_split_lines_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_split_persons(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_split_persons(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_split_persons(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_split_persons(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_strip_person_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_strip_person_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_strip_person_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_strip_person_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2024_try_date(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2024_try_date(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2024_try_date(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2024_try_date(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_clean_line(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_clean_line(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_clean_line(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_clean_line(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_line_count_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_line_count_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_line_count_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_line_count_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_line_value(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_line_value(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_line_value(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_line_value(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_line_value_raw(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_line_value_raw(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_line_value_raw(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_line_value_raw(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_make_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_make_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_make_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_make_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_normalize_prosecutor(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_normalize_prosecutor(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_normalize_prosecutor(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_normalize_prosecutor(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_normalize_status_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_normalize_status_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_normalize_status_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_normalize_status_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_normalize_status_label(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_normalize_status_label(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_normalize_status_label(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_normalize_status_label(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_nullif_legacy_null(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_nullif_legacy_null(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_nullif_legacy_null(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_nullif_legacy_null(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_parse_docket_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_parse_docket_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_parse_docket_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_parse_docket_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_parse_year(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_parse_year(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_parse_year(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_parse_year(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_split_lines(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_split_lines(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_split_lines(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_split_lines(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_split_lines_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_split_lines_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_split_lines_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_split_lines_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_split_persons(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_split_persons(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_split_persons(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_split_persons(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_strip_person_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_strip_person_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_strip_person_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_strip_person_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inq2025_try_date(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inq2025_try_date(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inq2025_try_date(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inq2025_try_date(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_clean_line(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_clean_line(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_clean_line(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_clean_line(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_line_count(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_line_count(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_line_count(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_line_count(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_line_value(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_line_value(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_line_value(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_line_value(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_make_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_make_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_make_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_make_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_normalize_prosecutor(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_normalize_prosecutor(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_normalize_prosecutor(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_normalize_prosecutor(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_normalize_status_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_normalize_status_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_normalize_status_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_normalize_status_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_normalize_status_label(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_normalize_status_label(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_normalize_status_label(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_normalize_status_label(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_parse_docket_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_parse_docket_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_parse_docket_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_parse_docket_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_parse_year(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_parse_year(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_parse_year(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_parse_year(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_split_lines(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_split_lines(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_split_lines(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_split_lines(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_split_persons(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_split_persons(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_split_persons(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_split_persons(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_strip_person_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_strip_person_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_strip_person_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_strip_person_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_strip_trailing_comma(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_strip_trailing_comma(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_strip_trailing_comma(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_strip_trailing_comma(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022_try_date(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022_try_date(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022_try_date(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022_try_date(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_clean_line(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_clean_line(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_clean_line(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_clean_line(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_line_count_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_line_count_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_line_count_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_line_count_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_line_value(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_line_value(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_line_value(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_line_value(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_line_value_raw(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_line_value_raw(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_line_value_raw(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_line_value_raw(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_make_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_make_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_make_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_make_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_normalize_prosecutor(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_normalize_prosecutor(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_normalize_prosecutor(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_normalize_prosecutor(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_normalize_status_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_normalize_status_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_normalize_status_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_normalize_status_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_normalize_status_label(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_normalize_status_label(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_normalize_status_label(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_normalize_status_label(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_nullif_legacy_null(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_nullif_legacy_null(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_nullif_legacy_null(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_nullif_legacy_null(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_parse_docket_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_parse_docket_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_parse_docket_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_parse_docket_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_parse_year(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_parse_year(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_parse_year(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_parse_year(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_split_lines(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_split_lines(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_split_lines(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_split_lines(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_split_lines_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_split_lines_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_split_lines_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_split_lines_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_split_persons(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_split_persons(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_split_persons(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_split_persons(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_strip_person_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_strip_person_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_strip_person_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_strip_person_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2022b_try_date(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2022b_try_date(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2022b_try_date(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2022b_try_date(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_clean_line(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_clean_line(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_clean_line(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_clean_line(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_line_count_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_line_count_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_line_count_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_line_count_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_line_value(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_line_value(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_line_value(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_line_value(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_line_value_raw(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_line_value_raw(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_line_value_raw(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_line_value_raw(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_make_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_make_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_make_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_make_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_normalize_prosecutor(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_normalize_prosecutor(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_normalize_prosecutor(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_normalize_prosecutor(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_normalize_status_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_normalize_status_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_normalize_status_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_normalize_status_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_normalize_status_label(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_normalize_status_label(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_normalize_status_label(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_normalize_status_label(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_nullif_legacy_null(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_nullif_legacy_null(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_nullif_legacy_null(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_nullif_legacy_null(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_parse_docket_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_parse_docket_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_parse_docket_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_parse_docket_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_parse_year(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_parse_year(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_parse_year(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_parse_year(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_split_lines(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_split_lines(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_split_lines(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_split_lines(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_split_lines_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_split_lines_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_split_lines_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_split_lines_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_split_persons(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_split_persons(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_split_persons(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_split_persons(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_strip_person_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_strip_person_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_strip_person_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_strip_person_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2023_try_date(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2023_try_date(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2023_try_date(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2023_try_date(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_clean_line(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_clean_line(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_clean_line(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_clean_line(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_line_count_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_line_count_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_line_count_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_line_count_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_line_value(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_line_value(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_line_value(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_line_value(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_line_value_raw(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_line_value_raw(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_line_value_raw(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_line_value_raw(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_make_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_make_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_make_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_make_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_normalize_prosecutor(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_normalize_prosecutor(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_normalize_prosecutor(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_normalize_prosecutor(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_normalize_status_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_normalize_status_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_normalize_status_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_normalize_status_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_normalize_status_label(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_normalize_status_label(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_normalize_status_label(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_normalize_status_label(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_nullif_legacy_null(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_nullif_legacy_null(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_nullif_legacy_null(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_nullif_legacy_null(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_parse_docket_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_parse_docket_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_parse_docket_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_parse_docket_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_parse_year(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_parse_year(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_parse_year(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_parse_year(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_split_lines(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_split_lines(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_split_lines(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_split_lines(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_split_lines_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_split_lines_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_split_lines_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_split_lines_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_split_persons(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_split_persons(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_split_persons(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_split_persons(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_strip_person_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_strip_person_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_strip_person_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_strip_person_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2024_try_date(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2024_try_date(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2024_try_date(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2024_try_date(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_clean_line(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_clean_line(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_clean_line(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_clean_line(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_line_count_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_line_count_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_line_count_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_line_count_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_line_value(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_line_value(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_line_value(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_line_value(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_line_value_raw(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_line_value_raw(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_line_value_raw(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_line_value_raw(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_make_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_make_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_make_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_make_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_normalize_prosecutor(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_normalize_prosecutor(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_normalize_prosecutor(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_normalize_prosecutor(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_normalize_status_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_normalize_status_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_normalize_status_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_normalize_status_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_normalize_status_label(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_normalize_status_label(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_normalize_status_label(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_normalize_status_label(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_nullif_legacy_null(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_nullif_legacy_null(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_nullif_legacy_null(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_nullif_legacy_null(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_parse_docket_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_parse_docket_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_parse_docket_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_parse_docket_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_parse_year(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_parse_year(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_parse_year(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_parse_year(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_split_lines(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_split_lines(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_split_lines(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_split_lines(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_split_lines_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_split_lines_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_split_lines_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_split_lines_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_split_persons(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_split_persons(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_split_persons(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_split_persons(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_strip_person_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_strip_person_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_strip_person_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_strip_person_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv2025_try_date(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv2025_try_date(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv2025_try_date(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv2025_try_date(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv22_compare_norm(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv22_compare_norm(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.inv22_compare_norm(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.inv22_compare_norm(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION inv22_date_text(p_date date); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.inv22_date_text(p_date date) TO anon;
+GRANT ALL ON FUNCTION public.inv22_date_text(p_date date) TO authenticated;
+GRANT ALL ON FUNCTION public.inv22_date_text(p_date date) TO service_role;
+
+
+--
+-- Name: FUNCTION is_admin_role(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.is_admin_role() TO anon;
+GRANT ALL ON FUNCTION public.is_admin_role() TO authenticated;
+GRANT ALL ON FUNCTION public.is_admin_role() TO service_role;
+
+
+--
+-- Name: FUNCTION is_app_admin(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.is_app_admin() TO anon;
+GRANT ALL ON FUNCTION public.is_app_admin() TO authenticated;
+GRANT ALL ON FUNCTION public.is_app_admin() TO service_role;
+
+
+--
+-- Name: FUNCTION is_authenticated_app_user(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.is_authenticated_app_user() TO anon;
+GRANT ALL ON FUNCTION public.is_authenticated_app_user() TO authenticated;
+GRANT ALL ON FUNCTION public.is_authenticated_app_user() TO service_role;
+
+
+--
+-- Name: FUNCTION is_chief(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.is_chief() TO anon;
+GRANT ALL ON FUNCTION public.is_chief() TO authenticated;
+GRANT ALL ON FUNCTION public.is_chief() TO service_role;
+
+
+--
+-- Name: FUNCTION is_developer(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.is_developer() TO anon;
+GRANT ALL ON FUNCTION public.is_developer() TO authenticated;
+GRANT ALL ON FUNCTION public.is_developer() TO service_role;
+
+
+--
+-- Name: FUNCTION is_prosecutor_role(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.is_prosecutor_role() TO anon;
+GRANT ALL ON FUNCTION public.is_prosecutor_role() TO authenticated;
+GRANT ALL ON FUNCTION public.is_prosecutor_role() TO service_role;
+
+
+--
+-- Name: FUNCTION is_staff_role(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.is_staff_role() TO anon;
+GRANT ALL ON FUNCTION public.is_staff_role() TO authenticated;
+GRANT ALL ON FUNCTION public.is_staff_role() TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_age_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_age_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_age_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_age_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_alias_from_name(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_alias_from_name(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_alias_from_name(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_alias_from_name(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_canonical_violation(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_canonical_violation(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_canonical_violation(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_canonical_violation(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_clean_age_value(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_clean_age_value(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_clean_age_value(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_clean_age_value(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_clean_gender_value(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_clean_gender_value(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_clean_gender_value(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_clean_gender_value(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_clean_person_name(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_clean_person_name(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_clean_person_name(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_clean_person_name(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_clean_text(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_clean_text(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_clean_text(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_clean_text(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_clean_violation_text(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_clean_violation_text(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_clean_violation_text(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_clean_violation_text(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_docket_annotation(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_docket_annotation(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_docket_annotation(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_docket_annotation(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_extract_after_leading_int(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_extract_after_leading_int(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_extract_after_leading_int(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_extract_after_leading_int(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_extract_int(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_extract_int(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_extract_int(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_extract_int(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_extract_leading_int(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_extract_leading_int(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_extract_leading_int(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_extract_leading_int(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_format_natural_person_name(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_format_natural_person_name(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_format_natural_person_name(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_format_natural_person_name(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_format_person_name(p_full_name text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_format_person_name(p_full_name text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_format_person_name(p_full_name text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_format_person_name(p_full_name text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_gender_normalized(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_gender_normalized(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_gender_normalized(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_gender_normalized(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_has_rep_by(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_has_rep_by(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_has_rep_by(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_has_rep_by(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_is_organization_text(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_is_organization_text(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_is_organization_text(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_is_organization_text(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_is_placeholder_person(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_is_placeholder_person(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_is_placeholder_person(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_is_placeholder_person(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_line(p_label text, p_value text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_line(p_label text, p_value text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_line(p_label text, p_value text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_line(p_label text, p_value text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_main_party_from_repby(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_main_party_from_repby(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_main_party_from_repby(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_main_party_from_repby(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_norm_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_norm_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_norm_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_norm_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_norm_court_code(raw_value text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_norm_court_code(raw_value text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_norm_court_code(raw_value text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_norm_court_code(raw_value text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_org_type(p_text text, p_descriptor text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_org_type(p_text text, p_descriptor text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_org_type(p_text text, p_descriptor text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_org_type(p_text text, p_descriptor text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_parse_date(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_parse_date(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_parse_date(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_parse_date(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_parse_date_safe(raw_value text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_parse_date_safe(raw_value text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_parse_date_safe(raw_value text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_parse_date_safe(raw_value text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_part_value(p_text text, p_seq integer, p_total bigint, p_kind text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_part_value(p_text text, p_seq integer, p_total bigint, p_kind text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_part_value(p_text text, p_seq integer, p_total bigint, p_kind text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_part_value(p_text text, p_seq integer, p_total bigint, p_kind text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_person_descriptor(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_person_descriptor(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_person_descriptor(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_person_descriptor(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_person_first_name(p_full_name text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_person_first_name(p_full_name text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_person_first_name(p_full_name text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_person_first_name(p_full_name text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_person_last_name(p_full_name text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_person_last_name(p_full_name text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_person_last_name(p_full_name text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_person_last_name(p_full_name text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_person_middle_name(p_full_name text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_person_middle_name(p_full_name text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_person_middle_name(p_full_name text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_person_middle_name(p_full_name text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_person_suffix(p_full_name text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_person_suffix(p_full_name text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_person_suffix(p_full_name text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_person_suffix(p_full_name text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_primary_name_from_alias(p_name text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_primary_name_from_alias(p_name text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_primary_name_from_alias(p_name text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_primary_name_from_alias(p_name text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_prosecutor_short(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_prosecutor_short(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_prosecutor_short(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_prosecutor_short(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_representative_from_repby(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_representative_from_repby(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_representative_from_repby(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_representative_from_repby(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_split_courts(p_court_raw text, p_charge_raw text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_split_courts(p_court_raw text, p_charge_raw text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_split_courts(p_court_raw text, p_charge_raw text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_split_courts(p_court_raw text, p_charge_raw text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_split_people(p_text text, p_default_role text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_split_people(p_text text, p_default_role text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_split_people(p_text text, p_default_role text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_split_people(p_text text, p_default_role text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_split_repby_representatives(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_split_repby_representatives(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_split_repby_representatives(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_split_repby_representatives(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_split_violations(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_split_violations(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_split_violations(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_split_violations(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_status_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_status_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_status_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_status_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_value_for_index(p_text text, p_index integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_value_for_index(p_text text, p_index integer) TO anon;
+GRANT ALL ON FUNCTION public.legacy_value_for_index(p_text text, p_index integer) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_value_for_index(p_text text, p_index integer) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_year(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_year(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_year(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_year(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_yes_no_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_yes_no_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_yes_no_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_yes_no_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION legacy_yes_no_text_to_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.legacy_yes_no_text_to_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.legacy_yes_no_text_to_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.legacy_yes_no_text_to_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION levenshtein(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.levenshtein(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.levenshtein(text, text) TO anon;
+GRANT ALL ON FUNCTION public.levenshtein(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.levenshtein(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION levenshtein(text, text, integer, integer, integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.levenshtein(text, text, integer, integer, integer) TO postgres;
+GRANT ALL ON FUNCTION public.levenshtein(text, text, integer, integer, integer) TO anon;
+GRANT ALL ON FUNCTION public.levenshtein(text, text, integer, integer, integer) TO authenticated;
+GRANT ALL ON FUNCTION public.levenshtein(text, text, integer, integer, integer) TO service_role;
+
+
+--
+-- Name: FUNCTION levenshtein_less_equal(text, text, integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.levenshtein_less_equal(text, text, integer) TO postgres;
+GRANT ALL ON FUNCTION public.levenshtein_less_equal(text, text, integer) TO anon;
+GRANT ALL ON FUNCTION public.levenshtein_less_equal(text, text, integer) TO authenticated;
+GRANT ALL ON FUNCTION public.levenshtein_less_equal(text, text, integer) TO service_role;
+
+
+--
+-- Name: FUNCTION levenshtein_less_equal(text, text, integer, integer, integer, integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.levenshtein_less_equal(text, text, integer, integer, integer, integer) TO postgres;
+GRANT ALL ON FUNCTION public.levenshtein_less_equal(text, text, integer, integer, integer, integer) TO anon;
+GRANT ALL ON FUNCTION public.levenshtein_less_equal(text, text, integer, integer, integer, integer) TO authenticated;
+GRANT ALL ON FUNCTION public.levenshtein_less_equal(text, text, integer, integer, integer, integer) TO service_role;
+
+
+--
+-- Name: FUNCTION manage_case_notes(p_payload jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.manage_case_notes(p_payload jsonb) TO anon;
+GRANT ALL ON FUNCTION public.manage_case_notes(p_payload jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.manage_case_notes(p_payload jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION manage_case_participants(p_payload jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.manage_case_participants(p_payload jsonb) TO anon;
+GRANT ALL ON FUNCTION public.manage_case_participants(p_payload jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.manage_case_participants(p_payload jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION manage_case_places(p_payload jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.manage_case_places(p_payload jsonb) TO anon;
+GRANT ALL ON FUNCTION public.manage_case_places(p_payload jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.manage_case_places(p_payload jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION manage_case_violations(p_payload jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.manage_case_violations(p_payload jsonb) TO anon;
+GRANT ALL ON FUNCTION public.manage_case_violations(p_payload jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.manage_case_violations(p_payload jsonb) TO service_role;
+
+
+--
+-- Name: FUNCTION metaphone(text, integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.metaphone(text, integer) TO postgres;
+GRANT ALL ON FUNCTION public.metaphone(text, integer) TO anon;
+GRANT ALL ON FUNCTION public.metaphone(text, integer) TO authenticated;
+GRANT ALL ON FUNCTION public.metaphone(text, integer) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_bool(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_bool(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_bool(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_bool(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_clean_line(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_clean_line(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_clean_line(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_clean_line(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_line_count_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_line_count_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_line_count_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_line_count_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_line_value(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_line_value(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_line_value(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_line_value(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_line_value_raw(p_text text, p_line_order integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_line_value_raw(p_text text, p_line_order integer) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_line_value_raw(p_text text, p_line_order integer) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_line_value_raw(p_text text, p_line_order integer) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_make_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_make_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_make_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_make_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_normalize_prosecutor(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_normalize_prosecutor(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_normalize_prosecutor(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_normalize_prosecutor(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_normalize_status_code(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_normalize_status_code(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_normalize_status_code(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_normalize_status_code(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_normalize_status_label(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_normalize_status_label(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_normalize_status_label(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_normalize_status_label(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_nullif_legacy_null(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_nullif_legacy_null(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_nullif_legacy_null(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_nullif_legacy_null(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_parse_docket_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_parse_docket_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_parse_docket_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_parse_docket_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_parse_year(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_parse_year(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_parse_year(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_parse_year(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_split_lines(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_split_lines(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_split_lines(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_split_lines(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_split_lines_raw(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_split_lines_raw(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_split_lines_raw(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_split_lines_raw(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_split_persons(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_split_persons(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_split_persons(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_split_persons(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_strip_person_number(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_strip_person_number(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_strip_person_number(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_strip_person_number(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION pe2024_try_date(p_text text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.pe2024_try_date(p_text text) TO anon;
+GRANT ALL ON FUNCTION public.pe2024_try_date(p_text text) TO authenticated;
+GRANT ALL ON FUNCTION public.pe2024_try_date(p_text text) TO service_role;
+
+
+--
+-- Name: FUNCTION raise_exception(p_message text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.raise_exception(p_message text) TO anon;
+GRANT ALL ON FUNCTION public.raise_exception(p_message text) TO authenticated;
+GRANT ALL ON FUNCTION public.raise_exception(p_message text) TO service_role;
+
+
+--
+-- Name: FUNCTION recompute_case_status_after_court_filing(p_case_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.recompute_case_status_after_court_filing(p_case_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.recompute_case_status_after_court_filing(p_case_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.recompute_case_status_after_court_filing(p_case_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION record_case_assignment_event(p_case_id bigint, p_prosecutor_id bigint, p_assignment_date date, p_assignment_time time without time zone, p_staff_id bigint, p_remarks text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.record_case_assignment_event(p_case_id bigint, p_prosecutor_id bigint, p_assignment_date date, p_assignment_time time without time zone, p_staff_id bigint, p_remarks text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.record_case_assignment_event(p_case_id bigint, p_prosecutor_id bigint, p_assignment_date date, p_assignment_time time without time zone, p_staff_id bigint, p_remarks text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.record_case_assignment_event(p_case_id bigint, p_prosecutor_id bigint, p_assignment_date date, p_assignment_time time without time zone, p_staff_id bigint, p_remarks text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION record_case_decision_approved_event(p_case_id bigint, p_case_resolution_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone, p_approval_actions jsonb, p_remarks text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.record_case_decision_approved_event(p_case_id bigint, p_case_resolution_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone, p_approval_actions jsonb, p_remarks text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.record_case_decision_approved_event(p_case_id bigint, p_case_resolution_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone, p_approval_actions jsonb, p_remarks text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.record_case_decision_approved_event(p_case_id bigint, p_case_resolution_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone, p_approval_actions jsonb, p_remarks text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION record_case_reassignment_event(p_case_id bigint, p_new_prosecutor_id bigint, p_reassignment_date date, p_reassignment_time time without time zone, p_new_staff_id bigint, p_reason text, p_remarks text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.record_case_reassignment_event(p_case_id bigint, p_new_prosecutor_id bigint, p_reassignment_date date, p_reassignment_time time without time zone, p_new_staff_id bigint, p_reason text, p_remarks text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.record_case_reassignment_event(p_case_id bigint, p_new_prosecutor_id bigint, p_reassignment_date date, p_reassignment_time time without time zone, p_new_staff_id bigint, p_reason text, p_remarks text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.record_case_reassignment_event(p_case_id bigint, p_new_prosecutor_id bigint, p_reassignment_date date, p_reassignment_time time without time zone, p_new_staff_id bigint, p_reason text, p_remarks text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION record_case_resolved_event(p_case_id bigint, p_recommendation_code text, p_date_resolved date, p_time_resolved time without time zone, p_remarks text, p_charges_for_filing jsonb, p_charges_for_dismissal jsonb, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.record_case_resolved_event(p_case_id bigint, p_recommendation_code text, p_date_resolved date, p_time_resolved time without time zone, p_remarks text, p_charges_for_filing jsonb, p_charges_for_dismissal jsonb, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.record_case_resolved_event(p_case_id bigint, p_recommendation_code text, p_date_resolved date, p_time_resolved time without time zone, p_remarks text, p_charges_for_filing jsonb, p_charges_for_dismissal jsonb, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.record_case_resolved_event(p_case_id bigint, p_recommendation_code text, p_date_resolved date, p_time_resolved time without time zone, p_remarks text, p_charges_for_filing jsonb, p_charges_for_dismissal jsonb, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION record_court_filing_event(p_case_id bigint, p_case_resolution_approval_action_id bigint, p_court_id bigint, p_court_name text, p_court_branch text, p_charge_filed text, p_date_filed date, p_time_filed time without time zone, p_information_count integer, p_criminal_case_no text, p_remarks text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.record_court_filing_event(p_case_id bigint, p_case_resolution_approval_action_id bigint, p_court_id bigint, p_court_name text, p_court_branch text, p_charge_filed text, p_date_filed date, p_time_filed time without time zone, p_information_count integer, p_criminal_case_no text, p_remarks text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.record_court_filing_event(p_case_id bigint, p_case_resolution_approval_action_id bigint, p_court_id bigint, p_court_name text, p_court_branch text, p_charge_filed text, p_date_filed date, p_time_filed time without time zone, p_information_count integer, p_criminal_case_no text, p_remarks text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.record_court_filing_event(p_case_id bigint, p_case_resolution_approval_action_id bigint, p_court_id bigint, p_court_name text, p_court_branch text, p_charge_filed text, p_date_filed date, p_time_filed time without time zone, p_information_count integer, p_criminal_case_no text, p_remarks text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION refresh_clearance_phonetic_name_tokens(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.refresh_clearance_phonetic_name_tokens() TO anon;
+GRANT ALL ON FUNCTION public.refresh_clearance_phonetic_name_tokens() TO authenticated;
+GRANT ALL ON FUNCTION public.refresh_clearance_phonetic_name_tokens() TO service_role;
+
+
+--
+-- Name: FUNCTION refresh_clearance_possible_name_tokens(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.refresh_clearance_possible_name_tokens() TO anon;
+GRANT ALL ON FUNCTION public.refresh_clearance_possible_name_tokens() TO authenticated;
+GRANT ALL ON FUNCTION public.refresh_clearance_possible_name_tokens() TO service_role;
+
+
+--
+-- Name: FUNCTION search_clearance_exact_candidates(p_query text, p_search_type text, p_limit integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.search_clearance_exact_candidates(p_query text, p_search_type text, p_limit integer) TO anon;
+GRANT ALL ON FUNCTION public.search_clearance_exact_candidates(p_query text, p_search_type text, p_limit integer) TO authenticated;
+GRANT ALL ON FUNCTION public.search_clearance_exact_candidates(p_query text, p_search_type text, p_limit integer) TO service_role;
+
+
+--
+-- Name: FUNCTION search_clearance_phonetic_matches(p_query text, p_search_type text, p_limit integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.search_clearance_phonetic_matches(p_query text, p_search_type text, p_limit integer) TO anon;
+GRANT ALL ON FUNCTION public.search_clearance_phonetic_matches(p_query text, p_search_type text, p_limit integer) TO authenticated;
+GRANT ALL ON FUNCTION public.search_clearance_phonetic_matches(p_query text, p_search_type text, p_limit integer) TO service_role;
+
+
+--
+-- Name: FUNCTION search_clearance_possible_matches(p_query text, p_search_type text, p_limit integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.search_clearance_possible_matches(p_query text, p_search_type text, p_limit integer) TO anon;
+GRANT ALL ON FUNCTION public.search_clearance_possible_matches(p_query text, p_search_type text, p_limit integer) TO authenticated;
+GRANT ALL ON FUNCTION public.search_clearance_possible_matches(p_query text, p_search_type text, p_limit integer) TO service_role;
+
+
+--
+-- Name: FUNCTION search_clearance_possible_matches_v3(p_query text, p_search_type text, p_limit integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.search_clearance_possible_matches_v3(p_query text, p_search_type text, p_limit integer) TO anon;
+GRANT ALL ON FUNCTION public.search_clearance_possible_matches_v3(p_query text, p_search_type text, p_limit integer) TO authenticated;
+GRANT ALL ON FUNCTION public.search_clearance_possible_matches_v3(p_query text, p_search_type text, p_limit integer) TO service_role;
+
+
+--
+-- Name: FUNCTION search_clearance_possible_matches_v31(p_query text, p_search_type text, p_limit integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.search_clearance_possible_matches_v31(p_query text, p_search_type text, p_limit integer) TO anon;
+GRANT ALL ON FUNCTION public.search_clearance_possible_matches_v31(p_query text, p_search_type text, p_limit integer) TO authenticated;
+GRANT ALL ON FUNCTION public.search_clearance_possible_matches_v31(p_query text, p_search_type text, p_limit integer) TO service_role;
+
+
+--
+-- Name: FUNCTION search_clearance_records(p_query text, p_search_type text, p_limit integer); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.search_clearance_records(p_query text, p_search_type text, p_limit integer) TO anon;
+GRANT ALL ON FUNCTION public.search_clearance_records(p_query text, p_search_type text, p_limit integer) TO authenticated;
+GRANT ALL ON FUNCTION public.search_clearance_records(p_query text, p_search_type text, p_limit integer) TO service_role;
+
+
+--
+-- Name: FUNCTION set_limit(real); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.set_limit(real) TO postgres;
+GRANT ALL ON FUNCTION public.set_limit(real) TO anon;
+GRANT ALL ON FUNCTION public.set_limit(real) TO authenticated;
+GRANT ALL ON FUNCTION public.set_limit(real) TO service_role;
+
+
+--
+-- Name: FUNCTION set_updated_at_now(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.set_updated_at_now() TO anon;
+GRANT ALL ON FUNCTION public.set_updated_at_now() TO authenticated;
+GRANT ALL ON FUNCTION public.set_updated_at_now() TO service_role;
+
+
+--
+-- Name: FUNCTION show_limit(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.show_limit() TO postgres;
+GRANT ALL ON FUNCTION public.show_limit() TO anon;
+GRANT ALL ON FUNCTION public.show_limit() TO authenticated;
+GRANT ALL ON FUNCTION public.show_limit() TO service_role;
+
+
+--
+-- Name: FUNCTION show_trgm(text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.show_trgm(text) TO postgres;
+GRANT ALL ON FUNCTION public.show_trgm(text) TO anon;
+GRANT ALL ON FUNCTION public.show_trgm(text) TO authenticated;
+GRANT ALL ON FUNCTION public.show_trgm(text) TO service_role;
+
+
+--
+-- Name: FUNCTION similarity(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.similarity(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.similarity(text, text) TO anon;
+GRANT ALL ON FUNCTION public.similarity(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.similarity(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION similarity_dist(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.similarity_dist(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.similarity_dist(text, text) TO anon;
+GRANT ALL ON FUNCTION public.similarity_dist(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.similarity_dist(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION similarity_op(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.similarity_op(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.similarity_op(text, text) TO anon;
+GRANT ALL ON FUNCTION public.similarity_op(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.similarity_op(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION soundex(text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.soundex(text) TO postgres;
+GRANT ALL ON FUNCTION public.soundex(text) TO anon;
+GRANT ALL ON FUNCTION public.soundex(text) TO authenticated;
+GRANT ALL ON FUNCTION public.soundex(text) TO service_role;
+
+
+--
+-- Name: FUNCTION strict_word_similarity(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.strict_word_similarity(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.strict_word_similarity(text, text) TO anon;
+GRANT ALL ON FUNCTION public.strict_word_similarity(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.strict_word_similarity(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION strict_word_similarity_commutator_op(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.strict_word_similarity_commutator_op(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.strict_word_similarity_commutator_op(text, text) TO anon;
+GRANT ALL ON FUNCTION public.strict_word_similarity_commutator_op(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.strict_word_similarity_commutator_op(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION strict_word_similarity_dist_commutator_op(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.strict_word_similarity_dist_commutator_op(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.strict_word_similarity_dist_commutator_op(text, text) TO anon;
+GRANT ALL ON FUNCTION public.strict_word_similarity_dist_commutator_op(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.strict_word_similarity_dist_commutator_op(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION strict_word_similarity_dist_op(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.strict_word_similarity_dist_op(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.strict_word_similarity_dist_op(text, text) TO anon;
+GRANT ALL ON FUNCTION public.strict_word_similarity_dist_op(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.strict_word_similarity_dist_op(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION strict_word_similarity_op(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.strict_word_similarity_op(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.strict_word_similarity_op(text, text) TO anon;
+GRANT ALL ON FUNCTION public.strict_word_similarity_op(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.strict_word_similarity_op(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION text_soundex(text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.text_soundex(text) TO postgres;
+GRANT ALL ON FUNCTION public.text_soundex(text) TO anon;
+GRANT ALL ON FUNCTION public.text_soundex(text) TO authenticated;
+GRANT ALL ON FUNCTION public.text_soundex(text) TO service_role;
+
+
+--
+-- Name: FUNCTION trg_case_participant_relationships_same_case(); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.trg_case_participant_relationships_same_case() TO anon;
+GRANT ALL ON FUNCTION public.trg_case_participant_relationships_same_case() TO authenticated;
+GRANT ALL ON FUNCTION public.trg_case_participant_relationships_same_case() TO service_role;
+
+
+--
+-- Name: FUNCTION upsert_clearance_phonetic_tokens_for_organization(p_organization_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.upsert_clearance_phonetic_tokens_for_organization(p_organization_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.upsert_clearance_phonetic_tokens_for_organization(p_organization_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.upsert_clearance_phonetic_tokens_for_organization(p_organization_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION upsert_clearance_phonetic_tokens_for_person(p_person_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.upsert_clearance_phonetic_tokens_for_person(p_person_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.upsert_clearance_phonetic_tokens_for_person(p_person_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.upsert_clearance_phonetic_tokens_for_person(p_person_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION upsert_clearance_possible_tokens_for_organization(p_organization_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.upsert_clearance_possible_tokens_for_organization(p_organization_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.upsert_clearance_possible_tokens_for_organization(p_organization_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.upsert_clearance_possible_tokens_for_organization(p_organization_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION upsert_clearance_possible_tokens_for_person(p_person_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.upsert_clearance_possible_tokens_for_person(p_person_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.upsert_clearance_possible_tokens_for_person(p_person_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.upsert_clearance_possible_tokens_for_person(p_person_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION void_case_event(p_case_event_id bigint, p_void_reason text, p_voided_by_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.void_case_event(p_case_event_id bigint, p_void_reason text, p_voided_by_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.void_case_event(p_case_event_id bigint, p_void_reason text, p_voided_by_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.void_case_event(p_case_event_id bigint, p_void_reason text, p_voided_by_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION word_similarity(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.word_similarity(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.word_similarity(text, text) TO anon;
+GRANT ALL ON FUNCTION public.word_similarity(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.word_similarity(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION word_similarity_commutator_op(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.word_similarity_commutator_op(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.word_similarity_commutator_op(text, text) TO anon;
+GRANT ALL ON FUNCTION public.word_similarity_commutator_op(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.word_similarity_commutator_op(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION word_similarity_dist_commutator_op(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.word_similarity_dist_commutator_op(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.word_similarity_dist_commutator_op(text, text) TO anon;
+GRANT ALL ON FUNCTION public.word_similarity_dist_commutator_op(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.word_similarity_dist_commutator_op(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION word_similarity_dist_op(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.word_similarity_dist_op(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.word_similarity_dist_op(text, text) TO anon;
+GRANT ALL ON FUNCTION public.word_similarity_dist_op(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.word_similarity_dist_op(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION word_similarity_op(text, text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.word_similarity_op(text, text) TO postgres;
+GRANT ALL ON FUNCTION public.word_similarity_op(text, text) TO anon;
+GRANT ALL ON FUNCTION public.word_similarity_op(text, text) TO authenticated;
+GRANT ALL ON FUNCTION public.word_similarity_op(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION apply_rls(wal jsonb, max_record_bytes integer); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.apply_rls(wal jsonb, max_record_bytes integer) TO postgres;
+GRANT ALL ON FUNCTION realtime.apply_rls(wal jsonb, max_record_bytes integer) TO dashboard_user;
+GRANT ALL ON FUNCTION realtime.apply_rls(wal jsonb, max_record_bytes integer) TO anon;
+GRANT ALL ON FUNCTION realtime.apply_rls(wal jsonb, max_record_bytes integer) TO authenticated;
+GRANT ALL ON FUNCTION realtime.apply_rls(wal jsonb, max_record_bytes integer) TO service_role;
+GRANT ALL ON FUNCTION realtime.apply_rls(wal jsonb, max_record_bytes integer) TO supabase_realtime_admin;
+
+
+--
+-- Name: FUNCTION broadcast_changes(topic_name text, event_name text, operation text, table_name text, table_schema text, new record, old record, level text); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.broadcast_changes(topic_name text, event_name text, operation text, table_name text, table_schema text, new record, old record, level text) TO postgres;
+GRANT ALL ON FUNCTION realtime.broadcast_changes(topic_name text, event_name text, operation text, table_name text, table_schema text, new record, old record, level text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION build_prepared_statement_sql(prepared_statement_name text, entity regclass, columns realtime.wal_column[]); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.build_prepared_statement_sql(prepared_statement_name text, entity regclass, columns realtime.wal_column[]) TO postgres;
+GRANT ALL ON FUNCTION realtime.build_prepared_statement_sql(prepared_statement_name text, entity regclass, columns realtime.wal_column[]) TO dashboard_user;
+GRANT ALL ON FUNCTION realtime.build_prepared_statement_sql(prepared_statement_name text, entity regclass, columns realtime.wal_column[]) TO anon;
+GRANT ALL ON FUNCTION realtime.build_prepared_statement_sql(prepared_statement_name text, entity regclass, columns realtime.wal_column[]) TO authenticated;
+GRANT ALL ON FUNCTION realtime.build_prepared_statement_sql(prepared_statement_name text, entity regclass, columns realtime.wal_column[]) TO service_role;
+GRANT ALL ON FUNCTION realtime.build_prepared_statement_sql(prepared_statement_name text, entity regclass, columns realtime.wal_column[]) TO supabase_realtime_admin;
+
+
+--
+-- Name: FUNCTION "cast"(val text, type_ regtype); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime."cast"(val text, type_ regtype) TO postgres;
+GRANT ALL ON FUNCTION realtime."cast"(val text, type_ regtype) TO dashboard_user;
+GRANT ALL ON FUNCTION realtime."cast"(val text, type_ regtype) TO anon;
+GRANT ALL ON FUNCTION realtime."cast"(val text, type_ regtype) TO authenticated;
+GRANT ALL ON FUNCTION realtime."cast"(val text, type_ regtype) TO service_role;
+GRANT ALL ON FUNCTION realtime."cast"(val text, type_ regtype) TO supabase_realtime_admin;
+
+
+--
+-- Name: FUNCTION check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text) TO postgres;
+GRANT ALL ON FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text) TO dashboard_user;
+GRANT ALL ON FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text) TO anon;
+GRANT ALL ON FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text) TO authenticated;
+GRANT ALL ON FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text) TO service_role;
+GRANT ALL ON FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text) TO supabase_realtime_admin;
+
+
+--
+-- Name: FUNCTION check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text, negate boolean); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text, negate boolean) TO postgres;
+GRANT ALL ON FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text, negate boolean) TO dashboard_user;
+GRANT ALL ON FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text, negate boolean) TO anon;
+GRANT ALL ON FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text, negate boolean) TO authenticated;
+GRANT ALL ON FUNCTION realtime.check_equality_op(op realtime.equality_op, type_ regtype, val_1 text, val_2 text, negate boolean) TO service_role;
+
+
+--
+-- Name: FUNCTION is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[]); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[]) TO postgres;
+GRANT ALL ON FUNCTION realtime.is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[]) TO dashboard_user;
+GRANT ALL ON FUNCTION realtime.is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[]) TO anon;
+GRANT ALL ON FUNCTION realtime.is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[]) TO authenticated;
+GRANT ALL ON FUNCTION realtime.is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[]) TO service_role;
+GRANT ALL ON FUNCTION realtime.is_visible_through_filters(columns realtime.wal_column[], filters realtime.user_defined_filter[]) TO supabase_realtime_admin;
+
+
+--
+-- Name: FUNCTION list_changes(publication name, slot_name name, max_changes integer, max_record_bytes integer); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.list_changes(publication name, slot_name name, max_changes integer, max_record_bytes integer) TO postgres;
+GRANT ALL ON FUNCTION realtime.list_changes(publication name, slot_name name, max_changes integer, max_record_bytes integer) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION quote_wal2json(entity regclass); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.quote_wal2json(entity regclass) TO postgres;
+GRANT ALL ON FUNCTION realtime.quote_wal2json(entity regclass) TO dashboard_user;
+GRANT ALL ON FUNCTION realtime.quote_wal2json(entity regclass) TO anon;
+GRANT ALL ON FUNCTION realtime.quote_wal2json(entity regclass) TO authenticated;
+GRANT ALL ON FUNCTION realtime.quote_wal2json(entity regclass) TO service_role;
+GRANT ALL ON FUNCTION realtime.quote_wal2json(entity regclass) TO supabase_realtime_admin;
+
+
+--
+-- Name: FUNCTION send(payload jsonb, event text, topic text, private boolean); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.send(payload jsonb, event text, topic text, private boolean) TO postgres;
+GRANT ALL ON FUNCTION realtime.send(payload jsonb, event text, topic text, private boolean) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION send_binary(payload bytea, event text, topic text, private boolean); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.send_binary(payload bytea, event text, topic text, private boolean) TO postgres;
+GRANT ALL ON FUNCTION realtime.send_binary(payload bytea, event text, topic text, private boolean) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION subscription_check_filters(); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.subscription_check_filters() TO postgres;
+GRANT ALL ON FUNCTION realtime.subscription_check_filters() TO dashboard_user;
+GRANT ALL ON FUNCTION realtime.subscription_check_filters() TO anon;
+GRANT ALL ON FUNCTION realtime.subscription_check_filters() TO authenticated;
+GRANT ALL ON FUNCTION realtime.subscription_check_filters() TO service_role;
+GRANT ALL ON FUNCTION realtime.subscription_check_filters() TO supabase_realtime_admin;
+
+
+--
+-- Name: FUNCTION to_regrole(role_name text); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.to_regrole(role_name text) TO postgres;
+GRANT ALL ON FUNCTION realtime.to_regrole(role_name text) TO dashboard_user;
+GRANT ALL ON FUNCTION realtime.to_regrole(role_name text) TO anon;
+GRANT ALL ON FUNCTION realtime.to_regrole(role_name text) TO authenticated;
+GRANT ALL ON FUNCTION realtime.to_regrole(role_name text) TO service_role;
+GRANT ALL ON FUNCTION realtime.to_regrole(role_name text) TO supabase_realtime_admin;
+
+
+--
+-- Name: FUNCTION topic(); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.topic() TO postgres;
+GRANT ALL ON FUNCTION realtime.topic() TO dashboard_user;
+
+
+--
+-- Name: FUNCTION wal2json_escape_identifier(name text); Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON FUNCTION realtime.wal2json_escape_identifier(name text) TO postgres;
+GRANT ALL ON FUNCTION realtime.wal2json_escape_identifier(name text) TO dashboard_user;
+
+
+--
+-- Name: FUNCTION _crypto_aead_det_decrypt(message bytea, additional bytea, key_id bigint, context bytea, nonce bytea); Type: ACL; Schema: vault; Owner: -
+--
+
+GRANT ALL ON FUNCTION vault._crypto_aead_det_decrypt(message bytea, additional bytea, key_id bigint, context bytea, nonce bytea) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION vault._crypto_aead_det_decrypt(message bytea, additional bytea, key_id bigint, context bytea, nonce bytea) TO service_role;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON FUNCTION vault._crypto_aead_det_decrypt(message bytea, additional bytea, key_id bigint, context bytea, nonce bytea) TO service_role;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: FUNCTION create_secret(new_secret text, new_name text, new_description text, new_key_id uuid); Type: ACL; Schema: vault; Owner: -
+--
+
+GRANT ALL ON FUNCTION vault.create_secret(new_secret text, new_name text, new_description text, new_key_id uuid) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION vault.create_secret(new_secret text, new_name text, new_description text, new_key_id uuid) TO service_role;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON FUNCTION vault.create_secret(new_secret text, new_name text, new_description text, new_key_id uuid) TO service_role;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: FUNCTION update_secret(secret_id uuid, new_secret text, new_name text, new_description text, new_key_id uuid); Type: ACL; Schema: vault; Owner: -
+--
+
+GRANT ALL ON FUNCTION vault.update_secret(secret_id uuid, new_secret text, new_name text, new_description text, new_key_id uuid) TO postgres WITH GRANT OPTION;
+GRANT ALL ON FUNCTION vault.update_secret(secret_id uuid, new_secret text, new_name text, new_description text, new_key_id uuid) TO service_role;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON FUNCTION vault.update_secret(secret_id uuid, new_secret text, new_name text, new_description text, new_key_id uuid) TO service_role;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE audit_log_entries; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON TABLE auth.audit_log_entries TO dashboard_user;
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.audit_log_entries TO postgres;
+GRANT SELECT ON TABLE auth.audit_log_entries TO postgres WITH GRANT OPTION;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.audit_log_entries TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE custom_oauth_providers; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON TABLE auth.custom_oauth_providers TO postgres;
+GRANT ALL ON TABLE auth.custom_oauth_providers TO dashboard_user;
+
+
+--
+-- Name: TABLE flow_state; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.flow_state TO postgres;
+GRANT SELECT ON TABLE auth.flow_state TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE auth.flow_state TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.flow_state TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE identities; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.identities TO postgres;
+GRANT SELECT ON TABLE auth.identities TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE auth.identities TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.identities TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE instances; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON TABLE auth.instances TO dashboard_user;
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.instances TO postgres;
+GRANT SELECT ON TABLE auth.instances TO postgres WITH GRANT OPTION;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.instances TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE mfa_amr_claims; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.mfa_amr_claims TO postgres;
+GRANT SELECT ON TABLE auth.mfa_amr_claims TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE auth.mfa_amr_claims TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.mfa_amr_claims TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE mfa_challenges; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.mfa_challenges TO postgres;
+GRANT SELECT ON TABLE auth.mfa_challenges TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE auth.mfa_challenges TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.mfa_challenges TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE mfa_factors; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.mfa_factors TO postgres;
+GRANT SELECT ON TABLE auth.mfa_factors TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE auth.mfa_factors TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.mfa_factors TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE oauth_authorizations; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON TABLE auth.oauth_authorizations TO postgres;
+GRANT ALL ON TABLE auth.oauth_authorizations TO dashboard_user;
+
+
+--
+-- Name: TABLE oauth_client_states; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON TABLE auth.oauth_client_states TO postgres;
+GRANT ALL ON TABLE auth.oauth_client_states TO dashboard_user;
+
+
+--
+-- Name: TABLE oauth_clients; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON TABLE auth.oauth_clients TO postgres;
+GRANT ALL ON TABLE auth.oauth_clients TO dashboard_user;
+
+
+--
+-- Name: TABLE oauth_consents; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON TABLE auth.oauth_consents TO postgres;
+GRANT ALL ON TABLE auth.oauth_consents TO dashboard_user;
+
+
+--
+-- Name: TABLE one_time_tokens; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.one_time_tokens TO postgres;
+GRANT SELECT ON TABLE auth.one_time_tokens TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE auth.one_time_tokens TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.one_time_tokens TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE refresh_tokens; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON TABLE auth.refresh_tokens TO dashboard_user;
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.refresh_tokens TO postgres;
+GRANT SELECT ON TABLE auth.refresh_tokens TO postgres WITH GRANT OPTION;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.refresh_tokens TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: SEQUENCE refresh_tokens_id_seq; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON SEQUENCE auth.refresh_tokens_id_seq TO dashboard_user;
+GRANT ALL ON SEQUENCE auth.refresh_tokens_id_seq TO postgres;
+
+
+--
+-- Name: TABLE saml_providers; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.saml_providers TO postgres;
+GRANT SELECT ON TABLE auth.saml_providers TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE auth.saml_providers TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.saml_providers TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE saml_relay_states; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.saml_relay_states TO postgres;
+GRANT SELECT ON TABLE auth.saml_relay_states TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE auth.saml_relay_states TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.saml_relay_states TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE schema_migrations; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT SELECT ON TABLE auth.schema_migrations TO postgres WITH GRANT OPTION;
+
+
+--
+-- Name: TABLE sessions; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.sessions TO postgres;
+GRANT SELECT ON TABLE auth.sessions TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE auth.sessions TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.sessions TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE sso_domains; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.sso_domains TO postgres;
+GRANT SELECT ON TABLE auth.sso_domains TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE auth.sso_domains TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.sso_domains TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE sso_providers; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.sso_providers TO postgres;
+GRANT SELECT ON TABLE auth.sso_providers TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE auth.sso_providers TO dashboard_user;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.sso_providers TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE users; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON TABLE auth.users TO dashboard_user;
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE auth.users TO postgres;
+GRANT SELECT ON TABLE auth.users TO postgres WITH GRANT OPTION;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT ON TABLE auth.users TO dashboard_user;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE webauthn_challenges; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON TABLE auth.webauthn_challenges TO postgres;
+GRANT ALL ON TABLE auth.webauthn_challenges TO dashboard_user;
+
+
+--
+-- Name: TABLE webauthn_credentials; Type: ACL; Schema: auth; Owner: -
+--
+
+GRANT ALL ON TABLE auth.webauthn_credentials TO postgres;
+GRANT ALL ON TABLE auth.webauthn_credentials TO dashboard_user;
+
+
+--
+-- Name: TABLE pg_stat_statements; Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON TABLE extensions.pg_stat_statements FROM postgres;
+GRANT ALL ON TABLE extensions.pg_stat_statements TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE extensions.pg_stat_statements TO dashboard_user;
+
+
+--
+-- Name: TABLE pg_stat_statements_info; Type: ACL; Schema: extensions; Owner: -
+--
+
+REVOKE ALL ON TABLE extensions.pg_stat_statements_info FROM postgres;
+GRANT ALL ON TABLE extensions.pg_stat_statements_info TO postgres WITH GRANT OPTION;
+GRANT ALL ON TABLE extensions.pg_stat_statements_info TO dashboard_user;
+
+
+--
+-- Name: TABLE _rls_policy_backup; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public._rls_policy_backup TO anon;
+GRANT ALL ON TABLE public._rls_policy_backup TO authenticated;
+GRANT ALL ON TABLE public._rls_policy_backup TO service_role;
+
+
+--
+-- Name: SEQUENCE _rls_policy_backup_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public._rls_policy_backup_id_seq TO anon;
+GRANT ALL ON SEQUENCE public._rls_policy_backup_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public._rls_policy_backup_id_seq TO service_role;
+
+
+--
+-- Name: TABLE _rls_table_state_backup; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public._rls_table_state_backup TO anon;
+GRANT ALL ON TABLE public._rls_table_state_backup TO authenticated;
+GRANT ALL ON TABLE public._rls_table_state_backup TO service_role;
+
+
+--
+-- Name: SEQUENCE _rls_table_state_backup_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public._rls_table_state_backup_id_seq TO anon;
+GRANT ALL ON SEQUENCE public._rls_table_state_backup_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public._rls_table_state_backup_id_seq TO service_role;
+
+
+--
+-- Name: TABLE address_types; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.address_types TO anon;
+GRANT ALL ON TABLE public.address_types TO authenticated;
+GRANT ALL ON TABLE public.address_types TO service_role;
+
+
+--
+-- Name: SEQUENCE address_types_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.address_types_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.address_types_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.address_types_id_seq TO service_role;
+
+
+--
+-- Name: TABLE addresses; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.addresses TO anon;
+GRANT ALL ON TABLE public.addresses TO authenticated;
+GRANT ALL ON TABLE public.addresses TO service_role;
+
+
+--
+-- Name: SEQUENCE addresses_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.addresses_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.addresses_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.addresses_id_seq TO service_role;
+
+
+--
+-- Name: TABLE audit_logs; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.audit_logs TO anon;
+GRANT ALL ON TABLE public.audit_logs TO authenticated;
+GRANT ALL ON TABLE public.audit_logs TO service_role;
+
+
+--
+-- Name: SEQUENCE audit_logs_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.audit_logs_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.audit_logs_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.audit_logs_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_addresses; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_addresses TO anon;
+GRANT ALL ON TABLE public.case_addresses TO authenticated;
+GRANT ALL ON TABLE public.case_addresses TO service_role;
+
+
+--
+-- Name: SEQUENCE case_addresses_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_addresses_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_addresses_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_addresses_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_assignments; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_assignments TO anon;
+GRANT ALL ON TABLE public.case_assignments TO authenticated;
+GRANT ALL ON TABLE public.case_assignments TO service_role;
+
+
+--
+-- Name: SEQUENCE case_assignments_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_assignments_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_assignments_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_assignments_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_attachment_index; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_attachment_index TO anon;
+GRANT ALL ON TABLE public.case_attachment_index TO authenticated;
+GRANT ALL ON TABLE public.case_attachment_index TO service_role;
+
+
+--
+-- Name: SEQUENCE case_attachment_index_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_attachment_index_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_attachment_index_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_attachment_index_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_classifications; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_classifications TO anon;
+GRANT ALL ON TABLE public.case_classifications TO authenticated;
+GRANT ALL ON TABLE public.case_classifications TO service_role;
+
+
+--
+-- Name: SEQUENCE case_classifications_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_classifications_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_classifications_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_classifications_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_court_filings; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_court_filings TO anon;
+GRANT ALL ON TABLE public.case_court_filings TO authenticated;
+GRANT ALL ON TABLE public.case_court_filings TO service_role;
+
+
+--
+-- Name: SEQUENCE case_court_filings_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_court_filings_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_court_filings_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_court_filings_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_courts; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_courts TO anon;
+GRANT ALL ON TABLE public.case_courts TO authenticated;
+GRANT ALL ON TABLE public.case_courts TO service_role;
+
+
+--
+-- Name: SEQUENCE case_courts_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_courts_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_courts_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_courts_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_event_types; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_event_types TO anon;
+GRANT ALL ON TABLE public.case_event_types TO authenticated;
+GRANT ALL ON TABLE public.case_event_types TO service_role;
+
+
+--
+-- Name: SEQUENCE case_event_types_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_event_types_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_event_types_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_event_types_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_events; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_events TO anon;
+GRANT ALL ON TABLE public.case_events TO authenticated;
+GRANT ALL ON TABLE public.case_events TO service_role;
+
+
+--
+-- Name: SEQUENCE case_events_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_events_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_events_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_events_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_legacy_attributes; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_legacy_attributes TO anon;
+GRANT ALL ON TABLE public.case_legacy_attributes TO authenticated;
+GRANT ALL ON TABLE public.case_legacy_attributes TO service_role;
+
+
+--
+-- Name: SEQUENCE case_legacy_attributes_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_legacy_attributes_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_legacy_attributes_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_legacy_attributes_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_motions; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_motions TO anon;
+GRANT ALL ON TABLE public.case_motions TO authenticated;
+GRANT ALL ON TABLE public.case_motions TO service_role;
+
+
+--
+-- Name: SEQUENCE case_motions_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_motions_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_motions_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_motions_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_participant_attributes; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_participant_attributes TO anon;
+GRANT ALL ON TABLE public.case_participant_attributes TO authenticated;
+GRANT ALL ON TABLE public.case_participant_attributes TO service_role;
+
+
+--
+-- Name: SEQUENCE case_participant_attributes_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_participant_attributes_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_participant_attributes_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_participant_attributes_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_participant_corrections; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_participant_corrections TO anon;
+GRANT ALL ON TABLE public.case_participant_corrections TO authenticated;
+GRANT ALL ON TABLE public.case_participant_corrections TO service_role;
+
+
+--
+-- Name: SEQUENCE case_participant_corrections_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_participant_corrections_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_participant_corrections_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_participant_corrections_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_participant_private_details; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_participant_private_details TO anon;
+GRANT ALL ON TABLE public.case_participant_private_details TO authenticated;
+GRANT ALL ON TABLE public.case_participant_private_details TO service_role;
+
+
+--
+-- Name: TABLE case_participant_relationships; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_participant_relationships TO anon;
+GRANT ALL ON TABLE public.case_participant_relationships TO authenticated;
+GRANT ALL ON TABLE public.case_participant_relationships TO service_role;
+
+
+--
+-- Name: SEQUENCE case_participant_relationships_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_participant_relationships_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_participant_relationships_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_participant_relationships_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_participants; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_participants TO anon;
+GRANT ALL ON TABLE public.case_participants TO authenticated;
+GRANT ALL ON TABLE public.case_participants TO service_role;
+
+
+--
+-- Name: SEQUENCE case_participants_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_participants_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_participants_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_participants_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_petitions_for_review; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_petitions_for_review TO anon;
+GRANT ALL ON TABLE public.case_petitions_for_review TO authenticated;
+GRANT ALL ON TABLE public.case_petitions_for_review TO service_role;
+
+
+--
+-- Name: SEQUENCE case_petitions_for_review_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_petitions_for_review_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_petitions_for_review_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_petitions_for_review_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_private_details; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_private_details TO anon;
+GRANT ALL ON TABLE public.case_private_details TO authenticated;
+GRANT ALL ON TABLE public.case_private_details TO service_role;
+
+
+--
+-- Name: TABLE case_resolution_approval_actions; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_resolution_approval_actions TO anon;
+GRANT ALL ON TABLE public.case_resolution_approval_actions TO authenticated;
+GRANT ALL ON TABLE public.case_resolution_approval_actions TO service_role;
+
+
+--
+-- Name: SEQUENCE case_resolution_approval_actions_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_resolution_approval_actions_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_resolution_approval_actions_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_resolution_approval_actions_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_resolution_approvals; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_resolution_approvals TO anon;
+GRANT ALL ON TABLE public.case_resolution_approvals TO authenticated;
+GRANT ALL ON TABLE public.case_resolution_approvals TO service_role;
+
+
+--
+-- Name: SEQUENCE case_resolution_approvals_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_resolution_approvals_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_resolution_approvals_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_resolution_approvals_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_resolution_charge_actions; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_resolution_charge_actions TO anon;
+GRANT ALL ON TABLE public.case_resolution_charge_actions TO authenticated;
+GRANT ALL ON TABLE public.case_resolution_charge_actions TO service_role;
+
+
+--
+-- Name: SEQUENCE case_resolution_charge_actions_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_resolution_charge_actions_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_resolution_charge_actions_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_resolution_charge_actions_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_resolutions; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_resolutions TO anon;
+GRANT ALL ON TABLE public.case_resolutions TO authenticated;
+GRANT ALL ON TABLE public.case_resolutions TO service_role;
+
+
+--
+-- Name: SEQUENCE case_resolutions_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_resolutions_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_resolutions_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_resolutions_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_stage_colors; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_stage_colors TO anon;
+GRANT ALL ON TABLE public.case_stage_colors TO authenticated;
+GRANT ALL ON TABLE public.case_stage_colors TO service_role;
+
+
+--
+-- Name: SEQUENCE case_stage_colors_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_stage_colors_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_stage_colors_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_stage_colors_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_stage_history; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_stage_history TO anon;
+GRANT ALL ON TABLE public.case_stage_history TO authenticated;
+GRANT ALL ON TABLE public.case_stage_history TO service_role;
+
+
+--
+-- Name: SEQUENCE case_stage_history_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_stage_history_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_stage_history_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_stage_history_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_stages; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_stages TO anon;
+GRANT ALL ON TABLE public.case_stages TO authenticated;
+GRANT ALL ON TABLE public.case_stages TO service_role;
+
+
+--
+-- Name: SEQUENCE case_stages_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_stages_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_stages_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_stages_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_status_colors; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_status_colors TO anon;
+GRANT ALL ON TABLE public.case_status_colors TO authenticated;
+GRANT ALL ON TABLE public.case_status_colors TO service_role;
+
+
+--
+-- Name: SEQUENCE case_status_colors_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_status_colors_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_status_colors_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_status_colors_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_status_history; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_status_history TO anon;
+GRANT ALL ON TABLE public.case_status_history TO authenticated;
+GRANT ALL ON TABLE public.case_status_history TO service_role;
+
+
+--
+-- Name: SEQUENCE case_status_history_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_status_history_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_status_history_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_status_history_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_statuses; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_statuses TO anon;
+GRANT ALL ON TABLE public.case_statuses TO authenticated;
+GRANT ALL ON TABLE public.case_statuses TO service_role;
+
+
+--
+-- Name: SEQUENCE case_statuses_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_statuses_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_statuses_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_statuses_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_violations; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_violations TO anon;
+GRANT ALL ON TABLE public.case_violations TO authenticated;
+GRANT ALL ON TABLE public.case_violations TO service_role;
+
+
+--
+-- Name: SEQUENCE case_violations_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_violations_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_violations_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_violations_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_witness_details; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_witness_details TO anon;
+GRANT ALL ON TABLE public.case_witness_details TO authenticated;
+GRANT ALL ON TABLE public.case_witness_details TO service_role;
+
+
+--
+-- Name: SEQUENCE case_witness_details_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_witness_details_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_witness_details_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_witness_details_id_seq TO service_role;
+
+
+--
+-- Name: TABLE cases; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.cases TO anon;
+GRANT ALL ON TABLE public.cases TO authenticated;
+GRANT ALL ON TABLE public.cases TO service_role;
+
+
+--
+-- Name: SEQUENCE cases_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.cases_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.cases_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.cases_id_seq TO service_role;
+
+
+--
+-- Name: TABLE clearance_phonetic_name_tokens; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.clearance_phonetic_name_tokens TO anon;
+GRANT ALL ON TABLE public.clearance_phonetic_name_tokens TO authenticated;
+GRANT ALL ON TABLE public.clearance_phonetic_name_tokens TO service_role;
+
+
+--
+-- Name: SEQUENCE clearance_phonetic_name_tokens_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.clearance_phonetic_name_tokens_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.clearance_phonetic_name_tokens_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.clearance_phonetic_name_tokens_id_seq TO service_role;
+
+
+--
+-- Name: TABLE clearance_possible_name_tokens; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.clearance_possible_name_tokens TO anon;
+GRANT ALL ON TABLE public.clearance_possible_name_tokens TO authenticated;
+GRANT ALL ON TABLE public.clearance_possible_name_tokens TO service_role;
+
+
+--
+-- Name: SEQUENCE clearance_possible_name_tokens_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.clearance_possible_name_tokens_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.clearance_possible_name_tokens_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.clearance_possible_name_tokens_id_seq TO service_role;
+
+
+--
+-- Name: TABLE contact_informations; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.contact_informations TO anon;
+GRANT ALL ON TABLE public.contact_informations TO authenticated;
+GRANT ALL ON TABLE public.contact_informations TO service_role;
+
+
+--
+-- Name: SEQUENCE contact_informations_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.contact_informations_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.contact_informations_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.contact_informations_id_seq TO service_role;
+
+
+--
+-- Name: TABLE courts; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.courts TO anon;
+GRANT ALL ON TABLE public.courts TO authenticated;
+GRANT ALL ON TABLE public.courts TO service_role;
+
+
+--
+-- Name: SEQUENCE courts_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.courts_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.courts_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.courts_id_seq TO service_role;
+
+
+--
+-- Name: TABLE docket_number_history; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.docket_number_history TO anon;
+GRANT ALL ON TABLE public.docket_number_history TO authenticated;
+GRANT ALL ON TABLE public.docket_number_history TO service_role;
+
+
+--
+-- Name: SEQUENCE docket_number_history_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.docket_number_history_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.docket_number_history_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.docket_number_history_id_seq TO service_role;
+
+
+--
+-- Name: TABLE docket_sequence_counters; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.docket_sequence_counters TO anon;
+GRANT ALL ON TABLE public.docket_sequence_counters TO authenticated;
+GRANT ALL ON TABLE public.docket_sequence_counters TO service_role;
+
+
+--
+-- Name: SEQUENCE docket_sequence_counters_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.docket_sequence_counters_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.docket_sequence_counters_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.docket_sequence_counters_id_seq TO service_role;
+
+
+--
+-- Name: TABLE docket_types; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.docket_types TO anon;
+GRANT ALL ON TABLE public.docket_types TO authenticated;
+GRANT ALL ON TABLE public.docket_types TO service_role;
+
+
+--
+-- Name: SEQUENCE docket_types_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.docket_types_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.docket_types_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.docket_types_id_seq TO service_role;
+
+
+--
+-- Name: TABLE migration_review_items; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.migration_review_items TO anon;
+GRANT ALL ON TABLE public.migration_review_items TO authenticated;
+GRANT ALL ON TABLE public.migration_review_items TO service_role;
+
+
+--
+-- Name: SEQUENCE migration_review_items_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.migration_review_items_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.migration_review_items_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.migration_review_items_id_seq TO service_role;
+
+
+--
+-- Name: TABLE notes; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.notes TO anon;
+GRANT ALL ON TABLE public.notes TO authenticated;
+GRANT ALL ON TABLE public.notes TO service_role;
+
+
+--
+-- Name: SEQUENCE notes_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.notes_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.notes_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.notes_id_seq TO service_role;
+
+
+--
+-- Name: TABLE organization_addresses; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.organization_addresses TO anon;
+GRANT ALL ON TABLE public.organization_addresses TO authenticated;
+GRANT ALL ON TABLE public.organization_addresses TO service_role;
+
+
+--
+-- Name: SEQUENCE organization_addresses_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.organization_addresses_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.organization_addresses_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.organization_addresses_id_seq TO service_role;
+
+
+--
+-- Name: TABLE organization_aliases; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.organization_aliases TO anon;
+GRANT ALL ON TABLE public.organization_aliases TO authenticated;
+GRANT ALL ON TABLE public.organization_aliases TO service_role;
+
+
+--
+-- Name: SEQUENCE organization_aliases_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.organization_aliases_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.organization_aliases_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.organization_aliases_id_seq TO service_role;
+
+
+--
+-- Name: TABLE organizations; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.organizations TO anon;
+GRANT ALL ON TABLE public.organizations TO authenticated;
+GRANT ALL ON TABLE public.organizations TO service_role;
+
+
+--
+-- Name: SEQUENCE organizations_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.organizations_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.organizations_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.organizations_id_seq TO service_role;
+
+
+--
+-- Name: TABLE participant_contact_informations; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.participant_contact_informations TO anon;
+GRANT ALL ON TABLE public.participant_contact_informations TO authenticated;
+GRANT ALL ON TABLE public.participant_contact_informations TO service_role;
+
+
+--
+-- Name: SEQUENCE participant_contact_informations_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.participant_contact_informations_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.participant_contact_informations_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.participant_contact_informations_id_seq TO service_role;
+
+
+--
+-- Name: TABLE participant_roles; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.participant_roles TO anon;
+GRANT ALL ON TABLE public.participant_roles TO authenticated;
+GRANT ALL ON TABLE public.participant_roles TO service_role;
+
+
+--
+-- Name: SEQUENCE participant_roles_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.participant_roles_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.participant_roles_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.participant_roles_id_seq TO service_role;
+
+
+--
+-- Name: TABLE person_addresses; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.person_addresses TO anon;
+GRANT ALL ON TABLE public.person_addresses TO authenticated;
+GRANT ALL ON TABLE public.person_addresses TO service_role;
+
+
+--
+-- Name: SEQUENCE person_addresses_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.person_addresses_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.person_addresses_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.person_addresses_id_seq TO service_role;
+
+
+--
+-- Name: TABLE person_aliases; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.person_aliases TO anon;
+GRANT ALL ON TABLE public.person_aliases TO authenticated;
+GRANT ALL ON TABLE public.person_aliases TO service_role;
+
+
+--
+-- Name: SEQUENCE person_aliases_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.person_aliases_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.person_aliases_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.person_aliases_id_seq TO service_role;
+
+
+--
+-- Name: TABLE persons; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.persons TO anon;
+GRANT ALL ON TABLE public.persons TO authenticated;
+GRANT ALL ON TABLE public.persons TO service_role;
+
+
+--
+-- Name: SEQUENCE persons_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.persons_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.persons_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.persons_id_seq TO service_role;
+
+
+--
+-- Name: TABLE positions; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.positions TO anon;
+GRANT ALL ON TABLE public.positions TO authenticated;
+GRANT ALL ON TABLE public.positions TO service_role;
+
+
+--
+-- Name: SEQUENCE positions_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.positions_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.positions_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.positions_id_seq TO service_role;
+
+
+--
+-- Name: TABLE prosecutor_staff_assignments; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.prosecutor_staff_assignments TO anon;
+GRANT ALL ON TABLE public.prosecutor_staff_assignments TO authenticated;
+GRANT ALL ON TABLE public.prosecutor_staff_assignments TO service_role;
+
+
+--
+-- Name: SEQUENCE prosecutor_staff_assignments_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.prosecutor_staff_assignments_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.prosecutor_staff_assignments_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.prosecutor_staff_assignments_id_seq TO service_role;
+
+
+--
+-- Name: TABLE prosecutors; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.prosecutors TO anon;
+GRANT ALL ON TABLE public.prosecutors TO authenticated;
+GRANT ALL ON TABLE public.prosecutors TO service_role;
+
+
+--
+-- Name: SEQUENCE prosecutors_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.prosecutors_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.prosecutors_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.prosecutors_id_seq TO service_role;
+
+
+--
+-- Name: TABLE roles; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.roles TO anon;
+GRANT ALL ON TABLE public.roles TO authenticated;
+GRANT ALL ON TABLE public.roles TO service_role;
+
+
+--
+-- Name: SEQUENCE roles_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.roles_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.roles_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.roles_id_seq TO service_role;
+
+
+--
+-- Name: TABLE staff; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.staff TO anon;
+GRANT ALL ON TABLE public.staff TO authenticated;
+GRANT ALL ON TABLE public.staff TO service_role;
+
+
+--
+-- Name: SEQUENCE staff_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.staff_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.staff_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.staff_id_seq TO service_role;
+
+
+--
+-- Name: TABLE staging_dc2025_normalized_rows; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.staging_dc2025_normalized_rows TO anon;
+GRANT ALL ON TABLE public.staging_dc2025_normalized_rows TO authenticated;
+GRANT ALL ON TABLE public.staging_dc2025_normalized_rows TO service_role;
+
+
+--
+-- Name: SEQUENCE staging_dc2025_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.staging_dc2025_normalized_rows_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.staging_dc2025_normalized_rows_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.staging_dc2025_normalized_rows_id_seq TO service_role;
+
+
+--
+-- Name: TABLE staging_inq2022_normalized_rows; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.staging_inq2022_normalized_rows TO anon;
+GRANT ALL ON TABLE public.staging_inq2022_normalized_rows TO authenticated;
+GRANT ALL ON TABLE public.staging_inq2022_normalized_rows TO service_role;
+
+
+--
+-- Name: SEQUENCE staging_inq2022_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.staging_inq2022_normalized_rows_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.staging_inq2022_normalized_rows_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.staging_inq2022_normalized_rows_id_seq TO service_role;
+
+
+--
+-- Name: TABLE staging_inq2023_normalized_rows; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.staging_inq2023_normalized_rows TO anon;
+GRANT ALL ON TABLE public.staging_inq2023_normalized_rows TO authenticated;
+GRANT ALL ON TABLE public.staging_inq2023_normalized_rows TO service_role;
+
+
+--
+-- Name: SEQUENCE staging_inq2023_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.staging_inq2023_normalized_rows_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.staging_inq2023_normalized_rows_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.staging_inq2023_normalized_rows_id_seq TO service_role;
+
+
+--
+-- Name: TABLE staging_inq2024_normalized_rows; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.staging_inq2024_normalized_rows TO anon;
+GRANT ALL ON TABLE public.staging_inq2024_normalized_rows TO authenticated;
+GRANT ALL ON TABLE public.staging_inq2024_normalized_rows TO service_role;
+
+
+--
+-- Name: SEQUENCE staging_inq2024_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.staging_inq2024_normalized_rows_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.staging_inq2024_normalized_rows_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.staging_inq2024_normalized_rows_id_seq TO service_role;
+
+
+--
+-- Name: TABLE staging_inq2025_normalized_rows; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.staging_inq2025_normalized_rows TO anon;
+GRANT ALL ON TABLE public.staging_inq2025_normalized_rows TO authenticated;
+GRANT ALL ON TABLE public.staging_inq2025_normalized_rows TO service_role;
+
+
+--
+-- Name: SEQUENCE staging_inq2025_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.staging_inq2025_normalized_rows_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.staging_inq2025_normalized_rows_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.staging_inq2025_normalized_rows_id_seq TO service_role;
+
+
+--
+-- Name: TABLE staging_inv2022b_normalized_rows; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.staging_inv2022b_normalized_rows TO anon;
+GRANT ALL ON TABLE public.staging_inv2022b_normalized_rows TO authenticated;
+GRANT ALL ON TABLE public.staging_inv2022b_normalized_rows TO service_role;
+
+
+--
+-- Name: SEQUENCE staging_inv2022b_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.staging_inv2022b_normalized_rows_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.staging_inv2022b_normalized_rows_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.staging_inv2022b_normalized_rows_id_seq TO service_role;
+
+
+--
+-- Name: TABLE staging_inv2023_normalized_rows; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.staging_inv2023_normalized_rows TO anon;
+GRANT ALL ON TABLE public.staging_inv2023_normalized_rows TO authenticated;
+GRANT ALL ON TABLE public.staging_inv2023_normalized_rows TO service_role;
+
+
+--
+-- Name: SEQUENCE staging_inv2023_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.staging_inv2023_normalized_rows_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.staging_inv2023_normalized_rows_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.staging_inv2023_normalized_rows_id_seq TO service_role;
+
+
+--
+-- Name: TABLE staging_inv2024_normalized_rows; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.staging_inv2024_normalized_rows TO anon;
+GRANT ALL ON TABLE public.staging_inv2024_normalized_rows TO authenticated;
+GRANT ALL ON TABLE public.staging_inv2024_normalized_rows TO service_role;
+
+
+--
+-- Name: SEQUENCE staging_inv2024_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.staging_inv2024_normalized_rows_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.staging_inv2024_normalized_rows_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.staging_inv2024_normalized_rows_id_seq TO service_role;
+
+
+--
+-- Name: TABLE staging_inv2025_normalized_rows; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.staging_inv2025_normalized_rows TO anon;
+GRANT ALL ON TABLE public.staging_inv2025_normalized_rows TO authenticated;
+GRANT ALL ON TABLE public.staging_inv2025_normalized_rows TO service_role;
+
+
+--
+-- Name: SEQUENCE staging_inv2025_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.staging_inv2025_normalized_rows_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.staging_inv2025_normalized_rows_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.staging_inv2025_normalized_rows_id_seq TO service_role;
+
+
+--
+-- Name: TABLE staging_pe2024_normalized_rows; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.staging_pe2024_normalized_rows TO anon;
+GRANT ALL ON TABLE public.staging_pe2024_normalized_rows TO authenticated;
+GRANT ALL ON TABLE public.staging_pe2024_normalized_rows TO service_role;
+
+
+--
+-- Name: SEQUENCE staging_pe2024_normalized_rows_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.staging_pe2024_normalized_rows_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.staging_pe2024_normalized_rows_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.staging_pe2024_normalized_rows_id_seq TO service_role;
+
+
+--
+-- Name: TABLE user_roles; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.user_roles TO anon;
+GRANT ALL ON TABLE public.user_roles TO authenticated;
+GRANT ALL ON TABLE public.user_roles TO service_role;
+
+
+--
+-- Name: TABLE users; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.users TO anon;
+GRANT ALL ON TABLE public.users TO authenticated;
+GRANT ALL ON TABLE public.users TO service_role;
+
+
+--
+-- Name: SEQUENCE users_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.users_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.users_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.users_id_seq TO service_role;
+
+
+--
+-- Name: TABLE v_address_suggestions; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_address_suggestions TO anon;
+GRANT ALL ON TABLE public.v_address_suggestions TO authenticated;
+GRANT ALL ON TABLE public.v_address_suggestions TO service_role;
+
+
+--
+-- Name: TABLE v_case_assignment_detail; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_assignment_detail TO anon;
+GRANT ALL ON TABLE public.v_case_assignment_detail TO authenticated;
+GRANT ALL ON TABLE public.v_case_assignment_detail TO service_role;
+
+
+--
+-- Name: TABLE v_case_attachments; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_attachments TO anon;
+GRANT ALL ON TABLE public.v_case_attachments TO authenticated;
+GRANT ALL ON TABLE public.v_case_attachments TO service_role;
+
+
+--
+-- Name: TABLE v_case_courts_detail; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_courts_detail TO anon;
+GRANT ALL ON TABLE public.v_case_courts_detail TO authenticated;
+GRANT ALL ON TABLE public.v_case_courts_detail TO service_role;
+
+
+--
+-- Name: TABLE violations; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.violations TO anon;
+GRANT ALL ON TABLE public.violations TO authenticated;
+GRANT ALL ON TABLE public.violations TO service_role;
+
+
+--
+-- Name: TABLE v_case_details_page; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_details_page TO anon;
+GRANT ALL ON TABLE public.v_case_details_page TO authenticated;
+GRANT ALL ON TABLE public.v_case_details_page TO service_role;
+
+
+--
+-- Name: TABLE v_case_motions_detail; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_motions_detail TO anon;
+GRANT ALL ON TABLE public.v_case_motions_detail TO authenticated;
+GRANT ALL ON TABLE public.v_case_motions_detail TO service_role;
+
+
+--
+-- Name: TABLE v_case_participant_corrections; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_participant_corrections TO anon;
+GRANT ALL ON TABLE public.v_case_participant_corrections TO authenticated;
+GRANT ALL ON TABLE public.v_case_participant_corrections TO service_role;
+
+
+--
+-- Name: TABLE v_case_participants_detail; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_participants_detail TO anon;
+GRANT ALL ON TABLE public.v_case_participants_detail TO authenticated;
+GRANT ALL ON TABLE public.v_case_participants_detail TO service_role;
+
+
+--
+-- Name: TABLE v_case_participant_details; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_participant_details TO anon;
+GRANT ALL ON TABLE public.v_case_participant_details TO authenticated;
+GRANT ALL ON TABLE public.v_case_participant_details TO service_role;
+
+
+--
+-- Name: TABLE v_case_petitions_for_review_detail; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_petitions_for_review_detail TO anon;
+GRANT ALL ON TABLE public.v_case_petitions_for_review_detail TO authenticated;
+GRANT ALL ON TABLE public.v_case_petitions_for_review_detail TO service_role;
+
+
+--
+-- Name: TABLE v_case_stage_history_detail; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_stage_history_detail TO anon;
+GRANT ALL ON TABLE public.v_case_stage_history_detail TO authenticated;
+GRANT ALL ON TABLE public.v_case_stage_history_detail TO service_role;
+
+
+--
+-- Name: TABLE v_case_status_history_detail; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_status_history_detail TO anon;
+GRANT ALL ON TABLE public.v_case_status_history_detail TO authenticated;
+GRANT ALL ON TABLE public.v_case_status_history_detail TO service_role;
+
+
+--
+-- Name: TABLE v_case_timeline; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_timeline TO anon;
+GRANT ALL ON TABLE public.v_case_timeline TO authenticated;
+GRANT ALL ON TABLE public.v_case_timeline TO service_role;
+
+
+--
+-- Name: TABLE v_clearance_participant_attributes; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_clearance_participant_attributes TO anon;
+GRANT ALL ON TABLE public.v_clearance_participant_attributes TO authenticated;
+GRANT ALL ON TABLE public.v_clearance_participant_attributes TO service_role;
+
+
+--
+-- Name: TABLE v_docket_case_violation_classification; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_docket_case_violation_classification TO anon;
+GRANT ALL ON TABLE public.v_docket_case_violation_classification TO authenticated;
+GRANT ALL ON TABLE public.v_docket_case_violation_classification TO service_role;
+
+
+--
+-- Name: TABLE v_docket_shell; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_docket_shell TO anon;
+GRANT ALL ON TABLE public.v_docket_shell TO authenticated;
+GRANT ALL ON TABLE public.v_docket_shell TO service_role;
+
+
+--
+-- Name: TABLE v_docket_case_labels; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_docket_case_labels TO anon;
+GRANT ALL ON TABLE public.v_docket_case_labels TO authenticated;
+GRANT ALL ON TABLE public.v_docket_case_labels TO service_role;
+
+
+--
+-- Name: TABLE v_docket_participants; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_docket_participants TO anon;
+GRANT ALL ON TABLE public.v_docket_participants TO authenticated;
+GRANT ALL ON TABLE public.v_docket_participants TO service_role;
+
+
+--
+-- Name: TABLE v_docket_quickdetails; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_docket_quickdetails TO anon;
+GRANT ALL ON TABLE public.v_docket_quickdetails TO authenticated;
+GRANT ALL ON TABLE public.v_docket_quickdetails TO service_role;
+
+
+--
+-- Name: TABLE v_docket_sequence_lookup; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_docket_sequence_lookup TO anon;
+GRANT ALL ON TABLE public.v_docket_sequence_lookup TO authenticated;
+GRANT ALL ON TABLE public.v_docket_sequence_lookup TO service_role;
+
+
+--
+-- Name: TABLE v_organization_details; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_organization_details TO anon;
+GRANT ALL ON TABLE public.v_organization_details TO authenticated;
+GRANT ALL ON TABLE public.v_organization_details TO service_role;
+
+
+--
+-- Name: TABLE v_organization_search; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_organization_search TO authenticated;
+GRANT ALL ON TABLE public.v_organization_search TO service_role;
+
+
+--
+-- Name: TABLE v_person_details; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_person_details TO anon;
+GRANT ALL ON TABLE public.v_person_details TO authenticated;
+GRANT ALL ON TABLE public.v_person_details TO service_role;
+
+
+--
+-- Name: TABLE v_recent_audit_logs; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_recent_audit_logs TO anon;
+GRANT ALL ON TABLE public.v_recent_audit_logs TO authenticated;
+GRANT ALL ON TABLE public.v_recent_audit_logs TO service_role;
+
+
+--
+-- Name: TABLE v_ref_address_types; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_address_types TO anon;
+GRANT ALL ON TABLE public.v_ref_address_types TO authenticated;
+GRANT ALL ON TABLE public.v_ref_address_types TO service_role;
+
+
+--
+-- Name: TABLE v_ref_case_classifications; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_case_classifications TO anon;
+GRANT ALL ON TABLE public.v_ref_case_classifications TO authenticated;
+GRANT ALL ON TABLE public.v_ref_case_classifications TO service_role;
+
+
+--
+-- Name: TABLE v_ref_case_event_types; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_case_event_types TO anon;
+GRANT ALL ON TABLE public.v_ref_case_event_types TO authenticated;
+GRANT ALL ON TABLE public.v_ref_case_event_types TO service_role;
+
+
+--
+-- Name: TABLE v_ref_case_stages; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_case_stages TO anon;
+GRANT ALL ON TABLE public.v_ref_case_stages TO authenticated;
+GRANT ALL ON TABLE public.v_ref_case_stages TO service_role;
+
+
+--
+-- Name: TABLE v_ref_case_statuses; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_case_statuses TO anon;
+GRANT ALL ON TABLE public.v_ref_case_statuses TO authenticated;
+GRANT ALL ON TABLE public.v_ref_case_statuses TO service_role;
+
+
+--
+-- Name: TABLE v_ref_courts; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_courts TO anon;
+GRANT ALL ON TABLE public.v_ref_courts TO authenticated;
+GRANT ALL ON TABLE public.v_ref_courts TO service_role;
+
+
+--
+-- Name: TABLE v_ref_docket_types; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_docket_types TO anon;
+GRANT ALL ON TABLE public.v_ref_docket_types TO authenticated;
+GRANT ALL ON TABLE public.v_ref_docket_types TO service_role;
+
+
+--
+-- Name: TABLE v_ref_participant_roles; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_participant_roles TO anon;
+GRANT ALL ON TABLE public.v_ref_participant_roles TO authenticated;
+GRANT ALL ON TABLE public.v_ref_participant_roles TO service_role;
+
+
+--
+-- Name: TABLE v_ref_prosecutors; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_prosecutors TO anon;
+GRANT ALL ON TABLE public.v_ref_prosecutors TO authenticated;
+GRANT ALL ON TABLE public.v_ref_prosecutors TO service_role;
+
+
+--
+-- Name: TABLE v_ref_users; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_users TO anon;
+GRANT ALL ON TABLE public.v_ref_users TO authenticated;
+GRANT ALL ON TABLE public.v_ref_users TO service_role;
+
+
+--
+-- Name: TABLE v_ref_violations; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_ref_violations TO anon;
+GRANT ALL ON TABLE public.v_ref_violations TO authenticated;
+GRANT ALL ON TABLE public.v_ref_violations TO service_role;
+
+
+--
+-- Name: SEQUENCE violations_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.violations_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.violations_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.violations_id_seq TO service_role;
+
+
+--
+-- Name: TABLE messages; Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON TABLE realtime.messages TO postgres;
+GRANT ALL ON TABLE realtime.messages TO dashboard_user;
+GRANT SELECT,INSERT,UPDATE ON TABLE realtime.messages TO anon;
+GRANT SELECT,INSERT,UPDATE ON TABLE realtime.messages TO authenticated;
+GRANT SELECT,INSERT,UPDATE ON TABLE realtime.messages TO service_role;
+
+
+--
+-- Name: TABLE schema_migrations; Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON TABLE realtime.schema_migrations TO postgres;
+GRANT ALL ON TABLE realtime.schema_migrations TO dashboard_user;
+GRANT SELECT ON TABLE realtime.schema_migrations TO anon;
+GRANT SELECT ON TABLE realtime.schema_migrations TO authenticated;
+GRANT SELECT ON TABLE realtime.schema_migrations TO service_role;
+GRANT ALL ON TABLE realtime.schema_migrations TO supabase_realtime_admin;
+
+
+--
+-- Name: TABLE subscription; Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON TABLE realtime.subscription TO postgres;
+GRANT ALL ON TABLE realtime.subscription TO dashboard_user;
+GRANT SELECT ON TABLE realtime.subscription TO anon;
+GRANT SELECT ON TABLE realtime.subscription TO authenticated;
+GRANT SELECT ON TABLE realtime.subscription TO service_role;
+GRANT ALL ON TABLE realtime.subscription TO supabase_realtime_admin;
+
+
+--
+-- Name: SEQUENCE subscription_id_seq; Type: ACL; Schema: realtime; Owner: -
+--
+
+GRANT ALL ON SEQUENCE realtime.subscription_id_seq TO postgres;
+GRANT ALL ON SEQUENCE realtime.subscription_id_seq TO dashboard_user;
+GRANT USAGE ON SEQUENCE realtime.subscription_id_seq TO anon;
+GRANT USAGE ON SEQUENCE realtime.subscription_id_seq TO authenticated;
+GRANT USAGE ON SEQUENCE realtime.subscription_id_seq TO service_role;
+GRANT ALL ON SEQUENCE realtime.subscription_id_seq TO supabase_realtime_admin;
+
+
+--
+-- Name: TABLE buckets; Type: ACL; Schema: storage; Owner: -
+--
+
+REVOKE ALL ON TABLE storage.buckets FROM supabase_storage_admin;
+GRANT ALL ON TABLE storage.buckets TO supabase_storage_admin WITH GRANT OPTION;
+GRANT ALL ON TABLE storage.buckets TO service_role;
+GRANT ALL ON TABLE storage.buckets TO authenticated;
+GRANT ALL ON TABLE storage.buckets TO anon;
+GRANT ALL ON TABLE storage.buckets TO postgres WITH GRANT OPTION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.buckets TO supabase_storage_admin WITH GRANT OPTION;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.buckets TO service_role;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.buckets TO authenticated;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.buckets TO anon;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE buckets_analytics; Type: ACL; Schema: storage; Owner: -
+--
+
+GRANT ALL ON TABLE storage.buckets_analytics TO service_role;
+GRANT ALL ON TABLE storage.buckets_analytics TO authenticated;
+GRANT ALL ON TABLE storage.buckets_analytics TO anon;
+
+
+--
+-- Name: TABLE buckets_vectors; Type: ACL; Schema: storage; Owner: -
+--
+
+GRANT SELECT ON TABLE storage.buckets_vectors TO service_role;
+GRANT SELECT ON TABLE storage.buckets_vectors TO authenticated;
+GRANT SELECT ON TABLE storage.buckets_vectors TO anon;
+
+
+--
+-- Name: TABLE objects; Type: ACL; Schema: storage; Owner: -
+--
+
+REVOKE ALL ON TABLE storage.objects FROM supabase_storage_admin;
+GRANT ALL ON TABLE storage.objects TO supabase_storage_admin WITH GRANT OPTION;
+GRANT ALL ON TABLE storage.objects TO service_role;
+GRANT ALL ON TABLE storage.objects TO authenticated;
+GRANT ALL ON TABLE storage.objects TO anon;
+GRANT ALL ON TABLE storage.objects TO postgres WITH GRANT OPTION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.objects TO supabase_storage_admin WITH GRANT OPTION;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.objects TO service_role;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.objects TO authenticated;
+RESET SESSION AUTHORIZATION;
+SET SESSION AUTHORIZATION postgres;
+GRANT ALL ON TABLE storage.objects TO anon;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE s3_multipart_uploads; Type: ACL; Schema: storage; Owner: -
+--
+
+GRANT ALL ON TABLE storage.s3_multipart_uploads TO service_role;
+GRANT SELECT ON TABLE storage.s3_multipart_uploads TO authenticated;
+GRANT SELECT ON TABLE storage.s3_multipart_uploads TO anon;
+
+
+--
+-- Name: TABLE s3_multipart_uploads_parts; Type: ACL; Schema: storage; Owner: -
+--
+
+GRANT ALL ON TABLE storage.s3_multipart_uploads_parts TO service_role;
+GRANT SELECT ON TABLE storage.s3_multipart_uploads_parts TO authenticated;
+GRANT SELECT ON TABLE storage.s3_multipart_uploads_parts TO anon;
+
+
+--
+-- Name: TABLE vector_indexes; Type: ACL; Schema: storage; Owner: -
+--
+
+GRANT SELECT ON TABLE storage.vector_indexes TO service_role;
+GRANT SELECT ON TABLE storage.vector_indexes TO authenticated;
+GRANT SELECT ON TABLE storage.vector_indexes TO anon;
+
+
+--
+-- Name: TABLE secrets; Type: ACL; Schema: vault; Owner: -
+--
+
+GRANT SELECT,REFERENCES,DELETE,TRUNCATE ON TABLE vault.secrets TO postgres WITH GRANT OPTION;
+GRANT SELECT,DELETE ON TABLE vault.secrets TO service_role;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT,DELETE ON TABLE vault.secrets TO service_role;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: TABLE decrypted_secrets; Type: ACL; Schema: vault; Owner: -
+--
+
+GRANT SELECT,REFERENCES,DELETE,TRUNCATE ON TABLE vault.decrypted_secrets TO postgres WITH GRANT OPTION;
+GRANT SELECT,DELETE ON TABLE vault.decrypted_secrets TO service_role;
+SET SESSION AUTHORIZATION postgres;
+GRANT SELECT,DELETE ON TABLE vault.decrypted_secrets TO service_role;
+RESET SESSION AUTHORIZATION;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: auth; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL ON SEQUENCES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL ON SEQUENCES TO dashboard_user;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: auth; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL ON FUNCTIONS TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL ON FUNCTIONS TO dashboard_user;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: auth; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL ON TABLES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_auth_admin IN SCHEMA auth GRANT ALL ON TABLES TO dashboard_user;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: extensions; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA extensions GRANT ALL ON SEQUENCES TO postgres WITH GRANT OPTION;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: extensions; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA extensions GRANT ALL ON FUNCTIONS TO postgres WITH GRANT OPTION;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: extensions; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA extensions GRANT ALL ON TABLES TO postgres WITH GRANT OPTION;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: graphql; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON SEQUENCES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON SEQUENCES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON SEQUENCES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON SEQUENCES TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: graphql; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON FUNCTIONS TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON FUNCTIONS TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON FUNCTIONS TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON FUNCTIONS TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql GRANT ALL ON TABLES TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: graphql_public; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON SEQUENCES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON SEQUENCES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON SEQUENCES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON SEQUENCES TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: graphql_public; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON FUNCTIONS TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON FUNCTIONS TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON FUNCTIONS TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON FUNCTIONS TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: graphql_public; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON TABLES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON TABLES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA graphql_public GRANT ALL ON TABLES TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: public; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: public; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON FUNCTIONS TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: public; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: public; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: realtime; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON SEQUENCES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON SEQUENCES TO dashboard_user;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: realtime; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON FUNCTIONS TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON FUNCTIONS TO dashboard_user;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: realtime; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON TABLES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA realtime GRANT ALL ON TABLES TO dashboard_user;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: storage; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON SEQUENCES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON SEQUENCES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON SEQUENCES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON SEQUENCES TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: storage; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON FUNCTIONS TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON FUNCTIONS TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON FUNCTIONS TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON FUNCTIONS TO service_role;
+
+
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: storage; Owner: -
+--
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON TABLES TO postgres;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON TABLES TO anon;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON TABLES TO authenticated;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA storage GRANT ALL ON TABLES TO service_role;
+
+
+--
 -- Name: issue_graphql_placeholder; Type: EVENT TRIGGER; Schema: -; Owner: -
 --
 
@@ -21157,5 +27447,5 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 -- PostgreSQL database dump complete
 --
 
-\unrestrict t7blyZqqpaxPa9pImFQQnS3OZKJcXpLd2GvRFQn9O77jrdsEtcm0OE8pH0btyb4
+\unrestrict 9uiXo0JQ3fNdY2egtNMvaRzBRlxluqnK7Au4lIptrCHnEecQbMLGKf8C2c6RfHW
 
