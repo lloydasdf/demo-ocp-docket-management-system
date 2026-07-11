@@ -474,7 +474,10 @@ function timelineDetailItems(event: CaseTimelineEventRecord, assignment?: CaseAs
   }
 
   if (event.event_type_code === "CASE_RECEIVED") {
-    return [{ label: "Date", value: formatDate(event.event_date) }];
+    return [
+      { label: "Date", value: formatDate(event.event_date) },
+      { label: "Time", value: formatTime(event.event_time) },
+    ];
   }
 
   const motionWorkflowDetails = motionWorkflowEventDetails(event);
@@ -1009,6 +1012,7 @@ function ApprovalDecisionEntries({
 const EDIT_WORKFLOW_TEMPORARILY_DISABLED = true;
 
 const SUPPORTED_EVENT_EDIT_TYPES = new Set([
+  "CASE_RECEIVED",
   "CASE_ASSIGNMENT",
   "CASE_REASSIGNMENT",
   "CASE_RESOLVED",
@@ -1023,6 +1027,7 @@ const SUPPORTED_EVENT_EDIT_TYPES = new Set([
 ]);
 
 const EVENT_EDIT_TITLES: Record<string, string> = {
+  CASE_RECEIVED: "Edit Case Received",
   CASE_ASSIGNMENT: "Edit Case Assignment",
   CASE_REASSIGNMENT: "Edit Case Reassignment",
   CASE_RESOLVED: "Edit Case Resolved",
@@ -1845,8 +1850,8 @@ export function CaseTimeline({
                             ) : null}
                             {!event.is_voided ? (
                               <div className="flex gap-2 border-t pt-3">
-                                {!EDIT_WORKFLOW_TEMPORARILY_DISABLED ? <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button> : null}
-                                <Button type="button" variant="destructive" size="sm" onClick={() => openVoidDialog(event)}>Void</Button>
+                                {(!EDIT_WORKFLOW_TEMPORARILY_DISABLED || event.event_type_code === "CASE_RECEIVED") ? <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button> : null}
+                                {event.event_type_code !== "CASE_RECEIVED" ? <Button type="button" variant="destructive" size="sm" onClick={() => openVoidDialog(event)}>Void</Button> : null}
                               </div>
                             ) : null}
                           </AccordionContent>

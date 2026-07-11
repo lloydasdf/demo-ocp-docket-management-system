@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { formatManilaClock, getManilaDateTimeInputValues } from '@/lib/philippine-time';
 import {
   createNewDocketEntry,
   getAddressTypes,
@@ -86,6 +87,7 @@ type NewDocketDraftState = {
   docketTypeId: string;
   docketYear: string;
   dateReceived: string;
+  timeReceived: string;
   caseReceivedDescription: string;
   isCaseReceivedDescriptionEdited: boolean;
   initialStatusId: string;
@@ -94,6 +96,7 @@ type NewDocketDraftState = {
   assignedProsecutorId: string;
   assignmentRemarks: string;
   assignmentDate: string;
+  assignmentTime: string;
   isDocketInformationSaved: boolean;
   regionCode: string;
   summaryText: string;
@@ -304,7 +307,12 @@ export default function NewDocket() {
   const [docketYear, setDocketYear] = useState(String(thisYear));
   const [nextDocketNumber, setNextDocketNumber] = useState<number | null>(null);
   const [isLoadingNextDocket, setIsLoadingNextDocket] = useState(false);
-  const [dateReceived, setDateReceived] = useState(new Date().toISOString().slice(0, 10));
+  const initialManilaDateTime = getManilaDateTimeInputValues();
+  const [manilaNow, setManilaNow] = useState(() => new Date());
+  const [isReceivedDateTimeDirty, setIsReceivedDateTimeDirty] = useState(false);
+  const [isAssignmentDateTimeDirty, setIsAssignmentDateTimeDirty] = useState(false);
+  const [dateReceived, setDateReceived] = useState(initialManilaDateTime.date);
+  const [timeReceived, setTimeReceived] = useState(initialManilaDateTime.time);
   const [caseReceivedDescription, setCaseReceivedDescription] = useState(() => formatCaseReceivedDefaultDescription(new Date().toISOString().slice(0, 10)));
   const [isCaseReceivedDescriptionEdited, setIsCaseReceivedDescriptionEdited] = useState(false);
   const [initialStatusId, setInitialStatusId] = useState('');
@@ -314,7 +322,8 @@ export default function NewDocket() {
   const [caseAlsoRaffled, setCaseAlsoRaffled] = useState(false);
   const [assignedProsecutorId, setAssignedProsecutorId] = useState('');
   const [assignmentRemarks, setAssignmentRemarks] = useState('');
-  const [assignmentDate, setAssignmentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [assignmentDate, setAssignmentDate] = useState(initialManilaDateTime.date);
+  const [assignmentTime, setAssignmentTime] = useState(initialManilaDateTime.time);
   const [isDocketInformationSaved, setIsDocketInformationSaved] = useState(false);
   const [regionCode, setRegionCode] = useState(defaultRegionCode);
   const [summaryText, setSummaryText] = useState('');
@@ -384,6 +393,30 @@ export default function NewDocket() {
   ]);
 
   useEffect(() => {
+    if (caseModal?.kind !== 'docket' && caseModal?.kind !== 'assignment') return;
+
+    const tick = () => {
+      const now = new Date();
+      setManilaNow(now);
+      const current = getManilaDateTimeInputValues(now);
+
+      if (caseModal?.kind === 'docket' && !isReceivedDateTimeDirty) {
+        setDateReceived(current.date);
+        setTimeReceived(current.time);
+      }
+
+      if (caseModal?.kind === 'assignment' && !isAssignmentDateTimeDirty) {
+        setAssignmentDate(current.date);
+        setAssignmentTime(current.time);
+      }
+    };
+
+    tick();
+    const intervalId = window.setInterval(tick, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [caseModal?.kind, isAssignmentDateTimeDirty, isReceivedDateTimeDirty]);
+
+  useEffect(() => {
     try {
       const savedDraft = window.localStorage.getItem(newDocketDraftStorageKey);
       if (savedDraft) {
@@ -394,6 +427,7 @@ export default function NewDocket() {
         setDocketTypeId(draft.docketTypeId || '');
         setDocketYear(draft.docketYear || String(thisYear));
         setDateReceived(draft.dateReceived || fallbackDate);
+        setTimeReceived(draft.timeReceived || '00:00:00');
         setCaseReceivedDescription(draft.caseReceivedDescription || formatCaseReceivedDefaultDescription(draft.dateReceived || fallbackDate));
         setIsCaseReceivedDescriptionEdited(Boolean(draft.isCaseReceivedDescriptionEdited));
         setInitialStatusId(draft.initialStatusId || '');
@@ -402,6 +436,7 @@ export default function NewDocket() {
         setAssignedProsecutorId(draft.assignedProsecutorId || '');
         setAssignmentRemarks(draft.assignmentRemarks || '');
         setAssignmentDate(draft.assignmentDate || fallbackDate);
+        setAssignmentTime(draft.assignmentTime || draft.timeReceived || '00:00:00');
         setIsDocketInformationSaved(Boolean(draft.isDocketInformationSaved));
         setRegionCode(draft.regionCode || defaultRegionCode);
         setSummaryText(draft.summaryText || '');
@@ -427,6 +462,7 @@ export default function NewDocket() {
       docketTypeId,
       docketYear,
       dateReceived,
+      timeReceived,
       caseReceivedDescription,
       isCaseReceivedDescriptionEdited,
       initialStatusId,
@@ -435,6 +471,7 @@ export default function NewDocket() {
       assignedProsecutorId,
       assignmentRemarks,
       assignmentDate,
+      assignmentTime,
       isDocketInformationSaved,
       regionCode,
       summaryText,
@@ -451,7 +488,7 @@ export default function NewDocket() {
     } catch (error) {
       console.error('Unable to save new docket draft', error);
     }
-  }, [activeTab, docketTypeId, docketYear, dateReceived, caseReceivedDescription, isCaseReceivedDescriptionEdited, initialStatusId, caseClassificationId, caseAlsoRaffled, assignedProsecutorId, assignmentRemarks, assignmentDate, isDocketInformationSaved, regionCode, summaryText, remarks, notes, isSummaryProcedure, persons, placesOfCommission, violations, isDraftHydrated]);
+  }, [activeTab, docketTypeId, docketYear, dateReceived, caseReceivedDescription, isCaseReceivedDescriptionEdited, initialStatusId, caseClassificationId, caseAlsoRaffled, assignedProsecutorId, assignmentRemarks, assignmentDate, assignmentTime, isDocketInformationSaved, regionCode, summaryText, remarks, notes, isSummaryProcedure, persons, placesOfCommission, violations, isDraftHydrated]);
 
   useEffect(() => {
     let isMounted = true;
@@ -987,6 +1024,7 @@ export default function NewDocket() {
       docketTypeId: toNumber(docketTypeId),
       docketYear: toNumber(docketYear),
       dateReceived,
+      timeReceived,
       initialStatusId: toNumber(initialStatusId),
       regionCode: regionCode || defaultRegionCode,
       docketMonthCode: docketMonthCode === '—' ? null : docketMonthCode,
@@ -997,6 +1035,8 @@ export default function NewDocket() {
       isSummaryProcedure,
       caseAlsoRaffled,
       assignmentRemarks: caseAlsoRaffled ? assignmentRemarks.trim() || null : null,
+      assignmentDate: caseAlsoRaffled ? assignmentDate : null,
+      assignmentTime: caseAlsoRaffled ? assignmentTime : null,
       assignedProsecutorId: caseAlsoRaffled && assignedProsecutorId ? toNumber(assignedProsecutorId) : null,
       caseClassificationId: caseClassificationId ? toNumber(caseClassificationId) : null,
       placesOfCommission: placesOfCommission.map(({ id: _id, suggestionQuery: _sq, selectedExistingLabel: _sel, ...address }, index) => ({ ...address, isPrimary: address.isPrimary ?? index === 0, newAddress: address.existingAddressId ? undefined : { line1: address.line1, line2: address.line2, barangay: address.barangay, city: address.city, province: address.province, region: address.region, zipCode: address.zipCode, country: address.country } })),
@@ -1154,6 +1194,8 @@ export default function NewDocket() {
   };
 
   const openCaseModal = (kind: NonNullable<CaseModalState>['kind'], id?: string) => {
+    if (kind === 'docket') setIsReceivedDateTimeDirty(false);
+    if (kind === 'assignment') setIsAssignmentDateTimeDirty(false);
     if (kind === 'violation') {
       const existing = id ? violations.find((item) => item.id === id) : null;
       setCaseModal({ kind, step: 0, id, violation: existing ? { ...existing } : { id: makeId('violation'), existingViolationId: null, violationOrder: violations.length + 1, rawViolationText: '', searchText: '', createNew: true, newViolationTitle: '' } });
@@ -1216,13 +1258,13 @@ export default function NewDocket() {
     if (!caseModal) return null;
     const stepName = caseModalSteps[caseModal.step];
     if (caseModal.kind === 'docket') {
-      return <div className="space-y-4"><Select value={docketTypeId} onValueChange={setDocketTypeId} disabled={isLoadingLookups}><SelectTrigger><SelectValue placeholder="Select docket type" /></SelectTrigger><SelectContent>{lookups.docketTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.prefix} — {type.name}</SelectItem>)}</SelectContent></Select>{docketTypeId ? <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><div><Label className="text-xs">Date Received</Label><Input type="date" value={dateReceived} onChange={(event) => setDateReceived(event.target.value)} className="mt-1" /></div><div><Label className="text-xs">Docket Year</Label><Input type="number" value={docketYear} onChange={(event) => setDocketYear(event.target.value)} className="mt-1" /></div></div> : null}</div>;
+      return <div className="space-y-4"><Select value={docketTypeId} onValueChange={setDocketTypeId} disabled={isLoadingLookups}><SelectTrigger><SelectValue placeholder="Select docket type" /></SelectTrigger><SelectContent>{lookups.docketTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.prefix} — {type.name}</SelectItem>)}</SelectContent></Select>{docketTypeId ? <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><div><Label className="text-xs">Date Received</Label><Input type="date" value={dateReceived} onChange={(event) => { setIsReceivedDateTimeDirty(true); setDateReceived(event.target.value); }} className="mt-1" /></div><div><Label className="text-xs">Time Received</Label><Input type="time" step="1" value={timeReceived} onChange={(event) => { setIsReceivedDateTimeDirty(true); setTimeReceived(event.target.value); }} className="mt-1" /></div><div><Label className="text-xs">Docket Year</Label><Input type="number" value={docketYear} onChange={(event) => setDocketYear(event.target.value)} className="mt-1" /></div></div> : null}</div>;
     }
     if (caseModal.kind === 'procedure') {
       return <div className="space-y-4"><label className="flex items-center gap-2 text-sm"><Checkbox checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} /> Falls under Summary Procedure</label><div><Label className="text-xs">Case Classification</Label><Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}><SelectTrigger className="mt-1"><SelectValue placeholder="Select classification" /></SelectTrigger><SelectContent><div className="p-2"><Input value={caseClassificationSearch} onChange={(event) => setCaseClassificationSearch(event.target.value)} onKeyDown={(event) => event.stopPropagation()} placeholder="Search classifications" /></div><SelectItem value="none">No classification</SelectItem>{filteredCaseClassifications.map((classification) => <SelectItem key={classification.id} value={classification.id.toString()}>{classification.display_label}</SelectItem>)}</SelectContent></Select></div>{isSummaryProcedure ? <div><Label className="text-xs">Remarks</Label><Textarea value={remarks} onChange={(event) => setRemarks(event.target.value)} placeholder="Optional summary procedure remarks" className="mt-1" /></div> : null}</div>;
     }
     if (caseModal.kind === 'assignment') {
-      return <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><div className="space-y-3"><div><Label className="text-xs">Prosecutor</Label><Select value={assignedProsecutorId || 'none'} onValueChange={(value) => { const nextValue = value === 'none' ? '' : value; setAssignedProsecutorId(nextValue); setCaseAlsoRaffled(Boolean(nextValue)); }} disabled={isLoadingLookups}><SelectTrigger className="mt-1"><SelectValue placeholder="Select prosecutor" /></SelectTrigger><SelectContent><div className="p-2"><Input value={prosecutorSearch} onChange={(event) => setProsecutorSearch(event.target.value)} onKeyDown={(event) => event.stopPropagation()} placeholder="Search prosecutors" /></div><SelectItem value="none">No prosecutor selected</SelectItem>{filteredProsecutors.map((prosecutor) => <SelectItem key={prosecutor.id} value={prosecutor.id.toString()}>{prosecutor.short_name ?? prosecutor.full_name}</SelectItem>)}</SelectContent></Select></div>{assignedProsecutorId ? <div><Label className="text-xs">Assignment date</Label><Input type="date" value={assignmentDate} onChange={(event) => setAssignmentDate(event.target.value)} className="mt-1" /></div> : null}</div>{assignedProsecutorId ? <div className="flex flex-col"><Label className="text-xs">Remarks</Label><Textarea value={assignmentRemarks} onChange={(event) => setAssignmentRemarks(event.target.value)} placeholder="Optional assignment remarks" className="mt-1 min-h-[7.75rem] flex-1" /></div> : null}</div>;
+      return <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><div className="space-y-3"><div><Label className="text-xs">Prosecutor</Label><Select value={assignedProsecutorId || 'none'} onValueChange={(value) => { const nextValue = value === 'none' ? '' : value; setAssignedProsecutorId(nextValue); setCaseAlsoRaffled(Boolean(nextValue)); }} disabled={isLoadingLookups}><SelectTrigger className="mt-1"><SelectValue placeholder="Select prosecutor" /></SelectTrigger><SelectContent><div className="p-2"><Input value={prosecutorSearch} onChange={(event) => setProsecutorSearch(event.target.value)} onKeyDown={(event) => event.stopPropagation()} placeholder="Search prosecutors" /></div><SelectItem value="none">No prosecutor selected</SelectItem>{filteredProsecutors.map((prosecutor) => <SelectItem key={prosecutor.id} value={prosecutor.id.toString()}>{prosecutor.short_name ?? prosecutor.full_name}</SelectItem>)}</SelectContent></Select></div>{assignedProsecutorId ? <><div><Label className="text-xs">Assignment date</Label><Input type="date" value={assignmentDate} onChange={(event) => { setIsAssignmentDateTimeDirty(true); setAssignmentDate(event.target.value); }} className="mt-1" /></div><div><Label className="text-xs">Assignment time</Label><Input type="time" step="1" value={assignmentTime} onChange={(event) => { setIsAssignmentDateTimeDirty(true); setAssignmentTime(event.target.value); }} className="mt-1" /></div></> : null}</div>{assignedProsecutorId ? <div className="flex flex-col"><Label className="text-xs">Remarks</Label><Textarea value={assignmentRemarks} onChange={(event) => setAssignmentRemarks(event.target.value)} placeholder="Optional assignment remarks" className="mt-1 min-h-[7.75rem] flex-1" /></div> : null}</div>;
     }
     if (caseModal.kind === 'violation' && caseModal.violation) {
       const violation = caseModal.violation;
@@ -1375,7 +1417,7 @@ export default function NewDocket() {
                         <section className="overflow-hidden rounded-lg border">
                           <header className="flex items-center gap-2 border-b bg-muted/40 px-4 py-3"><h3 className="text-sm font-semibold uppercase tracking-wide">Assignment</h3></header>
                           <div className="space-y-3 p-4">
-                            {assignedProsecutorId ? <div className="rounded-lg border p-4 text-sm"><p><strong>Assigned prosecutor:</strong> {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? '—'}</p><p><strong>Assignment date:</strong> {assignmentDate || '—'}</p><p><strong>Remarks:</strong> {shortPreview(assignmentRemarks)}</p></div> : null}
+                            {assignedProsecutorId ? <div className="rounded-lg border p-4 text-sm"><p><strong>Assigned prosecutor:</strong> {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? '—'}</p><p><strong>Assignment date/time:</strong> {assignmentDate || '—'} {assignmentTime || ''}</p><p><strong>Remarks:</strong> {shortPreview(assignmentRemarks)}</p></div> : null}
                             <Button type="button" variant="outline" size="sm" onClick={() => openCaseModal('assignment')}>{assignedProsecutorId ? 'Edit Assignment' : 'Add Assignment'}</Button>
                           </div>
                         </section>
@@ -1395,7 +1437,7 @@ export default function NewDocket() {
 
               <Dialog open={Boolean(caseModal)} onOpenChange={(open) => !open && setCaseModal(null)}>
                 <DialogContent onKeyDown={handleCaseModalEnter}>
-                  <DialogHeader><DialogTitle>{caseModalTitle}</DialogTitle><DialogDescription>{caseModal?.kind === 'docket' ? 'Choose a docket type first. Date received and docket year appear after selection.' : `Step ${(caseModal?.step ?? 0) + 1} of ${caseModalSteps.length}: ${caseModalSteps[caseModal?.step ?? 0]}. Nullable fields can be skipped.`}</DialogDescription></DialogHeader>
+                  <DialogHeader><DialogTitle>{caseModalTitle}</DialogTitle><DialogDescription>{caseModal?.kind === 'docket' ? 'Choose a docket type first. Date received and docket year appear after selection.' : `Step ${(caseModal?.step ?? 0) + 1} of ${caseModalSteps.length}: ${caseModalSteps[caseModal?.step ?? 0]}. Nullable fields can be skipped.`}</DialogDescription>{caseModal?.kind === 'docket' || caseModal?.kind === 'assignment' ? <p className="text-xs text-muted-foreground">Current Philippine time: {formatManilaClock(manilaNow)}</p> : null}</DialogHeader>
                   <div className="space-y-2"><Label>{caseModalSteps[caseModal?.step ?? 0]}</Label>{renderCaseModalField()}</div>
                   <DialogFooter>
                     <Button type="button" variant="outline" onClick={() => setCaseModal(null)}>Cancel</Button>
@@ -1506,7 +1548,7 @@ export default function NewDocket() {
                     </div>
                     <div className="space-y-3 text-base md:justify-self-start">
                       <p><span className="font-medium">Assigned to:</span> {selectedProsecutor?.short_name ?? selectedProsecutor?.full_name ?? ''}</p>
-                      <p><span className="font-medium">Date Assigned:</span> {assignedProsecutorId ? assignmentDate : ''}</p>
+                      <p><span className="font-medium">Date Assigned:</span> {assignedProsecutorId ? `${assignmentDate} ${assignmentTime}` : ''}</p>
                     </div>
                     <div className="hidden justify-self-start md:flex">
                       <div className={`rotate-[-6deg] rounded-md border-4 px-6 py-2 text-2xl font-black uppercase tracking-widest ${reviewDocketStamp.className}`}>{reviewDocketStamp.text}</div>

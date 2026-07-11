@@ -2102,6 +2102,7 @@ export async function getCaseTimelineEvents(
         .select("*")
         .eq("case_id", caseId)
         .order("event_date", { ascending: true, nullsFirst: false })
+        .order("event_time", { ascending: true, nullsFirst: false })
         .order("event_order", { ascending: true, nullsFirst: false })
         .order("case_event_id", { ascending: true })) as {
         data: CaseTimelineEventRecord[] | null;
@@ -3314,6 +3315,7 @@ export interface NewDocketEntryInput {
   docketTypeId: number;
   docketYear: number;
   dateReceived: string;
+  timeReceived?: string | null;
   initialStatusId: number;
   caseClassificationId?: number | null;
   docketMonthCode?: string | null;
@@ -3324,6 +3326,8 @@ export interface NewDocketEntryInput {
   isSummaryProcedure?: boolean | null;
   caseAlsoRaffled?: boolean | null;
   assignmentRemarks?: string | null;
+  assignmentDate?: string | null;
+  assignmentTime?: string | null;
   assignedProsecutorId?: number | null;
   participants: NewDocketParticipantInput[];
   placeOfCommission?: NewDocketAddressInput | null;
