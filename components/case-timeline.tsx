@@ -186,6 +186,26 @@ type MotionDetailRow = { detail: string; value: string };
 type CourtStatusRow = { court_status: string; status_date: string };
 type CriminalCaseNumberRow = { criminal_case_no: string };
 
+
+function MotionDetailsEditor({ rows, onChange }: { rows: MotionDetailRow[]; onChange: (rows: MotionDetailRow[]) => void }) {
+  const normalizedRows = rows.length ? rows : [{ detail: "", value: "" }];
+  return (
+    <div className="space-y-2">
+      <Label>Additional Details</Label>
+      <div className="space-y-2">
+        {normalizedRows.map((row, index) => (
+          <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+            <Input placeholder="Detail" value={row.detail} onChange={(e) => onChange(normalizedRows.map((item, itemIndex) => itemIndex === index ? { ...item, detail: e.target.value } : item))} />
+            <Input placeholder="Value" value={row.value} onChange={(e) => onChange(normalizedRows.map((item, itemIndex) => itemIndex === index ? { ...item, value: e.target.value } : item))} />
+            <Button type="button" variant="outline" size="sm" onClick={() => onChange(normalizedRows.length === 1 ? [{ detail: "", value: "" }] : normalizedRows.filter((_, itemIndex) => itemIndex !== index))}>Remove</Button>
+          </div>
+        ))}
+      </div>
+      <Button type="button" variant="outline" size="sm" onClick={() => onChange([...normalizedRows, { detail: "", value: "" }])}>Add detail</Button>
+    </div>
+  );
+}
+
 function motionFiledByLabel(code: string | null | undefined) {
   return code === "COMPLAINANT" ? "Complainant" : code === "RESPONDENT" ? "Respondent" : code;
 }
@@ -950,6 +970,44 @@ function ApprovalDecisionEntries({
   );
 }
 
+
+const SUPPORTED_EVENT_EDIT_TYPES = new Set([
+  "CASE_ASSIGNMENT",
+  "CASE_REASSIGNMENT",
+  "CASE_RESOLVED",
+  "CASE_DECISION_APPROVED",
+  "COURT_FILING",
+  "MOTION_RECEIVED",
+  "MOTION_RESOLVED",
+  "MOTION_DECISION_APPROVED",
+  "PETITION_FOR_REVIEW",
+  "CASE_STATUS_UPDATED",
+  "CUSTOM_EVENT",
+]);
+
+const EVENT_EDIT_TITLES: Record<string, string> = {
+  CASE_ASSIGNMENT: "Edit Case Assignment",
+  CASE_REASSIGNMENT: "Edit Case Reassignment",
+  CASE_RESOLVED: "Edit Case Resolved",
+  CASE_DECISION_APPROVED: "Edit Case Decision Approved",
+  COURT_FILING: "Edit Court Filing",
+  MOTION_RECEIVED: "Edit Motion Received",
+  MOTION_RESOLVED: "Edit Motion Resolved",
+  MOTION_DECISION_APPROVED: "Edit Motion Decision Approved",
+  PETITION_FOR_REVIEW: "Edit Petition for Review",
+  CASE_STATUS_UPDATED: "Edit Case Status Updated",
+  CUSTOM_EVENT: "Edit Custom Event",
+};
+
+function editDialogTitle(event: CaseTimelineEventRecord | null) {
+  if (!event) return "Edit activity";
+  return EVENT_EDIT_TITLES[event.event_type_code ?? ""] ?? "Edit Legacy Activity";
+}
+
+function EditNotice() {
+  return <p className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">Use Edit only to correct stored information. To change a legal decision or workflow outcome, void this activity and record the correct event.</p>;
+}
+
 const ADD_EVENT_TYPE_CODES = new Set([
   "CASE_ASSIGNMENT",
   "CASE_REASSIGNMENT",
@@ -1017,7 +1075,7 @@ export function CaseTimeline({
   const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: initialManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalResolutionId: "", motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[], petitionStatus: "", petitionUpdateStep: 1, petitionUpdatePetitionId: "", petitionUpdateCaseStatus: "", petitionSelectedCaseStatusId: "", petitionSelectedCaseStageId: "", petitionDetails: [] as MotionDetailRow[] });
   const [manilaNow, setManilaNow] = useState(() => new Date());
   const [isAddDateTimeDirty, setIsAddDateTimeDirty] = useState(false);
-  const [editForm, setEditForm] = useState({ eventDate: "", title: "", description: "", editReason: "" });
+  const [editForm, setEditForm] = useState({ eventDate: "", eventTime: "", title: "", description: "", editReason: "", prosecutorId: "", staffId: "", assignedProsecutorId: "", filedByCode: "", petitionStatus: "", courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", approvedByProsecutorId: "", motionTitle: "", additionalDetails: [] as MotionDetailRow[] });
   const [voidReason, setVoidReason] = useState("");
   const [voidConfirmed, setVoidConfirmed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -1327,15 +1385,38 @@ export function CaseTimeline({
     }
   };
 
-  const openEditDialog = (event: CaseTimelineEventRecord) => {
+  const openEditDialog = async (event: CaseTimelineEventRecord) => {
     if (event.is_voided) return;
     setActionError(null);
+    if (prosecutors.length === 0) {
+      const result = await getProsecutors(250);
+      if (!result.error) setProsecutors(result.data);
+    }
+    if (staffMembers.length === 0) {
+      const result = await getStaff(250);
+      if (!result.error) setStaffMembers(result.data);
+    }
+    const details = event.details_jsonb && typeof event.details_jsonb === "object" ? event.details_jsonb as Record<string, unknown> : {};
     setEditingEvent(event);
     setEditForm({
-      eventDate: toDateInputValue(event.event_date),
-      title: event.title ?? "",
-      description: event.description ?? "",
+      eventDate: toDateInputValue(stringDetail(details.date_filed) ?? stringDetail(details.date_resolved) ?? stringDetail(details.date_approved) ?? stringDetail(details.status_date) ?? event.event_date),
+      eventTime: stringDetail(details.time_filed) ?? stringDetail(details.time_resolved) ?? stringDetail(details.time_approved) ?? event.event_time ?? "",
+      title: stringDetail(details.motion_title) ?? event.title ?? "",
+      description: stringDetail(details.remarks) ?? event.description ?? "",
       editReason: "",
+      prosecutorId: String(details.prosecutor_id ?? details.assigned_prosecutor_id ?? ""),
+      staffId: String(details.staff_id ?? ""),
+      assignedProsecutorId: String(details.assigned_prosecutor_id ?? details.approved_by_prosecutor_id ?? details.approved_by_id ?? ""),
+      filedByCode: stringDetail(details.filed_by_code) ?? "",
+      petitionStatus: stringDetail(details.petition_status) ?? "",
+      courtName: stringDetail(details.court_name) ?? "",
+      courtBranch: stringDetail(details.court_branch) ?? "",
+      chargeFiled: stringDetail(details.charge_filed) ?? "",
+      informationCount: String(details.information_count ?? ""),
+      criminalCaseNo: stringDetail(details.criminal_case_no) ?? "",
+      approvedByProsecutorId: String(details.approved_by_prosecutor_id ?? details.approved_by_id ?? ""),
+      motionTitle: stringDetail(details.motion_title) ?? event.title ?? "",
+      additionalDetails: Array.isArray(details.details) ? details.details.map((row) => ({ detail: String((row as Record<string, unknown>)?.detail ?? ""), value: String((row as Record<string, unknown>)?.value ?? "") })) : [],
     });
   };
 
@@ -1348,15 +1429,35 @@ export function CaseTimeline({
   };
 
   const handleEditSave = async () => {
-    if (!editingEvent || !editForm.eventDate || !editForm.title.trim() || !editForm.editReason.trim()) return;
+    if (!editingEvent || !editForm.eventDate || !editForm.editReason.trim()) return;
+    const code = editingEvent.event_type_code ?? "LEGACY_EVENT";
+    const isCustomOrLegacy = code === "CUSTOM_EVENT" || !SUPPORTED_EVENT_EDIT_TYPES.has(code);
+    if (isCustomOrLegacy && !editForm.title.trim()) return;
     setIsSaving(true);
     setActionError(null);
     const result = await editCaseEvent({
       caseEventId: editingEvent.case_event_id,
-      eventDate: editForm.eventDate,
-      title: editForm.title,
-      description: editForm.description,
-      detailsJsonb: editingEvent.details_jsonb,
+      eventTypeCode: code,
+      values: {
+        event_date: editForm.eventDate,
+        event_time: editForm.eventTime || null,
+        title: editForm.title,
+        description: editForm.description,
+        remarks: editForm.description,
+        prosecutor_id: editForm.prosecutorId ? Number(editForm.prosecutorId) : null,
+        staff_id: editForm.staffId ? Number(editForm.staffId) : null,
+        assigned_prosecutor_id: editForm.assignedProsecutorId ? Number(editForm.assignedProsecutorId) : null,
+        approved_by_prosecutor_id: editForm.approvedByProsecutorId ? Number(editForm.approvedByProsecutorId) : null,
+        filed_by_code: editForm.filedByCode || null,
+        petition_status: editForm.petitionStatus,
+        court_name: editForm.courtName,
+        court_branch: editForm.courtBranch,
+        charge_filed: editForm.chargeFiled,
+        information_count: editForm.informationCount ? Number(editForm.informationCount) : null,
+        criminal_case_no: editForm.criminalCaseNo,
+        motion_title: editForm.motionTitle,
+        details: editForm.additionalDetails,
+      },
       editReason: editForm.editReason,
     });
     setIsSaving(false);
@@ -1823,21 +1924,46 @@ export function CaseTimeline({
         </DialogContent>
       </Dialog>
       <Dialog open={Boolean(editingEvent)} onOpenChange={(open) => !open && setEditingEvent(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Edit activity</DialogTitle>
-            <DialogDescription>Update this case timeline activity and record an audit reason.</DialogDescription>
+            <DialogTitle>{editDialogTitle(editingEvent)}</DialogTitle>
+            <DialogDescription>Correct stored timeline information without changing the event type, source record, or legal/workflow decision.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
-            <div className="space-y-2"><Label htmlFor="event-date">Event Date</Label><Input id="event-date" type="date" value={editForm.eventDate} onChange={(e) => setEditForm((form) => ({ ...form, eventDate: e.target.value }))} /></div>
-            <div className="space-y-2"><Label htmlFor="event-title">Title</Label><Input id="event-title" value={editForm.title} onChange={(e) => setEditForm((form) => ({ ...form, title: e.target.value }))} /></div>
-            <div className="space-y-2"><Label htmlFor="event-description">Description / Remarks</Label><Textarea id="event-description" value={editForm.description} onChange={(e) => setEditForm((form) => ({ ...form, description: e.target.value }))} /></div>
-            <div className="space-y-2"><Label htmlFor="edit-reason">Reason for Edit</Label><Textarea id="edit-reason" required value={editForm.editReason} onChange={(e) => setEditForm((form) => ({ ...form, editReason: e.target.value }))} /></div>
+            <EditNotice />
+            {(() => {
+              const code = editingEvent?.event_type_code ?? "";
+              const isAssignment = code === "CASE_ASSIGNMENT" || code === "CASE_REASSIGNMENT";
+              const isResolution = code === "CASE_RESOLVED";
+              const isApproval = code === "CASE_DECISION_APPROVED" || code === "MOTION_DECISION_APPROVED";
+              const isCourtFiling = code === "COURT_FILING";
+              const isMotionReceived = code === "MOTION_RECEIVED";
+              const isMotionResolved = code === "MOTION_RESOLVED";
+              const isPetition = code === "PETITION_FOR_REVIEW";
+              const isStatus = code === "CASE_STATUS_UPDATED";
+              const isCustomOrLegacy = code === "CUSTOM_EVENT" || !SUPPORTED_EVENT_EDIT_TYPES.has(code);
+              return <>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2"><Label htmlFor="edit-date">{isStatus ? "Status Date" : isResolution ? "Resolution Date" : isApproval ? "Approval Date" : isCourtFiling || isMotionReceived || isPetition ? "Date Filed" : isMotionResolved ? "Date Resolved" : isAssignment && code === "CASE_REASSIGNMENT" ? "Reassignment Date" : "Event Date"}</Label><Input id="edit-date" type="date" value={editForm.eventDate} onChange={(e) => setEditForm((form) => ({ ...form, eventDate: e.target.value }))} /></div>
+                  {!isStatus ? <div className="space-y-2"><Label htmlFor="edit-time">{isResolution ? "Resolution Time" : isApproval ? "Approval Time" : isCourtFiling || isMotionReceived || isPetition ? "Time Filed" : isMotionResolved ? "Time Resolved" : "Event Time"}</Label><Input id="edit-time" type="time" value={editForm.eventTime} onChange={(e) => setEditForm((form) => ({ ...form, eventTime: e.target.value }))} /></div> : null}
+                </div>
+                {isAssignment || isResolution ? <div className="space-y-2"><Label htmlFor="edit-prosecutor">{code === "CASE_REASSIGNMENT" ? "New Assigned Prosecutor" : "Assigned Prosecutor"}</Label><select id="edit-prosecutor" className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={editForm.prosecutorId} onChange={(e) => setEditForm((form) => ({ ...form, prosecutorId: e.target.value }))}><option value="">Select prosecutor</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.full_name}</option>)}</select></div> : null}
+                {isAssignment ? <div className="space-y-2"><Label htmlFor="edit-staff">Assigned Staff</Label><select id="edit-staff" className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={editForm.staffId} onChange={(e) => setEditForm((form) => ({ ...form, staffId: e.target.value }))}><option value="">No staff</option>{staffMembers.map((staff) => <option key={staff.id} value={staff.id}>{staff.full_name}</option>)}</select></div> : null}
+                {isApproval ? <div className="space-y-2"><Label htmlFor="edit-approved-by">Who Approved</Label><select id="edit-approved-by" className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={editForm.approvedByProsecutorId} onChange={(e) => setEditForm((form) => ({ ...form, approvedByProsecutorId: e.target.value }))}><option value="">Select prosecutor</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.full_name}</option>)}</select></div> : null}
+                {isMotionReceived ? <><div className="space-y-2"><Label htmlFor="edit-motion-title">Motion Title</Label><Input id="edit-motion-title" value={editForm.motionTitle} onChange={(e) => setEditForm((form) => ({ ...form, motionTitle: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="edit-filed-by">Filed By</Label><select id="edit-filed-by" className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={editForm.filedByCode} onChange={(e) => setEditForm((form) => ({ ...form, filedByCode: e.target.value }))}><option value="">Select filer</option><option value="COMPLAINANT">Complainant</option><option value="RESPONDENT">Respondent</option></select></div></> : null}
+                {isPetition ? <><div className="space-y-2"><Label htmlFor="edit-petition-filed-by">Filed By</Label><select id="edit-petition-filed-by" className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={editForm.filedByCode} onChange={(e) => setEditForm((form) => ({ ...form, filedByCode: e.target.value }))}><option value="">Select filer</option><option value="COMPLAINANT">Complainant</option><option value="RESPONDENT">Respondent</option></select></div><div className="space-y-2"><Label htmlFor="edit-petition-status">Petition Status</Label><Input id="edit-petition-status" value={editForm.petitionStatus} onChange={(e) => setEditForm((form) => ({ ...form, petitionStatus: e.target.value }))} /></div></> : null}
+                {isCourtFiling ? <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="edit-court-name">Court</Label><Input id="edit-court-name" value={editForm.courtName} onChange={(e) => setEditForm((form) => ({ ...form, courtName: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="edit-court-branch">Branch</Label><Input id="edit-court-branch" value={editForm.courtBranch} onChange={(e) => setEditForm((form) => ({ ...form, courtBranch: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="edit-info-count">Information Count</Label><Input id="edit-info-count" type="number" min="0" value={editForm.informationCount} onChange={(e) => setEditForm((form) => ({ ...form, informationCount: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="edit-crim-case">Criminal Case No.</Label><Input id="edit-crim-case" value={editForm.criminalCaseNo} onChange={(e) => setEditForm((form) => ({ ...form, criminalCaseNo: e.target.value }))} /></div></div> : null}
+                {isCustomOrLegacy ? <div className="space-y-2"><Label htmlFor="edit-title">{code === "CUSTOM_EVENT" ? "Title" : "Legacy Title"}</Label><Input id="edit-title" value={editForm.title} disabled={code !== "CUSTOM_EVENT"} onChange={(e) => setEditForm((form) => ({ ...form, title: e.target.value }))} /></div> : null}
+                {(isMotionReceived || isPetition || code === "CUSTOM_EVENT") ? <MotionDetailsEditor rows={editForm.additionalDetails} onChange={(rows) => setEditForm((form) => ({ ...form, additionalDetails: rows }))} /> : null}
+                <div className="space-y-2"><Label htmlFor="edit-description">{isCustomOrLegacy ? "Description / Remarks" : "Remarks"}</Label><Textarea id="edit-description" value={editForm.description} onChange={(e) => setEditForm((form) => ({ ...form, description: e.target.value }))} /></div>
+                <div className="space-y-2"><Label htmlFor="edit-reason">Reason for Edit</Label><Textarea id="edit-reason" required value={editForm.editReason} onChange={(e) => setEditForm((form) => ({ ...form, editReason: e.target.value }))} /></div>
+              </>;
+            })()}
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setEditingEvent(null)}>Cancel</Button>
-            <Button type="button" onClick={handleEditSave} disabled={isSaving || !editForm.eventDate || !editForm.title.trim() || !editForm.editReason.trim()}>{isSaving ? "Saving..." : "Save"}</Button>
+            <Button type="button" onClick={handleEditSave} disabled={isSaving || !editForm.eventDate || !editForm.editReason.trim()}>{isSaving ? "Saving..." : "Save Corrections"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

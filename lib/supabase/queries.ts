@@ -2814,10 +2814,8 @@ export async function createCaseEvent(
 
 export interface EditCaseEventInput {
   caseEventId: number;
-  eventDate: string;
-  title: string;
-  description?: string | null;
-  detailsJsonb?: Json | null;
+  eventTypeCode: string;
+  values: Json;
   editReason: string;
 }
 
@@ -2837,12 +2835,10 @@ export async function editCaseEvent(
     }
 
     const supabase = await getSupabaseBrowserClient();
-    const { data, error } = await supabase.rpc("edit_case_event" as never, {
+    const { data, error } = await supabase.rpc("edit_case_event_specific" as never, {
       p_case_event_id: input.caseEventId,
-      p_event_date: input.eventDate,
-      p_title: input.title,
-      p_description: input.description ?? null,
-      p_details_jsonb: input.detailsJsonb ?? null,
+      p_expected_event_type_code: input.eventTypeCode,
+      p_values: input.values ?? {},
       p_edit_reason: input.editReason,
       p_user_id: currentUserQuery.data.id,
     } as never);
