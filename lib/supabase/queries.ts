@@ -1848,6 +1848,28 @@ export async function getCaseParticipantCorrections(
   );
 }
 
+
+export async function getCaseParticipantCorrectionsForCase(
+  caseId: number,
+): Promise<SupabaseQueryResult<CaseParticipantCorrectionRecord[]>> {
+  return runSupabaseQuery(
+    "getCaseParticipantCorrectionsForCase",
+    "v_case_participant_corrections" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return (await supabase
+        .from("v_case_participant_corrections" as never)
+        .select("*" as never)
+        .eq("case_id" as never, caseId)
+        .order("corrected_at" as never, { ascending: false })) as unknown as {
+        data: CaseParticipantCorrectionRecord[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
 export async function getCaseOverviewChangeHistory(
   caseId: number,
 ): Promise<SupabaseQueryResult<CaseOverviewChangeHistoryRecord[]>> {

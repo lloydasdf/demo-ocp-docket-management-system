@@ -56,6 +56,7 @@ import {
   getCaseManagedNotes,
   getCaseManagedViolations,
   getCaseParticipantCorrections,
+  getCaseParticipantCorrectionsForCase,
   getCaseOverviewChangeHistory,
   getCasePlaces,
   getViolations,
@@ -110,6 +111,7 @@ type CaseDetailsState = {
   compact: CaseDetailsPageViewRecord | null;
   details: CaseDetailsPageViewRecord | null;
   participants: CaseParticipantRecord[];
+  participantCorrections: CaseParticipantCorrectionRecord[];
   timeline: CaseTimelineEventRecord[];
   courts: CaseCourtRecord[];
   motions: CaseMotionRecord[];
@@ -767,6 +769,38 @@ function formatJsonPreview(value: unknown) {
   return JSON.stringify(value ?? null, null, 2);
 }
 
+function correctionSnapshot(snapshot: unknown, key: "person" | "organization" | "attributes") {
+  return typeof snapshot === "object" && snapshot && !Array.isArray(snapshot) && key in snapshot ? (snapshot as Record<string, unknown>)[key] : null;
+}
+
+const snapshotFieldLabels: Record<string, string> = {
+  age: "Age", age_text: "Age", birth_date: "Birth date", contact_number: "Contact number", contact_person: "Contact person", display_name: "Display name", email: "Email", first_name: "First name", full_name: "Full name", gender: "Gender", gender_text: "Gender", is_minor_at_case: "Minor at case", is_pwd_at_case: "PWD at case", is_senior_at_case: "Senior at case", last_name: "Last name", middle_name: "Middle name", notes: "Notes", organization_name: "Organization name", person_descriptor: "Descriptor", remarks: "Remarks", source_detail: "Source detail", suffix: "Suffix",
+};
+
+function humanizeSnapshotKey(key: string) {
+  return snapshotFieldLabels[key] ?? key.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatSnapshotValue(value: unknown): React.ReactNode {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  return <pre className="whitespace-pre-wrap text-xs font-normal">{formatJsonPreview(value)}</pre>;
+}
+
+function SnapshotDetails({ snapshot }: { snapshot: unknown }) {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return <SectionEmpty>No previous details captured.</SectionEmpty>;
+  const entries = Object.entries(snapshot as Record<string, unknown>).filter(([, value]) => value !== null && value !== undefined && value !== "");
+  if (entries.length === 0) return <SectionEmpty>No previous details captured.</SectionEmpty>;
+  return <div className="grid gap-3 sm:grid-cols-2">{entries.map(([key, value]) => <DetailItem key={key} label={humanizeSnapshotKey(key)} value={formatSnapshotValue(value)} />)}</div>;
+}
+
+function ParticipantCorrectionHistoryDialog({ corrections, onOpenChange, open, participant }: { corrections: CaseParticipantCorrectionRecord[]; onOpenChange: (open: boolean) => void; open: boolean; participant: CaseParticipantRecord | null }) {
+  const identityKey = participant?.participant_kind === "ORGANIZATION" ? "organization" : "person";
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl"><DialogHeader><DialogTitle>Participant Correction History</DialogTitle><DialogDescription>Previous incorrect details for {participant ? participantName(participant) : "this participant"}.</DialogDescription></DialogHeader><div className="space-y-3">{corrections.length === 0 ? <SectionEmpty>No participant corrections recorded.</SectionEmpty> : corrections.map((entry) => <Card key={entry.id}><CardHeader className="space-y-2 pb-3"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Correction</Badge><span className="text-sm text-muted-foreground">{formatDate(entry.corrected_at)}</span><span className="text-sm text-muted-foreground">by {entry.corrected_by_display ?? (entry.corrected_by_user_id ? `User #${entry.corrected_by_user_id}` : "—")}</span></div><CardDescription>Reason: {entry.reason ?? "—"}</CardDescription></CardHeader><CardContent className="space-y-4"><DetailItem label="Previous incorrect version" value={<SnapshotDetails snapshot={correctionSnapshot(entry.old_snapshot_json, identityKey)} />} /><OptionalDetailItem label="Previous attributes" value={<SnapshotDetails snapshot={correctionSnapshot(entry.old_snapshot_json, "attributes")} />} /></CardContent></Card>)}</div><DialogFooter><Button type="button" onClick={() => onOpenChange(false)}>Close</Button></DialogFooter></DialogContent></Dialog>;
+}
+
 function placeOfCommissionAddressTypeId(refs: OverviewRefs) {
   return String(
     refs.addressTypes.find((type) =>
@@ -1386,6 +1420,7 @@ export default function CaseDetailsPage() {
   const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], stages: [], addressTypes: [] });
   const [activeOverviewEditor, setActiveOverviewEditor] =
     useState<OverviewAction | null>(null);
+  const [correctionParticipantId, setCorrectionParticipantId] = useState<number | null>(null);
   const loadCase = useCallback(async () => {
     if (!Number.isFinite(caseId)) {
       setErrorMessage("Invalid case id.");
@@ -1399,6 +1434,7 @@ export default function CaseDetailsPage() {
     const [
       caseDetailsPage,
       participants,
+      participantCorrections,
       attachments,
       timeline,
       courts,
@@ -1412,6 +1448,7 @@ export default function CaseDetailsPage() {
     ] = await Promise.all([
       getCaseDetailsPageById(caseId),
       getCaseParticipants(caseId),
+      getCaseParticipantCorrectionsForCase(caseId),
       getCaseAttachmentsIndex(caseId),
       getCaseTimelineEvents(caseId),
       getCaseCourtDetails(caseId),
@@ -1435,6 +1472,7 @@ export default function CaseDetailsPage() {
 
     const warnings = [
       participants,
+      participantCorrections,
       attachments,
       timeline,
       courts,
@@ -1456,6 +1494,7 @@ export default function CaseDetailsPage() {
       compact: caseDetailsPage.data,
       details: caseDetailsPage.data,
       participants: participants.data ?? [],
+      participantCorrections: participantCorrections.data ?? [],
       attachments: attachments.data ?? [],
       timeline: timeline.data ?? [],
       courts: courts.data ?? [],
@@ -1486,6 +1525,17 @@ export default function CaseDetailsPage() {
 
     return Array.from(grouped.entries());
   }, [data?.participants]);
+
+  const participantCorrectionsByParticipantId = useMemo(() => {
+    const grouped = new Map<number, CaseParticipantCorrectionRecord[]>();
+    for (const correction of data?.participantCorrections ?? []) {
+      grouped.set(correction.case_participant_id, [...(grouped.get(correction.case_participant_id) ?? []), correction]);
+    }
+    return grouped;
+  }, [data?.participantCorrections]);
+
+  const selectedCorrectionParticipant = data?.participants.find((participant) => participant.id === correctionParticipantId) ?? null;
+  const selectedCorrectionHistory = correctionParticipantId ? (participantCorrectionsByParticipantId.get(correctionParticipantId) ?? []) : [];
 
   const activeSectionEditor =
     activeOverviewEditor && activeOverviewEditor !== "history" && activeOverviewEditor !== "participants"
@@ -1729,6 +1779,7 @@ export default function CaseDetailsPage() {
                 open={activeOverviewEditor === "participants"}
                 participants={data.participants.filter((participant) => !isVoidedPersonParticipant(participant))}
               />
+              <ParticipantCorrectionHistoryDialog corrections={selectedCorrectionHistory} onOpenChange={(open) => setCorrectionParticipantId(open ? correctionParticipantId : null)} open={Boolean(correctionParticipantId)} participant={selectedCorrectionParticipant} />
               <OverviewHistoryDialog
                 caseId={caseId}
                 onOpenChange={(open) =>
@@ -1772,6 +1823,7 @@ export default function CaseDetailsPage() {
                                         {participantName(participant)}
                                       </p>
                                     )}
+                                    {(participantCorrectionsByParticipantId.get(participant.id)?.length ?? 0) > 0 ? <button type="button" className="rounded-full focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2" onClick={() => setCorrectionParticipantId(participant.id)} aria-label={`View correction history for ${participantName(participant)}`}><Badge variant="secondary" className="cursor-pointer">Corrected</Badge></button> : null}
                                     {caseFlagBadges(participant)}
                                   </div>
                                   {participantAliasBadges(participant)}
