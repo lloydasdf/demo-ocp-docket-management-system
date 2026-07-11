@@ -153,7 +153,7 @@ BEGIN
     UPDATE public.case_status_history SET status_date=v_date, remarks=v_remarks WHERE case_event_id=p_case_event_id;
     UPDATE public.case_stage_history SET stage_date=v_date, remarks=v_remarks WHERE case_event_id=p_case_event_id;
     SELECT to_jsonb(msu) INTO v_new_source FROM public.case_manual_status_updates msu WHERE msu.id=v_source_id;
-    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details || jsonb_build_object('status_date',v_date,'time_filed',v_time,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details || jsonb_build_object('status_date',v_date,'event_time',v_time,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
 
   ELSIF v_code = 'CUSTOM_EVENT' THEN
     UPDATE public.case_events SET event_date=v_date,event_time=v_time,title=coalesce(nullif(p_values->>'title',''),title),description=v_remarks,details_jsonb=v_details || jsonb_build_object('custom_details',coalesce(p_values->'details','[]'::jsonb),'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
