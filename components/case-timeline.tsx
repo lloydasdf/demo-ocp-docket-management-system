@@ -238,14 +238,27 @@ function motionWorkflowEventDetails(event: CaseTimelineEventRecord) {
   ];
 }
 
-function motionReceivedAdditionalDetails(event: CaseTimelineEventRecord): MotionDetailRow[] {
-  if (event.event_type_code !== "MOTION_RECEIVED" || !event.details_jsonb || typeof event.details_jsonb !== "object") return [];
-  const value = (event.details_jsonb as Record<string, unknown>).details;
+function normalizeDetailRows(value: unknown): MotionDetailRow[] {
   if (!Array.isArray(value)) return [];
   return value.map((row) => {
     const item = row && typeof row === "object" ? row as Record<string, unknown> : {};
     return { detail: String(item.detail ?? "").trim(), value: String(item.value ?? "").trim() };
   }).filter((row) => row.detail || row.value);
+}
+
+function motionReceivedAdditionalDetails(event: CaseTimelineEventRecord): MotionDetailRow[] {
+  if (event.event_type_code !== "MOTION_RECEIVED" || !event.details_jsonb || typeof event.details_jsonb !== "object") return [];
+  return normalizeDetailRows((event.details_jsonb as Record<string, unknown>).details);
+}
+
+function customEventAdditionalDetails(event: CaseTimelineEventRecord): MotionDetailRow[] {
+  if (event.event_type_code !== "CUSTOM_EVENT" || !event.details_jsonb || typeof event.details_jsonb !== "object") return [];
+  return normalizeDetailRows((event.details_jsonb as Record<string, unknown>).additional_details);
+}
+
+function AdditionalDetailsRows({ rows }: { rows: MotionDetailRow[] }) {
+  if (rows.length === 0) return null;
+  return <div className="rounded-md border bg-background p-3"><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Additional Details</p><div className="space-y-1 text-sm">{rows.map((detail, index) => <p key={index}><span className="font-medium">{detail.detail || "Detail"}:</span> {detail.value || "—"}</p>)}</div></div>;
 }
 
 function isMotionForReconsideration(event: CaseTimelineEventRecord) {
@@ -441,6 +454,20 @@ function caseStatusUpdatedEventDetails(event: CaseTimelineEventRecord) {
   ];
 }
 
+function customEventDetails(event: CaseTimelineEventRecord) {
+  if (event.event_type_code !== "CUSTOM_EVENT") return null;
+  const details = event.details_jsonb && typeof event.details_jsonb === "object" ? event.details_jsonb as Record<string, unknown> : {};
+  const updatesCaseStatus = details.updates_case_status === true || String(details.updates_case_status).toLowerCase() === "true";
+  return [
+    { label: "Event Title", value: stringDetail(details.title) ?? event.title },
+    { label: "Event Date", value: formatDate(stringDetail(details.event_date) ?? event.event_date) },
+    { label: "Event Time", value: formatTime(stringDetail(details.event_time) ?? event.event_time) },
+    { label: "Remarks", value: stringDetail(details.remarks) ?? event.description },
+    { label: "Case Status", value: updatesCaseStatus ? stringDetail(details.selected_case_status_label) ?? event.case_status_label ?? event.status_label ?? stringDetail(details.selected_case_status_code) : null },
+    { label: "Case Stage", value: updatesCaseStatus ? stringDetail(details.selected_case_stage_label) ?? event.case_stage_label ?? stringDetail(details.selected_case_stage_code) : null },
+  ];
+}
+
 function timelineDetailItems(event: CaseTimelineEventRecord, assignment?: CaseAssignmentRecord | null) {
   if (isPetitionForReviewEvent(event)) {
     return [];
@@ -458,6 +485,11 @@ function timelineDetailItems(event: CaseTimelineEventRecord, assignment?: CaseAs
   const caseStatusUpdatedDetails = caseStatusUpdatedEventDetails(event);
   if (caseStatusUpdatedDetails) {
     return caseStatusUpdatedDetails;
+  }
+
+  const customDetails = customEventDetails(event);
+  if (customDetails) {
+    return customDetails;
   }
 
   const resolutionDetails = resolutionEventDetails(event);
@@ -504,7 +536,7 @@ function visibleEventDetails(event: CaseTimelineEventRecord) {
 
   const hiddenKeys = event.event_type_code === "CASE_RECEIVED"
     ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
-    : event.event_type_code === "CASE_RESOLVED" || event.event_type_code === "CASE_DECISION_APPROVED" || event.event_type_code === "COURT_FILING" || event.event_type_code === "MOTION_RECEIVED" || event.event_type_code === "MOTION_RESOLVED" || event.event_type_code === "MOTION_DECISION_APPROVED" || event.event_type_code === "CASE_STATUS_UPDATED"
+    : event.event_type_code === "CASE_RESOLVED" || event.event_type_code === "CASE_DECISION_APPROVED" || event.event_type_code === "COURT_FILING" || event.event_type_code === "MOTION_RECEIVED" || event.event_type_code === "MOTION_RESOLVED" || event.event_type_code === "MOTION_DECISION_APPROVED" || event.event_type_code === "CASE_STATUS_UPDATED" || event.event_type_code === "CUSTOM_EVENT"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
       : eventSourceTable(event) === "case_assignments"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
@@ -1805,7 +1837,8 @@ export function CaseTimeline({
                               </div>
                             ) : null}
                             {courtDetails ? <CourtEventDetails court={courtDetails} /> : null}
-                            {motionReceivedAdditionalDetails(event).length > 0 ? <div className="rounded-md border bg-background p-3"><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Additional Details</p><div className="space-y-1 text-sm">{motionReceivedAdditionalDetails(event).map((detail, index) => <p key={index}><span className="font-medium">{detail.detail || "Detail"}:</span> {detail.value || "—"}</p>)}</div></div> : null}
+                            <AdditionalDetailsRows rows={motionReceivedAdditionalDetails(event)} />
+                            <AdditionalDetailsRows rows={customEventAdditionalDetails(event)} />
                             {motionDetails ? <MotionEventDetails motion={motionDetails} /> : null}
                             {petitionDetails ? (
                               <PetitionForReviewEventDetails petition={petitionDetails} />
