@@ -13,25 +13,26 @@ interface StageBadgeProps {
 
 type BadgeConfig = { bg: string; text: string; label: string };
 
+const statusBadgeStyle = {
+  bg: 'bg-slate-100',
+  text: 'text-slate-900',
+};
+
 const statusConfig: Record<CaseStatus, BadgeConfig> = {
   Pending: {
-    bg: 'bg-[hsl(var(--status-pending))]',
-    text: 'text-gray-900',
+    ...statusBadgeStyle,
     label: 'Pending',
   },
   Filed: {
-    bg: 'bg-[hsl(var(--status-filed))]',
-    text: 'text-white',
+    ...statusBadgeStyle,
     label: 'Filed',
   },
   Dismissed: {
-    bg: 'bg-[hsl(var(--status-dismissed))]',
-    text: 'text-gray-700',
+    ...statusBadgeStyle,
     label: 'Dismissed',
   },
   'Mixed Result': {
-    bg: 'bg-orange-100',
-    text: 'text-orange-900',
+    ...statusBadgeStyle,
     label: 'Mixed Result',
   },
 };
@@ -127,7 +128,7 @@ function normalizeBadgeValue<T extends string>(value: string, knownLabels: Recor
 
 function renderBadge(config: BadgeConfig, size: 'sm' | 'md' | 'lg') {
   return (
-    <Badge className={`${config.bg} ${config.text} ${sizeClasses[size]} font-medium whitespace-nowrap`}>
+    <Badge className={`${config.bg} ${config.text} ${sizeClasses[size]} border border-slate-200 font-medium whitespace-nowrap`}>
       {config.label}
     </Badge>
   );
@@ -138,8 +139,7 @@ export function StatusBadge({ status, size = 'md' }: StatusBadgeProps) {
   const config = statusLabel in statusConfig
     ? statusConfig[statusLabel as CaseStatus]
     : {
-        bg: 'bg-muted',
-        text: 'text-muted-foreground',
+        ...statusBadgeStyle,
         label: statusLabel,
       };
 
