@@ -971,6 +971,11 @@ function ApprovalDecisionEntries({
 }
 
 
+
+// Edit Activity is temporarily disabled pending further refinement of the event-specific edit workflow.
+// Keep the edit code/RPC/forms in place, but do not expose an Edit action from the timeline UI.
+const EDIT_WORKFLOW_TEMPORARILY_DISABLED = true;
+
 const SUPPORTED_EVENT_EDIT_TYPES = new Set([
   "CASE_ASSIGNMENT",
   "CASE_REASSIGNMENT",
@@ -1800,7 +1805,7 @@ export function CaseTimeline({
                             ) : null}
                             {!event.is_voided ? (
                               <div className="flex gap-2 border-t pt-3">
-                                <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button>
+                                {!EDIT_WORKFLOW_TEMPORARILY_DISABLED ? <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button> : null}
                                 <Button type="button" variant="destructive" size="sm" onClick={() => openVoidDialog(event)}>Void</Button>
                               </div>
                             ) : null}
