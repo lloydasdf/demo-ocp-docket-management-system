@@ -421,6 +421,7 @@ export default function CasesPage() {
   const [viewportHeight, setViewportHeight] = useState(640);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -1073,6 +1074,7 @@ export default function CasesPage() {
     const filename = `case-list-${today}.pdf`;
 
     setIsGeneratingPdf(true);
+    setPdfError(null);
 
     try {
       const reportRows: CasesReportRow[] = sortedCases.map((caseDetail) => {
@@ -1110,7 +1112,7 @@ export default function CasesPage() {
       openPdfBlob(pdfBlob, previewWindow, filename);
     } catch (error) {
       previewWindow?.close();
-      alert(error instanceof Error ? `Unable to generate PDF: ${error.message}` : 'Unable to generate PDF.');
+      setPdfError(error instanceof Error ? error.message : 'The PDF could not be generated.');
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -1137,7 +1139,7 @@ export default function CasesPage() {
                   <Printer className="mr-2 size-4" />
                   {isGeneratingPdf ? 'Generating PDF…' : 'Print PDF'}
                 </Button>
-                <Button type="button" variant="outline" onClick={refreshCases} disabled={isLoading || isLoadingAllCases}>
+                <Button type="button" variant="outline" onClick={refreshCases} disabled={isLoading || isLoadingAllCases || isGeneratingPdf}>
                   <RefreshCw className={`mr-2 size-4 ${(isLoading || isLoadingAllCases) ? 'animate-spin' : ''}`} />
                   Refresh
                 </Button>
@@ -1149,6 +1151,13 @@ export default function CasesPage() {
             <Alert variant="destructive" className="shrink-0">
               <AlertTitle>Unable to load live PostgreSQL cases</AlertTitle>
               <AlertDescription>{errorMessage}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          {pdfError ? (
+            <Alert variant="destructive" className="shrink-0">
+              <AlertTitle>Unable to generate PDF</AlertTitle>
+              <AlertDescription>{pdfError}</AlertDescription>
             </Alert>
           ) : null}
 
