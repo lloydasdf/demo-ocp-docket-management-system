@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Sidebar } from '@/components/sidebar';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   AlertDialog,
@@ -72,7 +73,7 @@ function getActionText(action: PendingAction | null) {
 
   return {
     title: 'Confirm user removal',
-    description: `Permanently delete ${action.user.email} from the application database. This does not delete the Supabase Auth account.`,
+    description: `Remove ${action.user.email} from application access? This disables the application user, removes assigned roles, preserves the audit trail, and does not delete the Supabase Auth account.`,
     confirm: 'Remove user',
   };
 }
@@ -85,6 +86,7 @@ export default function UserManagementPage() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [removeConfirmationText, setRemoveConfirmationText] = useState('');
+  const [currentAuthUserId, setCurrentAuthUserId] = useState<string | null>(null);
 
   const actionText = useMemo(() => getActionText(pendingAction), [pendingAction]);
   const isRemoveConfirmationValid = pendingAction?.type !== 'remove' || removeConfirmationText === 'Remove this User';
@@ -106,6 +108,25 @@ export default function UserManagementPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCurrentUser() {
+      const supabase = await getSupabaseBrowserClient();
+      const { data } = await supabase.auth.getUser();
+
+      if (isMounted) {
+        setCurrentAuthUserId(data.user?.id ?? null);
+      }
+    }
+
+    loadCurrentUser();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   async function confirmAction() {
     if (!pendingAction) return;
@@ -177,7 +198,10 @@ export default function UserManagementPage() {
                     <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">Loading users...</TableCell></TableRow>
                   ) : users.length === 0 ? (
                     <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">No users found.</TableCell></TableRow>
-                  ) : users.map((user) => (
+                  ) : users.map((user) => {
+                    const isCurrentUser = currentAuthUserId !== null && user.auth_user_id === currentAuthUserId;
+
+                    return (
                     <TableRow key={user.id}>
                       <TableCell className="font-medium">{user.email}</TableCell>
                       <TableCell>
@@ -201,17 +225,24 @@ export default function UserManagementPage() {
                       </TableCell>
                       <TableCell>{formatDate(user.created_at)}</TableCell>
                       <TableCell className="space-x-2 text-right">
-                        <Button size="sm" variant="outline" onClick={() => setPendingAction({ type: user.is_active ? 'block' : 'unblock', user })} disabled={isSaving}>
-                          <ShieldAlert className="mr-2 h-4 w-4" />
-                          {user.is_active ? 'Block' : 'Unblock'}
-                        </Button>
-                        <Button size="sm" variant="destructive" onClick={() => setPendingAction({ type: 'remove', user })} disabled={isSaving}>
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Remove
-                        </Button>
+                        {isCurrentUser ? (
+                          <span className="text-sm text-muted-foreground">Current user</span>
+                        ) : (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => setPendingAction({ type: user.is_active ? 'block' : 'unblock', user })} disabled={isSaving}>
+                              <ShieldAlert className="mr-2 h-4 w-4" />
+                              {user.is_active ? 'Block' : 'Unblock'}
+                            </Button>
+                            <Button size="sm" variant="destructive" onClick={() => setPendingAction({ type: 'remove', user })} disabled={isSaving}>
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Remove
+                            </Button>
+                          </>
+                        )}
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </CardContent>
