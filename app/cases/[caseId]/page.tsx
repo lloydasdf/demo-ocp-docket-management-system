@@ -4,7 +4,7 @@ import type React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ExternalLink } from "lucide-react";
+import { ChevronDown, ExternalLink, Printer } from "lucide-react";
 
 import { CaseTimeline } from "@/components/case-timeline";
 import { StageBadge, StatusBadge } from "@/components/status-badge";
@@ -77,6 +77,8 @@ import {
   type CasePlaceRecord,
   type CaseViolationManagementRecord,
 } from "@/lib/supabase/queries";
+import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import type { CaseDetailsReport, CaseDetailsReportOptions } from "@/lib/pdf/case-details-report";
 import type { TableRow as SupabaseTableRow } from "@/lib/supabase/types";
 
 
@@ -1454,12 +1456,192 @@ function OverviewHistoryDialog({ caseId, open, onOpenChange }: { caseId: number;
 }
 
 
+function splitViolationSummary(value: string | null | undefined) {
+  return (value ?? "")
+    .split(/\s*(?:\||\r?\n)\s*/u)
+    .map((violation) => violation.trim())
+    .filter(Boolean);
+}
+
+function nullableDisplay(value: string | number | null | undefined) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text && text !== "—" ? text : null;
+}
+
+function buildParticipantAddressLines(participant: CaseParticipantRecord) {
+  return participantAddresses(participant)
+    .map((address) => {
+      const text = formatAddress(address.addresses ?? null);
+      if (!text) return null;
+      const badges = [address.is_primary ? "Primary" : null, address.remarks].filter(Boolean).join(" — ");
+      return badges ? `${text} (${badges})` : text;
+    })
+    .filter((address): address is string => Boolean(address));
+}
+
+function buildParticipantContactLines(participant: CaseParticipantRecord) {
+  const contacts = participant.contact_informations ?? [];
+  if (!Array.isArray(contacts)) return [];
+
+  return contacts
+    .map((contact) => {
+      const value = nullableDisplay(contact.contact_value);
+      if (!value) return null;
+      const label = nullableDisplay(contact.label ?? contact.contact_type);
+      const suffix = [label, contact.is_primary ? "Primary" : null].filter(Boolean).join(" — ");
+      return suffix ? `${value} (${suffix})` : value;
+    })
+    .filter((contact): contact is string => Boolean(contact));
+}
+
+function timelineDateSortValue(date: string | null) {
+  if (!date) return null;
+  const parsed = new Date(date);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+}
+
+function normalizeTimeline(data: CaseDetailsState): CaseDetailsReport["timeline"] {
+  const entries: Array<CaseDetailsReport["timeline"][number] & { index: number; sortDate: number | null }> = [];
+  let index = 0;
+  const add = (entry: CaseDetailsReport["timeline"][number]) => {
+    entries.push({ ...entry, index, sortDate: timelineDateSortValue(entry.date) });
+    index += 1;
+  };
+
+  data.timeline.forEach((event) => {
+    if (event.is_voided) return;
+    add({
+      date: event.event_date,
+      category: event.event_category ?? event.event_type_label ?? "Timeline",
+      title: event.title ?? event.event_type_label ?? "Timeline event",
+      details: [event.description, event.status_label, event.case_stage_label, event.prosecutor_short_name ? `Prosecutor: ${event.prosecutor_short_name}` : null, event.court_name ? `Court: ${event.court_name}` : null]
+        .filter((detail): detail is string => Boolean(nullableDisplay(detail))),
+    });
+  });
+
+  data.courts.forEach((court) => {
+    add({
+      date: court.date_filed_in_court ?? court.actual_filing_date ?? court.created_at ?? null,
+      category: "Court",
+      title: court.courts?.name ?? court.raw_court_text ?? "Court detail",
+      details: [court.court_branch, court.criminal_case_number, court.charge_filed, court.court_status, court.court_remarks]
+        .filter((detail): detail is string => Boolean(nullableDisplay(detail))),
+    });
+  });
+
+  data.motions.forEach((motion) => {
+    if (motion.is_voided) return;
+    add({
+      date: motion.date_filed ?? motion.date_received ?? null,
+      category: "Motion",
+      title: motion.motion_title ?? motion.motion_name ?? "Motion",
+      details: [motion.filed_by_raw ?? motion.filed_by_code, motion.motion_status_raw, motion.date_resolved_raw ?? motion.date_resolved, motion.remarks_raw]
+        .filter((detail): detail is string => Boolean(nullableDisplay(detail))),
+    });
+  });
+
+  data.petitionsForReview.forEach((petition) => {
+    if (petition.is_voided) return;
+    add({
+      date: petition.date_filed ?? petition.date_received ?? null,
+      category: "Petition for Review",
+      title: petition.petition_title ?? "Petition for review",
+      details: [petition.filed_by, petition.handling_prosecutor_text, petition.petition_status, petition.date_resolved_raw ?? petition.date_resolved, petition.remarks]
+        .filter((detail): detail is string => Boolean(nullableDisplay(detail))),
+    });
+  });
+
+  return entries
+    .sort((a, b) => {
+      if (a.sortDate !== null && b.sortDate !== null) return a.sortDate - b.sortDate || a.index - b.index;
+      if (a.sortDate !== null) return -1;
+      if (b.sortDate !== null) return 1;
+      return a.index - b.index;
+    })
+    .map(({ index: _index, sortDate: _sortDate, ...entry }) => entry);
+}
+
+function buildCaseDetailsReport(data: CaseDetailsState, partiesByRole: Array<[string, CaseParticipantRecord[]]>, generatedBy: string): CaseDetailsReport {
+  const details = data.details;
+  const compact = data.compact;
+  if (!details || !compact) throw new Error("Case details are not ready for printing.");
+
+  const docketNumber = compact.docket_display_number ?? displayValue(details.docket_number);
+  const placeLines = caseAddresses(details)
+    .map((address) => [formatCaseAddress(address), address.remarks].filter(Boolean).join("\n"))
+    .filter(Boolean);
+
+  return {
+    docketNumber,
+    generatedBy,
+    generatedAt: new Date(),
+    overview: {
+      violationSummary: nullableDisplay(compact.violations),
+      classification: classificationLabel(details),
+      dateReceived: formatDate(compact.date_received ?? details.date_received),
+      assignedProsecutor: compact.prosecutor_full_name ?? compact.prosecutor_short_name ?? null,
+      currentStatus: details.current_case_status?.display_label ?? details.current_case_status?.code ?? details.current_status?.display_label ?? details.current_status?.code ?? details.current_status_raw ?? null,
+      statusDate: formatDate(details.current_case_status_date ?? details.current_status_date ?? compact.current_case_status_date ?? compact.current_status_date),
+      currentStage: details.current_case_stage?.display_label ?? details.current_case_stage?.code ?? null,
+      placeOfCommission: placeLines.length ? placeLines.join("\n") : null,
+      summaryProcedure: details.is_summary_procedure ?? null,
+      statusApprovedDate: nullableDisplay(details.status_approved_date_raw) ?? formatDate(details.status_approved_date),
+      statusRemarks: withoutAutoStatusStageRemark(details.current_case_status_remarks ?? details.current_status_remarks),
+      stageRemarks: withoutAutoStatusStageRemark(details.current_case_stage_remarks),
+      summary: details.summary_text,
+      summaryRemarks: details.remarks,
+    },
+    violations: splitViolationSummary(compact.violations),
+    parties: partiesByRole.map(([role, participants]) => ({
+      role,
+      participants: participants.map((participant) => ({
+        name: participantName(participant),
+        aliases: participantAliasNames(participant),
+        birthdateAndSex: nullableDisplay(personBirthDateAndSex(participant)),
+        ageAtCase: ageAtCase(participant),
+        flags: caseSpecificFlags(participant),
+        addresses: buildParticipantAddressLines(participant),
+        contacts: buildParticipantContactLines(participant),
+        remarks: participant.remarks,
+        organizationDetails: formatOrganizationDetails(participant.organizations?.details_jsonb),
+      })),
+    })),
+    timeline: normalizeTimeline(data),
+    notes: caseNotes(details).map((note) => ({
+      date: formatDate(note.created_at),
+      text: note.note_text?.trim() ?? "",
+      isPrivate: note.is_private === true,
+    })),
+    attachments: data.attachments.map((attachment) => ({
+      fileName: attachment.file_name ?? "Unnamed file",
+      fileSize: formatFileSize(attachment.file_size_bytes),
+      status: attachment.file_status ?? "—",
+      webViewLink: attachment.web_view_link ?? null,
+    })),
+    unavailableSections: data.warnings,
+  };
+}
+
+function sanitizePdfFilename(value: string) {
+  return value.replace(/[^a-z0-9._-]+/gi, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "case-details";
+}
+
+
 export default function CaseDetailsPage() {
   const params = useParams<{ caseId: string }>();
   const caseId = Number.parseInt(params.caseId, 10);
   const [data, setData] = useState<CaseDetailsState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [isPrintOptionsOpen, setIsPrintOptionsOpen] = useState(false);
+  const [printOptions, setPrintOptions] = useState<CaseDetailsReportOptions>({
+    includeTimeline: true,
+    includeAttachmentIndex: true,
+    includePrivateNotes: false,
+  });
   const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], stages: [], addressTypes: [] });
   const [activeOverviewEditor, setActiveOverviewEditor] =
     useState<OverviewAction | null>(null);
@@ -1580,6 +1762,60 @@ export default function CaseDetailsPage() {
   const selectedCorrectionParticipant = data?.participants.find((participant) => participant.id === correctionParticipantId) ?? null;
   const selectedCorrectionHistory = correctionParticipantId ? (participantCorrectionsByParticipantId.get(correctionParticipantId) ?? []) : [];
 
+
+  async function getAuthenticatedEmail() {
+    try {
+      const supabase = await getSupabaseBrowserClient();
+      const { data: authData } = await supabase.auth.getUser();
+      return authData.user?.email ?? "Authenticated user";
+    } catch {
+      return "Authenticated user";
+    }
+  }
+
+  function openPdfBlob(blob: Blob, previewWindow: Window | null, filename: string) {
+    const pdfUrl = URL.createObjectURL(blob);
+
+    if (previewWindow) {
+      previewWindow.location.href = pdfUrl;
+      setTimeout(() => URL.revokeObjectURL(pdfUrl), 60_000);
+      return;
+    }
+
+    const downloadLink = document.createElement("a");
+    downloadLink.href = pdfUrl;
+    downloadLink.download = filename;
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    downloadLink.remove();
+    setTimeout(() => URL.revokeObjectURL(pdfUrl), 1_000);
+  }
+
+  async function handleGeneratePdf() {
+    if (!data?.details || !data.compact) return;
+
+    const previewWindow = window.open("", "_blank");
+    setIsPrintOptionsOpen(false);
+    setIsGeneratingPdf(true);
+    setPdfError(null);
+
+    try {
+      const [{ generateCaseDetailsReportPdf }, generatedBy] = await Promise.all([
+        import("@/lib/pdf/case-details-report"),
+        getAuthenticatedEmail(),
+      ]);
+      const report = buildCaseDetailsReport(data, partiesByRole, generatedBy);
+      const pdfBlob = await generateCaseDetailsReportPdf(report, printOptions);
+      const filename = `case-details-${sanitizePdfFilename(report.docketNumber)}.pdf`;
+      openPdfBlob(pdfBlob, previewWindow, filename);
+    } catch (error) {
+      previewWindow?.close();
+      setPdfError(error instanceof Error ? error.message : "The PDF could not be generated.");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  }
+
   const activeSectionEditor =
     activeOverviewEditor && activeOverviewEditor !== "history" && activeOverviewEditor !== "participants"
       ? activeOverviewEditor
@@ -1621,6 +1857,13 @@ export default function CaseDetailsPage() {
                 </Alert>
               ) : null}
 
+              {pdfError ? (
+                <Alert variant="destructive">
+                  <AlertTitle>Unable to generate PDF</AlertTitle>
+                  <AlertDescription>{pdfError}</AlertDescription>
+                </Alert>
+              ) : null}
+
               <Card>
                 <CardHeader className="gap-5 p-4 sm:p-6">
                   <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -1647,22 +1890,36 @@ export default function CaseDetailsPage() {
                       ) : null}
                     </div>
 
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="outline" className="shrink-0 self-start">
-                          Actions
-                          <ChevronDown className="ml-2 h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-56">
-                        <DropdownMenuItem onSelect={() => openOverviewEditor("docket_info")}>Edit Docket Info</DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => openOverviewEditor("case_details")}>Edit Case Details</DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => openOverviewEditor("places")}>Manage Places of Commission</DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => openOverviewEditor("violations")}>Manage Violations</DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => openOverviewEditor("notes")}>Manage Notes</DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => openOverviewEditor("history")}>View Overview Change History</DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <div className="flex shrink-0 flex-wrap gap-2 self-start">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setPdfError(null);
+                          setIsPrintOptionsOpen(true);
+                        }}
+                        disabled={isLoading || isGeneratingPdf || !data?.details || !data?.compact}
+                      >
+                        <Printer className="mr-2 h-4 w-4" />
+                        {isGeneratingPdf ? "Generating PDF…" : "Print Details"}
+                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline">
+                            Actions
+                            <ChevronDown className="ml-2 h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-56">
+                          <DropdownMenuItem onSelect={() => openOverviewEditor("docket_info")}>Edit Docket Info</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => openOverviewEditor("case_details")}>Edit Case Details</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => openOverviewEditor("places")}>Manage Places of Commission</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => openOverviewEditor("violations")}>Manage Violations</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => openOverviewEditor("notes")}>Manage Notes</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => openOverviewEditor("history")}>View Overview Change History</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
                   </div>
 
                   <div className="grid gap-6 border-t pt-4 md:grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)] md:gap-x-12">
@@ -1765,6 +2022,61 @@ export default function CaseDetailsPage() {
                   </div>
                 </CardHeader>
               </Card>
+
+              <Dialog open={isPrintOptionsOpen} onOpenChange={setIsPrintOptionsOpen}>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Export Case Details</DialogTitle>
+                    <DialogDescription>
+                      This report may contain personal and confidential case information.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-2">
+                    {data.warnings.length > 0 ? (
+                      <Alert>
+                        <AlertDescription>
+                          Some sections are unavailable and will not be included in this report.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                    <label className="flex items-center gap-3 text-sm">
+                      <Checkbox
+                        checked={printOptions.includeTimeline}
+                        onCheckedChange={(checked) =>
+                          setPrintOptions((current) => ({ ...current, includeTimeline: checked === true }))
+                        }
+                      />
+                      Include timeline
+                    </label>
+                    <label className="flex items-center gap-3 text-sm">
+                      <Checkbox
+                        checked={printOptions.includeAttachmentIndex}
+                        onCheckedChange={(checked) =>
+                          setPrintOptions((current) => ({ ...current, includeAttachmentIndex: checked === true }))
+                        }
+                      />
+                      Include attachment index
+                    </label>
+                    <label className="flex items-center gap-3 text-sm">
+                      <Checkbox
+                        checked={printOptions.includePrivateNotes}
+                        onCheckedChange={(checked) =>
+                          setPrintOptions((current) => ({ ...current, includePrivateNotes: checked === true }))
+                        }
+                      />
+                      Include private notes
+                    </label>
+                  </div>
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setIsPrintOptionsOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button type="button" onClick={handleGeneratePdf} disabled={isGeneratingPdf || !data?.details || !data?.compact}>
+                      {isGeneratingPdf ? "Generating PDF…" : "Generate PDF"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               {activeSectionEditor && activeEditorCopy &&
               activeSectionEditor !== "places" &&
