@@ -1928,11 +1928,6 @@ export function CaseTimeline({
                 </select>
               </div>
             )}
-            {isAddingAssignment ? (
-              <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-100">
-                Assigning this case to a prosecutor will automatically change the case status to Pending.
-              </div>
-            ) : null}
             {isAddingReassignment ? (
               <div className="rounded-md border bg-muted/40 p-3 text-sm">
                 <p className="mb-2 font-medium">Current assignment</p>
