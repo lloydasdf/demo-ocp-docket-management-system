@@ -46,6 +46,8 @@ import {
   getCaseClassifications,
   getCaseDetailsPageById,
   getCaseStatuses,
+  getCaseStages,
+  addCaseStage,
   getDocketTypes,
   getCaseMotions,
   getCaseParticipants,
@@ -581,7 +583,7 @@ const overviewEditorCopy: Record<
   },
   status: {
     title: "Status",
-    description: "Update current status. Creates case events and audit logs.",
+    description: "Manually update Case Status and Case Stage. Creates audit logs and conditional history rows only.",
   },
   places: {
     title: "Places of Commission",
@@ -623,11 +625,11 @@ function getOverviewInitialData(
   if (section === "status") {
     return {
       statusId: details.current_case_status_id ?? details.current_status_id,
+      stageId: details.current_case_stage_id,
       statusDate: details.current_case_status_date ?? details.current_status_date,
       remarks: withoutAutoStatusStageRemark(
         details.current_case_status_remarks ?? details.current_status_remarks,
       ),
-      statusApprovedDateRaw: details.status_approved_date_raw,
     };
   }
 
@@ -637,7 +639,7 @@ function getOverviewInitialData(
 type OverviewAction = CaseOverviewEditSection | "participants" | "history";
 
 type RefOption = { id: number; display_label?: string | null; name?: string | null; prefix?: string | null; code?: string | null; full_name?: string | null; short_name?: string | null };
-type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; addressTypes: RefOption[] };
+type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; stages: RefOption[]; addressTypes: RefOption[] };
 
 type OverviewEditorProps = {
   title: string;
@@ -656,18 +658,24 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
   const [reason, setReason] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isStageDialogOpen, setIsStageDialogOpen] = useState(false);
+  const [stageLabel, setStageLabel] = useState("");
+  const [stageCode, setStageCode] = useState("");
+  const [localStages, setLocalStages] = useState<RefOption[]>(refs.stages);
 
   useEffect(() => {
     if (!open) return;
     setFormData(Object.fromEntries(Object.entries(initialData).map(([key, value]) => [key, typeof value === "boolean" ? value : value == null ? "" : String(value)])));
     setReason("");
     setError(null);
-  }, [initialData, open]);
+    setLocalStages(refs.stages);
+  }, [initialData, open, refs.stages]);
 
   const setValue = (key: string, value: string | boolean) => setFormData((current) => ({ ...current, [key]: value }));
   const optionLabel = (option: RefOption) => option.display_label ?? option.full_name ?? option.name ?? option.short_name ?? option.prefix ?? option.code ?? String(option.id);
 
   async function save() {
+    if (section === "status" && (!String(formData.statusId ?? "").trim() || !String(formData.stageId ?? "").trim() || !String(formData.statusDate ?? "").trim())) { setError("Case Status, Case Stage, and Status Date are required."); return; }
     if (!reason.trim()) { setError("Reason is required."); return; }
     setIsSaving(true);
     setError(null);
@@ -676,6 +684,21 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
     if (result.error) { setError(result.error.message); return; }
     onOpenChange(false);
     await onSaved();
+  }
+
+  async function handleAddStageSave() {
+    if (!stageLabel.trim()) { setError("Display Label is required."); return; }
+    setIsSaving(true);
+    setError(null);
+    const result = await addCaseStage({ displayLabel: stageLabel, code: stageCode });
+    if (result.error) { setIsSaving(false); setError(result.error.message); return; }
+    const stagesResult = await getCaseStages();
+    if (!stagesResult.error) setLocalStages((stagesResult.data ?? []) as RefOption[]);
+    setValue("stageId", String(result.data));
+    setStageLabel("");
+    setStageCode("");
+    setIsStageDialogOpen(false);
+    setIsSaving(false);
   }
 
   const notReady = section === "places" || section === "notes";
@@ -705,10 +728,10 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
                 <FieldTextarea label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} className="sm:col-span-2" />
               </>) : null}
               {section === "status" ? (<>
-                <FieldSelect label="Status" value={String(formData.statusId ?? "")} onChange={(v) => setValue("statusId", v)} options={refs.statuses} optionLabel={optionLabel} />
-                <FieldInput label="Status date" type="date" value={String(formData.statusDate ?? "")} onChange={(v) => setValue("statusDate", v)} />
+                <FieldSelect label="Case Status" value={String(formData.statusId ?? "")} onChange={(v) => setValue("statusId", v)} options={refs.statuses} optionLabel={optionLabel} />
+                <FieldSelect label="Case Stage" value={String(formData.stageId ?? "")} onChange={(v) => { if (v === "__add__") { setStageLabel(""); setStageCode(""); setIsStageDialogOpen(true); return; } setValue("stageId", v); }} options={localStages} optionLabel={optionLabel} extraOption={{ value: "__add__", label: "+ Add Case Stage" }} />
+                <FieldInput label="Status Date" type="date" value={String(formData.statusDate ?? "")} onChange={(v) => setValue("statusDate", v)} className="sm:col-span-2" />
                 <FieldTextarea label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} className="sm:col-span-2" />
-                <FieldInput label="Status approved date/raw" value={String(formData.statusApprovedDateRaw ?? "")} onChange={(v) => setValue("statusApprovedDateRaw", v)} className="sm:col-span-2" />
               </>) : null}
               <FieldTextarea label="Reason for edit" value={reason} onChange={setReason} className="sm:col-span-2" />
             </div>
@@ -719,6 +742,16 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
             {!notReady ? <Button onClick={save} disabled={isSaving}>{isSaving ? "Saving..." : "Save changes"}</Button> : null}
           </DialogFooter>
         </DialogContent>
+        <Dialog open={isStageDialogOpen} onOpenChange={setIsStageDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader><DialogTitle>Add Case Stage</DialogTitle><DialogDescription>Create an active Case Stage option for manual status updates.</DialogDescription></DialogHeader>
+            <div className="space-y-4 py-2">
+              <FieldInput label="Display Label" value={stageLabel} onChange={setStageLabel} />
+              <FieldInput label="Code (optional)" value={stageCode} onChange={(value) => setStageCode(value.toUpperCase().replace(/[^A-Z0-9]+/g, "_"))} />
+            </div>
+            <DialogFooter><Button type="button" variant="outline" onClick={() => setIsStageDialogOpen(false)}>Cancel</Button><Button type="button" onClick={handleAddStageSave} disabled={isSaving || !stageLabel.trim()}>{isSaving ? "Saving..." : "Save Case Stage"}</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
       </Dialog>
   );
 }
@@ -729,8 +762,8 @@ function FieldInput({ label, value, onChange, type = "text", className }: { labe
 function FieldTextarea({ label, value, onChange, className }: { label: string; value: string; onChange: (value: string) => void; className?: string }) {
   return <div className={className}><Label>{label}</Label><Textarea value={value} onChange={(e) => onChange(e.target.value)} /></div>;
 }
-function FieldSelect({ label, value, onChange, options, optionLabel, allowEmpty = false, valueKey = "id" }: { label: string; value: string; onChange: (value: string) => void; options: RefOption[]; optionLabel: (option: RefOption) => string; allowEmpty?: boolean; valueKey?: "id" | "code" }) {
-  return <div><Label>{label}</Label><select className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>{allowEmpty ? <option value="">—</option> : null}{options.map((option) => <option key={option.id} value={valueKey === "code" ? option.code ?? "" : option.id}>{optionLabel(option)}</option>)}</select></div>;
+function FieldSelect({ label, value, onChange, options, optionLabel, allowEmpty = false, valueKey = "id", extraOption }: { label: string; value: string; onChange: (value: string) => void; options: RefOption[]; optionLabel: (option: RefOption) => string; allowEmpty?: boolean; valueKey?: "id" | "code"; extraOption?: { value: string; label: string } }) {
+  return <div><Label>{label}</Label><select className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={value} onChange={(e) => onChange(e.target.value)}>{allowEmpty ? <option value="">—</option> : null}{options.map((option) => <option key={option.id} value={valueKey === "code" ? option.code ?? "" : option.id}>{optionLabel(option)}</option>)}{extraOption ? <option value={extraOption.value}>{extraOption.label}</option> : null}</select></div>;
 }
 
 function formatJsonPreview(value: unknown) {
@@ -1353,7 +1386,7 @@ export default function CaseDetailsPage() {
   const [data, setData] = useState<CaseDetailsState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], addressTypes: [] });
+  const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], stages: [], addressTypes: [] });
   const [activeOverviewEditor, setActiveOverviewEditor] =
     useState<OverviewAction | null>(null);
   const loadCase = useCallback(async () => {
@@ -1377,6 +1410,7 @@ export default function CaseDetailsPage() {
       docketTypes,
       classifications,
       statuses,
+      stages,
       addressTypes,
     ] = await Promise.all([
       getCaseDetailsPageById(caseId),
@@ -1389,6 +1423,7 @@ export default function CaseDetailsPage() {
       getDocketTypes(),
       getCaseClassifications(),
       getCaseStatuses(),
+      getCaseStages(),
       getAddressTypes(),
     ]);
 
@@ -1415,7 +1450,8 @@ export default function CaseDetailsPage() {
     setRefs({
       docketTypes: (docketTypes.data ?? []) as RefOption[],
       classifications: (classifications.data ?? []) as RefOption[],
-      statuses: (statuses.data ?? []) as RefOption[],
+      statuses: ((statuses.data ?? []) as RefOption[]).filter((status) => ["PENDING", "FILED", "DISMISSED", "MIXED_RESULT"].includes(String(status.code))),
+      stages: (stages.data ?? []) as RefOption[],
       addressTypes: (addressTypes.data ?? []) as RefOption[],
     });
 

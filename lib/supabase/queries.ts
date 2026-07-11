@@ -409,6 +409,25 @@ export async function getCaseStages(): Promise<SupabaseQueryResult<CaseStageRefe
   }, []);
 }
 
+export async function addCaseStage(input: { displayLabel: string; code?: string | null }): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table: "case_stages" as RelationName, operation: "addCaseStage" });
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "addCaseStage", "users"));
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("add_case_stage" as never, {
+      p_display_label: input.displayLabel.trim(),
+      p_code: input.code?.trim() || null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "addCaseStage", "case_stages" as RelationName));
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "addCaseStage", "case_stages" as RelationName));
+  }
+}
+
 export async function getCases(limit?: number): Promise<SupabaseQueryResult<TableRow<"cases">[]>> {
   const result = await getDocketShellDisplay({ limit: normalizeLimit(limit, 50, 250) });
   return result as unknown as SupabaseQueryResult<TableRow<"cases">[]>;
