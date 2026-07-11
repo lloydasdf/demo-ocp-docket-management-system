@@ -161,25 +161,6 @@ BEGIN
 END; $$;
 GRANT EXECUTE ON FUNCTION public.record_petition_for_review_update(bigint,bigint,text,date,text,jsonb,boolean,bigint,bigint,bigint) TO authenticated;
 
-CREATE OR REPLACE FUNCTION public.void_petition_for_review_update(p_update_id bigint,p_void_reason text,p_voided_by_user_id bigint DEFAULT NULL) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
-DECLARE u public.case_petition_for_review_updates%ROWTYPE; prev public.case_petition_for_review_updates%ROWTYPE; p public.case_petitions_for_review%ROWTYPE; v_status_id bigint; v_stage_id bigint; v_old jsonb; v_new jsonb;
-BEGIN
- IF nullif(trim(p_void_reason),'') IS NULL THEN RAISE EXCEPTION 'Void reason is required'; END IF;
- SELECT * INTO u FROM public.case_petition_for_review_updates WHERE id=p_update_id AND is_voided=false; IF u.id IS NULL THEN RAISE EXCEPTION 'Active Petition for Review Update not found'; END IF;
- IF EXISTS(SELECT 1 FROM public.case_petition_for_review_updates x WHERE x.petition_for_review_id=u.petition_for_review_id AND x.is_voided=false AND (x.status_date,x.id)>(u.status_date,u.id)) THEN RAISE EXCEPTION 'Only the latest active Petition for Review Update can be voided.'; END IF;
- SELECT * INTO p FROM public.case_petitions_for_review WHERE id=u.petition_for_review_id;
- SELECT to_jsonb(cpd) INTO v_old FROM public.case_private_details cpd WHERE case_id=u.case_id;
- UPDATE public.case_petition_for_review_updates SET is_voided=true, voided_at=now(), voided_by_user_id=p_voided_by_user_id, void_reason=p_void_reason, updated_at=now() WHERE id=u.id;
- SELECT * INTO prev FROM public.case_petition_for_review_updates WHERE petition_for_review_id=u.petition_for_review_id AND is_voided=false ORDER BY status_date DESC, id DESC LIMIT 1;
- IF prev.id IS NOT NULL THEN UPDATE public.case_petitions_for_review SET petition_status=prev.petition_status,status_date=prev.status_date,remarks=prev.remarks,additional_details_jsonb=prev.additional_details_jsonb,updated_at=now(),updated_by_user_id=p_voided_by_user_id WHERE id=p.id; IF prev.updates_case_status THEN v_status_id:=prev.selected_case_status_id; v_stage_id:=prev.selected_case_stage_id; END IF; ELSE UPDATE public.case_petitions_for_review SET petition_status=coalesce(p.petition_status,'Filed'),status_date=coalesce(p.date_filed,p.date_received),remarks=p.remarks,additional_details_jsonb=p.additional_details_jsonb,updated_at=now(),updated_by_user_id=p_voided_by_user_id WHERE id=p.id; END IF;
- IF v_status_id IS NULL THEN SELECT id INTO v_status_id FROM public.case_statuses WHERE code='PENDING' AND is_active IS TRUE; SELECT id INTO v_stage_id FROM public.case_stages WHERE code='PENDING_PETREV' AND is_active IS TRUE; END IF;
- UPDATE public.case_private_details SET current_status_id=v_status_id,current_status_date=CURRENT_DATE,current_case_status_id=v_status_id,current_case_status_date=CURRENT_DATE,current_case_stage_id=v_stage_id,current_case_stage_date=CURRENT_DATE,updated_at=now() WHERE case_id=u.case_id;
- PERFORM public.update_petition_event_details(u.petition_for_review_id,p_voided_by_user_id);
- SELECT to_jsonb(cpd) INTO v_new FROM public.case_private_details cpd WHERE case_id=u.case_id;
- INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES(p_voided_by_user_id,'case_petition_for_review_updates',u.id,'VOID_PETITION_FOR_REVIEW_UPDATE',v_old,v_new,u.case_id,'Petition for Review update voided.',jsonb_build_object('petition_for_review_id',u.petition_for_review_id,'reason',p_void_reason,'previous_update_id',prev.id));
-END; $$;
-GRANT EXECUTE ON FUNCTION public.void_petition_for_review_update(bigint,text,bigint) TO authenticated;
-
 DROP VIEW IF EXISTS public.v_case_petitions_for_review_detail;
 CREATE VIEW public.v_case_petitions_for_review_detail AS
 SELECT p.id,p.case_id,p.case_event_id,p.petition_title,p.handling_prosecutor_text,p.date_received,p.date_received_raw,p.filed_by,p.filed_by_code,p.date_filed,p.time_filed,p.petition_status,p.status_date,p.date_resolved,p.date_resolved_raw,p.date_approved,p.date_approved_raw,p.remarks,p.additional_details_jsonb,p.assigned_prosecutor_id,coalesce(pr.short_name,pr.full_name,p.handling_prosecutor_text) AS assigned_prosecutor_name,p.is_voided
@@ -520,6 +501,6 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.void_case_event(bigint, text, bigint) TO authenticated;
 
--- Verification: record -> PENDING/PENDING_PETREV; filed_by check rejects invalid values; details order is preserved; updates insert no case_events row; only latest update can be voided; audit logs are written; unrelated workflows are not changed by the dedicated update RPC.
+-- Verification: record -> PENDING/PENDING_PETREV; filed_by check rejects invalid values; details order is preserved; updates insert no case_events row; audit logs are written; unrelated workflows are not changed by the dedicated update RPC.
 
 COMMIT;

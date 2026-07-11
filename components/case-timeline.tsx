@@ -87,7 +87,6 @@ export type CaseTimelineProps = {
   motions?: CaseMotionRecord[];
   petitionsForReview?: CasePetitionForReviewRecord[];
   onChanged?: () => void | Promise<void>;
-  onAssignReassign?: () => void;
   onUpdateStatus?: () => void;
 };
 
@@ -967,7 +966,6 @@ export function CaseTimeline({
   courts = [],
   events,
   motions = [],
-  onAssignReassign,
   onChanged,
   onUpdateStatus,
   petitionsForReview = [],
@@ -1618,7 +1616,6 @@ export function CaseTimeline({
         )}
         <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
           <Button type="button" variant="outline" onClick={onUpdateStatus}>Update Status</Button>
-          <Button type="button" variant="outline" onClick={onAssignReassign}>Assign / Reassign</Button>
           <Button type="button" onClick={openAddDialog}>Add Event</Button>
         </div>
       </CardContent>

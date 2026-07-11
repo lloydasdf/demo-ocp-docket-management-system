@@ -57,8 +57,6 @@ import {
   getCaseOverviewChangeHistory,
   getCasePlaces,
   getViolations,
-  getProsecutors,
-  getStaff,
   manageCaseNotes,
   manageCaseParticipants,
   manageCasePlaces,
@@ -585,10 +583,6 @@ const overviewEditorCopy: Record<
     title: "Status",
     description: "Update current status. Creates case events and audit logs.",
   },
-  assignment: {
-    title: "Assignment",
-    description: "Assign or reassign the case. Creates case events and audit logs.",
-  },
   places: {
     title: "Places of Commission",
     description: "Placeholder for the Places correction slice. Will use RPC and audit logs only.",
@@ -637,23 +631,13 @@ function getOverviewInitialData(
     };
   }
 
-  if (section === "assignment") {
-    return {
-      assignmentMode: "reassign",
-      prosecutorId: details.current_prosecutor_id,
-      staffId: details.current_staff_id,
-      assignedAt: details.current_assigned_at,
-      remarks: "",
-    };
-  }
-
   return {};
 }
 
 type OverviewAction = CaseOverviewEditSection | "participants" | "history";
 
 type RefOption = { id: number; display_label?: string | null; name?: string | null; prefix?: string | null; code?: string | null; full_name?: string | null; short_name?: string | null };
-type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; prosecutors: RefOption[]; staff: RefOption[]; addressTypes: RefOption[] };
+type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; addressTypes: RefOption[] };
 
 type OverviewEditorProps = {
   title: string;
@@ -725,13 +709,6 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
                 <FieldInput label="Status date" type="date" value={String(formData.statusDate ?? "")} onChange={(v) => setValue("statusDate", v)} />
                 <FieldTextarea label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} className="sm:col-span-2" />
                 <FieldInput label="Status approved date/raw" value={String(formData.statusApprovedDateRaw ?? "")} onChange={(v) => setValue("statusApprovedDateRaw", v)} className="sm:col-span-2" />
-              </>) : null}
-              {section === "assignment" ? (<>
-                <FieldSelect label="Assignment mode" value={String(formData.assignmentMode ?? "reassign")} onChange={(v) => setValue("assignmentMode", v)} options={[{ id: 1, display_label: "Reassign case", code: "reassign" }, { id: 2, display_label: "Void current assignment and assign replacement", code: "void_replace" }]} optionLabel={(option) => option.display_label ?? String(option.id)} valueKey="code" />
-                <FieldSelect label="Prosecutor" value={String(formData.prosecutorId ?? "")} onChange={(v) => setValue("prosecutorId", v)} options={refs.prosecutors} optionLabel={optionLabel} />
-                <FieldSelect label="Staff" value={String(formData.staffId ?? "")} onChange={(v) => setValue("staffId", v)} options={refs.staff} optionLabel={optionLabel} allowEmpty />
-                <FieldInput label="Assigned at" type="date" value={String(formData.assignedAt ?? "").slice(0,10)} onChange={(v) => setValue("assignedAt", v)} />
-                <FieldTextarea label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} className="sm:col-span-2" />
               </>) : null}
               <FieldTextarea label="Reason for edit" value={reason} onChange={setReason} className="sm:col-span-2" />
             </div>
@@ -1376,7 +1353,7 @@ export default function CaseDetailsPage() {
   const [data, setData] = useState<CaseDetailsState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], prosecutors: [], staff: [], addressTypes: [] });
+  const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], addressTypes: [] });
   const [activeOverviewEditor, setActiveOverviewEditor] =
     useState<OverviewAction | null>(null);
   const loadCase = useCallback(async () => {
@@ -1400,8 +1377,6 @@ export default function CaseDetailsPage() {
       docketTypes,
       classifications,
       statuses,
-      prosecutors,
-      staff,
       addressTypes,
     ] = await Promise.all([
       getCaseDetailsPageById(caseId),
@@ -1414,8 +1389,6 @@ export default function CaseDetailsPage() {
       getDocketTypes(),
       getCaseClassifications(),
       getCaseStatuses(),
-      getProsecutors(),
-      getStaff(),
       getAddressTypes(),
     ]);
 
@@ -1443,8 +1416,6 @@ export default function CaseDetailsPage() {
       docketTypes: (docketTypes.data ?? []) as RefOption[],
       classifications: (classifications.data ?? []) as RefOption[],
       statuses: (statuses.data ?? []) as RefOption[],
-      prosecutors: (prosecutors.data ?? []) as RefOption[],
-      staff: (staff.data ?? []) as RefOption[],
       addressTypes: (addressTypes.data ?? []) as RefOption[],
     });
 
@@ -1823,7 +1794,6 @@ export default function CaseDetailsPage() {
                   courts={data.courts}
                   events={data.timeline}
                   motions={data.motions}
-                  onAssignReassign={() => openOverviewEditor("assignment")}
                   onChanged={loadCase}
                   onUpdateStatus={() => openOverviewEditor("status")}
                   petitionsForReview={data.petitionsForReview}

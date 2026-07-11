@@ -1419,7 +1419,6 @@ export type CaseOverviewEditSection =
   | "docket_info"
   | "case_details"
   | "status"
-  | "assignment"
   | "places"
   | "notes"
   | "violations";
