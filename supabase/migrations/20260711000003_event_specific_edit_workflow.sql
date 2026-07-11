@@ -25,6 +25,7 @@ DECLARE
   v_prosecutor bigint;
   v_staff bigint;
   v_latest_assignment_id bigint;
+  v_assigned_name text;
   v_recompute boolean := false;
 BEGIN
   IF nullif(btrim(coalesce(p_edit_reason,'')), '') IS NULL THEN
@@ -72,27 +73,37 @@ BEGIN
     IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active motion source record cannot be resolved'; END IF;
     IF upper(coalesce(p_values->>'filed_by_code','')) NOT IN ('COMPLAINANT','RESPONDENT') THEN RAISE EXCEPTION 'Filed By must be COMPLAINANT or RESPONDENT'; END IF;
     v_title := nullif(btrim(coalesce(p_values->>'motion_title','')), ''); IF v_title IS NULL THEN RAISE EXCEPTION 'Motion Title is required'; END IF;
-    UPDATE public.case_motions SET motion_name=v_title,motion_title=v_title,filed_by=CASE upper(p_values->>'filed_by_code') WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,filed_by_code=upper(p_values->>'filed_by_code'),date_received=v_date,date_filed=v_date,time_filed=v_time,details_jsonb=coalesce(p_values->'details','[]'::jsonb),remarks=v_remarks,updated_by_user_id=p_user_id,updated_at=now() WHERE id=v_source_id;
+    v_prosecutor := nullif(p_values->>'assigned_prosecutor_id','')::bigint;
+    IF v_prosecutor IS NOT NULL THEN
+      SELECT coalesce(short_name, full_name) INTO v_assigned_name FROM public.prosecutors WHERE id=v_prosecutor AND coalesce(is_active,true) IS TRUE;
+      IF v_assigned_name IS NULL THEN RAISE EXCEPTION 'Assigned Prosecutor must be active'; END IF;
+    END IF;
+    UPDATE public.case_motions SET motion_name=v_title,motion_title=v_title,filed_by=CASE upper(p_values->>'filed_by_code') WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,filed_by_code=upper(p_values->>'filed_by_code'),assigned_prosecutor_id=v_prosecutor,date_received=v_date,date_filed=v_date,time_filed=v_time,details_jsonb=coalesce(p_values->'details','[]'::jsonb),remarks=v_remarks,updated_by_user_id=p_user_id,updated_at=now() WHERE id=v_source_id;
     SELECT to_jsonb(cm) INTO v_new_source FROM public.case_motions cm WHERE cm.id=v_source_id;
-    v_details := v_details || jsonb_build_object('motion_title',v_title,'filed_by_code',upper(p_values->>'filed_by_code'),'filed_by_label',CASE upper(p_values->>'filed_by_code') WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,'date_filed',v_date,'time_filed',v_time,'details',coalesce(p_values->'details','[]'::jsonb),'remarks',v_remarks);
-    UPDATE public.case_events SET event_date=v_date,event_time=v_time,title='Motion Received',description=v_remarks,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+    v_details := v_details || jsonb_build_object('motion_title',v_title,'filed_by_code',upper(p_values->>'filed_by_code'),'filed_by_label',CASE upper(p_values->>'filed_by_code') WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,'assigned_prosecutor_id',v_prosecutor,'assigned_prosecutor_name',v_assigned_name,'date_filed',v_date,'time_filed',v_time,'details',coalesce(p_values->'details','[]'::jsonb),'remarks',v_remarks);
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,title='Motion Received',description=v_remarks,prosecutor_id=v_prosecutor,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
 
   ELSIF v_code = 'COURT_FILING' THEN
     SELECT to_jsonb(cf) INTO v_old_source FROM public.case_court_filings cf WHERE cf.id=v_source_id AND cf.case_event_id=p_case_event_id AND cf.is_voided=false FOR UPDATE;
     IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active court filing source record cannot be resolved'; END IF;
-    UPDATE public.case_court_filings SET court_name=coalesce(nullif(p_values->>'court_name',''),court_name), court_branch=nullif(p_values->>'court_branch',''), date_filed=v_date, time_filed=v_time, information_count=nullif(p_values->>'information_count','')::integer, criminal_case_no=nullif(p_values->>'criminal_case_no',''), remarks=v_remarks, updated_by_user_id=p_user_id, updated_at=now() WHERE id=v_source_id;
+    UPDATE public.case_court_filings SET court_name=coalesce(nullif(p_values->>'court_name',''),court_name), court_branch=nullif(p_values->>'court_branch',''), date_filed=v_date, time_filed=v_time, information_count=nullif(p_values->>'information_count','')::integer, remarks=v_remarks, updated_by_user_id=p_user_id, updated_at=now() WHERE id=v_source_id;
     SELECT to_jsonb(cf) INTO v_new_source FROM public.case_court_filings cf WHERE cf.id=v_source_id;
-    v_details := v_details || jsonb_build_object('court_name',p_values->>'court_name','court_branch',p_values->>'court_branch','date_filed',v_date,'time_filed',v_time,'information_count',nullif(p_values->>'information_count','')::integer,'criminal_case_no',p_values->>'criminal_case_no','remarks',v_remarks);
+    v_details := v_details || jsonb_build_object('court_name',p_values->>'court_name','court_branch',p_values->>'court_branch','date_filed',v_date,'time_filed',v_time,'information_count',nullif(p_values->>'information_count','')::integer,'remarks',v_remarks);
     UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
 
   ELSIF v_code = 'PETITION_FOR_REVIEW' THEN
     SELECT to_jsonb(p) INTO v_old_source FROM public.case_petitions_for_review p WHERE p.id=v_source_id AND p.case_event_id=p_case_event_id FOR UPDATE;
     IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active petition source record cannot be resolved'; END IF;
     IF upper(coalesce(p_values->>'filed_by_code','')) NOT IN ('COMPLAINANT','RESPONDENT') THEN RAISE EXCEPTION 'Filed By must be COMPLAINANT or RESPONDENT'; END IF;
-    UPDATE public.case_petitions_for_review SET filed_by=CASE upper(p_values->>'filed_by_code') WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,date_received=v_date,petition_status=nullif(p_values->>'petition_status',''),remarks=v_remarks,updated_by_user_id=p_user_id,updated_at=now() WHERE id=v_source_id;
+    v_prosecutor := nullif(p_values->>'assigned_prosecutor_id','')::bigint;
+    IF v_prosecutor IS NOT NULL THEN
+      SELECT coalesce(short_name, full_name) INTO v_assigned_name FROM public.prosecutors WHERE id=v_prosecutor AND coalesce(is_active,true) IS TRUE;
+      IF v_assigned_name IS NULL THEN RAISE EXCEPTION 'Assigned Prosecutor must be active'; END IF;
+    END IF;
+    UPDATE public.case_petitions_for_review SET filed_by=CASE upper(p_values->>'filed_by_code') WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,filed_by_code=upper(p_values->>'filed_by_code'),date_received=v_date,date_filed=v_date,time_filed=v_time,petition_status=nullif(p_values->>'petition_status',''),status_date=v_date,additional_details_jsonb=coalesce(p_values->'details','[]'::jsonb),assigned_prosecutor_id=v_prosecutor,handling_prosecutor_text=v_assigned_name,remarks=v_remarks,updated_by_user_id=p_user_id,updated_at=now() WHERE id=v_source_id;
     SELECT to_jsonb(p) INTO v_new_source FROM public.case_petitions_for_review p WHERE p.id=v_source_id;
-    v_details := v_details || jsonb_build_object('filed_by_code',upper(p_values->>'filed_by_code'),'date_filed',v_date,'time_filed',v_time,'petition_status',p_values->>'petition_status','details',coalesce(p_values->'details','[]'::jsonb),'remarks',v_remarks);
-    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+    v_details := v_details || jsonb_build_object('filed_by_code',upper(p_values->>'filed_by_code'),'filed_by_label',CASE upper(p_values->>'filed_by_code') WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,'date_filed',v_date,'time_filed',v_time,'petition_status',p_values->>'petition_status','status_date',v_date,'additional_details',coalesce(p_values->'details','[]'::jsonb),'assigned_prosecutor_id',v_prosecutor,'assigned_prosecutor_name',v_assigned_name,'remarks',v_remarks);
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,prosecutor_id=v_prosecutor,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
 
   ELSIF v_code = 'CASE_RESOLVED' THEN
     SELECT to_jsonb(cr) INTO v_old_source FROM public.case_resolutions cr WHERE cr.id=v_source_id AND cr.case_event_id=p_case_event_id AND cr.is_voided=false FOR UPDATE;
@@ -114,6 +125,10 @@ BEGIN
   ELSIF v_code = 'MOTION_RESOLVED' THEN
     SELECT to_jsonb(cmr) INTO v_old_source FROM public.case_motion_resolutions cmr WHERE cmr.id=v_source_id AND cmr.case_event_id=p_case_event_id AND cmr.is_voided=false FOR UPDATE;
     IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active motion resolution source record cannot be resolved'; END IF;
+    IF EXISTS (SELECT 1 FROM public.case_motion_resolution_approvals a WHERE a.case_motion_resolution_id=v_source_id AND a.is_voided=false)
+       AND (v_date IS DISTINCT FROM (v_old_source->>'date_resolved')::date OR v_time IS DISTINCT FROM nullif(v_old_source->>'time_resolved','')::time) THEN
+      RAISE EXCEPTION 'This Motion Resolution has an active Motion Decision Approval. Only remarks can be corrected until the approval is voided.';
+    END IF;
     UPDATE public.case_motion_resolutions SET date_resolved=v_date,time_resolved=v_time,remarks=v_remarks,updated_by_user_id=p_user_id,updated_at=now() WHERE id=v_source_id;
     SELECT to_jsonb(cmr) INTO v_new_source FROM public.case_motion_resolutions cmr WHERE cmr.id=v_source_id;
     UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details || jsonb_build_object('date_resolved',v_date,'time_resolved',v_time,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
@@ -127,12 +142,15 @@ BEGIN
     UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details || jsonb_build_object('approved_by_prosecutor_id',nullif(p_values->>'approved_by_prosecutor_id','')::bigint,'date_approved',v_date,'time_approved',v_time,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
 
   ELSIF v_code = 'CASE_STATUS_UPDATED' THEN
-    SELECT to_jsonb(csh) INTO v_old_source FROM public.case_status_history csh WHERE csh.id=v_source_id AND csh.case_event_id=p_case_event_id FOR UPDATE;
-    IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active status history source record cannot be resolved'; END IF;
-    v_recompute := v_date IS DISTINCT FROM coalesce((v_old_source->>'status_date')::date, v_event.event_date);
-    UPDATE public.case_status_history SET status_date=v_date, remarks=v_remarks WHERE id=v_source_id;
-    SELECT to_jsonb(csh) INTO v_new_source FROM public.case_status_history csh WHERE csh.id=v_source_id;
-    UPDATE public.case_events SET event_date=v_date,description=v_remarks,details_jsonb=v_details || jsonb_build_object('status_date',v_date,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+    IF v_source_table IS DISTINCT FROM 'case_manual_status_updates' OR v_source_id IS NULL THEN RAISE EXCEPTION 'Manual status update source record cannot be resolved'; END IF;
+    SELECT to_jsonb(msu) INTO v_old_source FROM public.case_manual_status_updates msu WHERE msu.id=v_source_id AND msu.case_event_id=p_case_event_id AND msu.is_voided=false FOR UPDATE;
+    IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active manual status update source record cannot be resolved'; END IF;
+    v_recompute := v_date IS DISTINCT FROM (v_old_source->>'status_date')::date OR v_time IS DISTINCT FROM v_event.event_time;
+    UPDATE public.case_manual_status_updates SET status_date=v_date, remarks=v_remarks, updated_at=now() WHERE id=v_source_id;
+    UPDATE public.case_status_history SET status_date=v_date, remarks=v_remarks WHERE case_event_id=p_case_event_id;
+    UPDATE public.case_stage_history SET stage_date=v_date, remarks=v_remarks WHERE case_event_id=p_case_event_id;
+    SELECT to_jsonb(msu) INTO v_new_source FROM public.case_manual_status_updates msu WHERE msu.id=v_source_id;
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details || jsonb_build_object('status_date',v_date,'time_filed',v_time,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
 
   ELSIF v_code = 'CUSTOM_EVENT' THEN
     UPDATE public.case_events SET event_date=v_date,event_time=v_time,title=coalesce(nullif(p_values->>'title',''),title),description=v_remarks,details_jsonb=v_details || jsonb_build_object('custom_details',coalesce(p_values->'details','[]'::jsonb),'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
