@@ -66,6 +66,7 @@ export function CreatableLookupSelect<TOption extends LookupOption>({
     setIsSaving(false);
 
     if (result.error) {
+      if (result.id) onValueChange(String(result.id));
       setError(result.error);
       return;
     }

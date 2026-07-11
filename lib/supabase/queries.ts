@@ -2477,6 +2477,14 @@ export async function getCourts(limit = 500): Promise<SupabaseQueryResult<CourtR
   }, []);
 }
 
+
+export async function addCourt(input: { name: string; code?: string | null; courtType?: string | null }): Promise<SupabaseQueryResult<number>> {
+  return addLookupViaRpc("addCourt", "courts", "add_court", input.name, {
+    p_code: input.code?.trim() || null,
+    p_court_type: input.courtType?.trim() || null,
+  });
+}
+
 export type CourtFilingDecisionRecord = {
   id: number;
   approval_id: number;
