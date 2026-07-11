@@ -32,12 +32,15 @@ BEGIN
     RAISE EXCEPTION 'Reason for Edit is required';
   END IF;
 
-  SELECT ce.*, cet.code INTO v_event, v_code
+  SELECT ce.* INTO v_event
   FROM public.case_events ce
-  JOIN public.case_event_types cet ON cet.id = ce.event_type_id
   WHERE ce.id = p_case_event_id AND ce.is_voided = false
   FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Active timeline event % not found', p_case_event_id; END IF;
+
+  SELECT cet.code INTO v_code
+  FROM public.case_event_types cet
+  WHERE cet.id = v_event.event_type_id;
   IF v_code IS DISTINCT FROM p_expected_event_type_code THEN RAISE EXCEPTION 'This activity is %, not %', v_code, p_expected_event_type_code; END IF;
 
   v_source_table := v_event.source_table;
