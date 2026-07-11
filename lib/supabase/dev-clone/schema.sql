@@ -2273,24 +2273,11 @@ DECLARE
   v_new jsonb;
   v_event_type_id bigint;
   v_event_id bigint;
-  v_assignment_id bigint;
   v_status_history_id bigint;
-  v_old_assignment_id bigint;
-  v_old_prosecutor_id bigint;
-  v_old_case_event_id bigint;
-  v_linked_event_id bigint;
-  v_linked_event_void text;
-  v_old_prosecutor_name text;
-  v_new_prosecutor_name text;
-  v_staff_id bigint;
-  v_assignment_action text;
   v_from_status_id bigint;
   v_to_status_id bigint;
   v_status_date date;
   v_status_remarks text;
-  v_prosecutor_id bigint;
-  v_assigned_at timestamptz;
-  v_assignment_remarks text;
   v_old_date_received date;
   v_new_date_received date;
   v_case_received_sync text;
@@ -2413,118 +2400,6 @@ BEGIN
     UPDATE public.case_status_history SET case_event_id = v_event_id WHERE id = v_status_history_id;
     UPDATE public.cases SET updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_case_id;
     UPDATE public.case_private_details SET current_status_id = v_to_status_id, current_status_date = v_status_date, current_status_remarks = v_status_remarks, current_status_approved_date_raw = nullif(btrim(p_payload#>>'{data,statusApprovedDateRaw}'),'') WHERE case_id = v_case_id;
-  ELSIF v_section = 'assignment' THEN
-    v_prosecutor_id := nullif(p_payload#>>'{data,prosecutorId}','')::bigint;
-    v_staff_id := nullif(p_payload#>>'{data,staffId}','')::bigint;
-    v_assignment_action := COALESCE(nullif(btrim(p_payload#>>'{data,assignmentMode}'),''), 'reassign');
-    v_assigned_at := COALESCE(nullif(p_payload#>>'{data,assignedAt}','')::timestamptz, now());
-    v_assignment_remarks := COALESCE(nullif(btrim(p_payload#>>'{data,remarks}'),''), v_reason);
-    IF v_assignment_action IN ('reassign', 'void_replace') AND v_prosecutor_id IS NULL THEN RAISE EXCEPTION 'prosecutorId is required'; END IF;
-    IF v_assignment_action NOT IN ('reassign', 'void_replace') THEN RAISE EXCEPTION 'Unsupported assignment mode %', v_assignment_action; END IF;
-    SELECT ca.id, ca.prosecutor_id, ca.case_event_id, COALESCE(p.full_name, p.short_name)
-    INTO v_old_assignment_id, v_old_prosecutor_id, v_old_case_event_id, v_old_prosecutor_name
-    FROM public.case_assignments ca
-    LEFT JOIN public.prosecutors p ON p.id = ca.prosecutor_id
-    WHERE ca.case_id = v_case_id AND ca.unassigned_at IS NULL AND ca.is_voided IS FALSE
-    ORDER BY ca.assigned_at DESC NULLS LAST, ca.id DESC
-    LIMIT 1;
-
-    IF v_assignment_action IN ('reassign', 'void_replace') THEN
-      SELECT COALESCE(p.full_name, p.short_name) INTO v_new_prosecutor_name
-      FROM public.prosecutors p
-      WHERE p.id = v_prosecutor_id;
-
-      SELECT id INTO v_event_type_id
-      FROM public.case_event_types
-      WHERE code = 'CASE_RAFFLED'
-        AND is_active IS TRUE
-      LIMIT 1;
-
-      IF v_event_type_id IS NULL THEN
-        SELECT id INTO v_event_type_id
-        FROM public.case_event_types
-        WHERE code = 'CASE_ASSIGNED'
-          AND is_active IS TRUE
-        LIMIT 1;
-      END IF;
-
-      IF v_event_type_id IS NULL THEN
-        RAISE EXCEPTION 'Missing case event type CASE_RAFFLED or CASE_ASSIGNED';
-      END IF;
-    END IF;
-
-    IF v_assignment_action = 'reassign' THEN
-      IF v_old_assignment_id IS NULL THEN
-        RAISE EXCEPTION 'No active assignment found for case %', v_case_id;
-      END IF;
-
-      UPDATE public.case_assignments
-      SET unassigned_at = COALESCE(v_assigned_at, now()),
-          remarks = concat_ws(E'\n', remarks, 'Reassigned reason: ' || v_reason)
-      WHERE id = v_old_assignment_id;
-    ELSE
-      IF v_old_assignment_id IS NULL THEN
-        RAISE EXCEPTION 'No active assignment found for case %', v_case_id;
-      END IF;
-
-      UPDATE public.case_assignments
-      SET is_voided = true,
-          voided_at = now(),
-          voided_by_user_id = v_user_id,
-          void_reason = v_reason,
-          remarks = concat_ws(E'\n', remarks, 'Void reason: ' || v_reason)
-      WHERE id = v_old_assignment_id;
-
-      v_linked_event_id := v_old_case_event_id;
-      IF v_linked_event_id IS NULL THEN
-        SELECT id INTO v_linked_event_id
-        FROM public.case_events
-        WHERE source_table = 'case_assignments'
-          AND source_id = v_old_assignment_id
-        ORDER BY id DESC
-        LIMIT 1;
-      END IF;
-
-      IF v_linked_event_id IS NULL THEN
-        v_linked_event_void := 'skipped_no_event';
-      ELSE
-        UPDATE public.case_events
-        SET is_voided = true,
-            voided_at = now(),
-            voided_by_user_id = v_user_id,
-            void_reason = 'Assignment voided: ' || v_reason,
-            updated_by_user_id = v_user_id,
-            updated_at = now()
-        WHERE id = v_linked_event_id;
-        v_linked_event_void := 'voided';
-      END IF;
-    END IF;
-
-    INSERT INTO public.case_assignments(case_id,prosecutor_id,staff_id,assigned_by_user_id,assigned_at,remarks)
-      VALUES (v_case_id,v_prosecutor_id,v_staff_id,v_user_id,v_assigned_at,v_assignment_remarks) RETURNING id INTO v_assignment_id;
-      INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,prosecutor_id,staff_id,details_jsonb,source,source_table,source_id,created_by_user_id,updated_by_user_id)
-      VALUES (
-        v_case_id,
-        v_event_type_id,
-        v_assigned_at::date,
-        v_assigned_at::time,
-        CASE WHEN v_assignment_action = 'void_replace' THEN 'Case Assignment' ELSE 'Case Reassignment' END,
-        v_assignment_remarks,
-        v_prosecutor_id,
-        v_staff_id,
-        CASE WHEN v_assignment_action = 'void_replace' THEN
-          jsonb_build_object('action', 'replacement_after_void', 'voided_assignment_id', v_old_assignment_id, 'voided_event_id', v_linked_event_id, 'previous_prosecutor_name', v_old_prosecutor_name, 'new_prosecutor_name', v_new_prosecutor_name, 'reason', v_reason, 'remarks', v_assignment_remarks)
-        ELSE
-          jsonb_build_object('action', 'reassign', 'previous_prosecutor_name', v_old_prosecutor_name, 'new_prosecutor_name', v_new_prosecutor_name, 'reason', v_reason, 'remarks', v_assignment_remarks)
-        END,
-        'MANUAL_EDIT',
-        'case_assignments',
-        v_assignment_id,
-        v_user_id,
-        v_user_id
-      ) RETURNING id INTO v_event_id;
-      UPDATE public.case_assignments SET case_event_id = v_event_id WHERE id = v_assignment_id;
-      UPDATE public.cases SET updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_case_id;
   ELSE
     RAISE EXCEPTION 'Editing section % is not implemented yet', v_section;
   END IF;
@@ -2533,7 +2408,7 @@ BEGIN
   FROM public.cases c LEFT JOIN public.case_private_details cpd ON cpd.case_id = c.id WHERE c.id = v_case_id;
 
   INSERT INTO public.audit_logs(actor_user_id, action, entity_name, entity_id, case_id, summary, metadata, old_data, new_data)
-  VALUES (v_user_id, 'EDIT_CASE_OVERVIEW_' || upper(v_section), 'cases', v_case_id, v_case_id, 'Edited case overview ' || replace(v_section, '_', ' '), jsonb_strip_nulls(jsonb_build_object('reason', v_reason, 'section', v_section, 'case_received_event_sync', v_case_received_sync, 'assignment_mode', v_assignment_action, 'linked_event_void', v_linked_event_void)), v_old, v_new);
+  VALUES (v_user_id, 'EDIT_CASE_OVERVIEW_' || upper(v_section), 'cases', v_case_id, v_case_id, 'Edited case overview ' || replace(v_section, '_', ' '), jsonb_strip_nulls(jsonb_build_object('reason', v_reason, 'section', v_section, 'case_received_event_sync', v_case_received_sync)), v_old, v_new);
   RETURN v_case_id;
 END;
 $$;
@@ -7388,13 +7263,11 @@ DECLARE
   v_pending_status_id bigint;
   v_case_raffled_stage_id bigint;
   v_event_id bigint;
-  v_assignment_id bigint;
   v_status_history_id bigint;
   v_stage_history_id bigint;
   v_previous_status_id bigint;
   v_previous_case_status_id bigint;
   v_previous_stage_id bigint;
-  v_assigned_at timestamptz;
   v_assignment_time time without time zone;
   v_prosecutor_name text;
   v_staff_name text;
@@ -7817,7 +7690,6 @@ DECLARE
   v_reassigned_at timestamptz;
   v_reassignment_time time without time zone;
   v_previous_prosecutor_name text;
-  v_new_prosecutor_name text;
   v_staff_name text;
   v_reason text := NULLIF(btrim(COALESCE(p_reason, '')), '');
   v_remarks text := NULLIF(btrim(COALESCE(p_remarks, '')), '');

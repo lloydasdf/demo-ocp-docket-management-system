@@ -211,9 +211,6 @@ BEGIN
     ORDER BY CASE WHEN p.id = v_source_id THEN 0 ELSE 1 END
     LIMIT 1;
     IF v_petition_id IS NOT NULL THEN
-      IF EXISTS (SELECT 1 FROM public.case_petition_for_review_updates u WHERE u.petition_for_review_id = v_petition_id AND u.is_voided = false) THEN
-        RAISE EXCEPTION 'This Petition for Review has active updates. Void the latest Petition for Review Update first.';
-      END IF;
       UPDATE public.case_petitions_for_review
       SET is_voided = true, voided_at = now(), voided_by_user_id = p_voided_by_user_id, void_reason = p_void_reason, updated_by_user_id = p_voided_by_user_id, updated_at = now()
       WHERE id = v_petition_id;
