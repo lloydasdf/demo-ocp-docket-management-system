@@ -2758,57 +2758,41 @@ export async function recordMotionDecisionApprovedEvent(input: RecordMotionDecis
   }
 }
 
-export interface CreateCaseEventInput {
+export interface RecordCustomCaseEventInput {
   caseId: number;
-  eventTypeCode: string;
-  eventDate: string;
   title: string;
-  description?: string;
-  detailsJson?: Json | null;
+  eventDate: string;
+  eventTime: string;
+  remarks?: string | null;
+  additionalDetails: { detail: string; value: string }[];
+  updateCaseStatus: boolean;
+  selectedCaseStatusId?: number | null;
+  selectedCaseStageId?: number | null;
 }
 
-export async function createCaseEvent(
-  input: CreateCaseEventInput,
-): Promise<SupabaseQueryResult<number>> {
+export async function recordCustomCaseEvent(input: RecordCustomCaseEventInput): Promise<SupabaseQueryResult<number>> {
   const environment = getSupabaseEnvironmentStatus();
-  if (!environment.isConfigured) {
-    return fail({
-      message: "Supabase is not configured.",
-      table: "cases",
-      operation: "createCaseEvent",
-    });
-  }
-
+  if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table: "case_events" as RelationName, operation: "recordCustomCaseEvent" });
   try {
     const currentUserQuery = await getCurrentDatabaseUserRecord();
-    if (currentUserQuery.error || !currentUserQuery.data) {
-      return fail(
-        toQueryError(
-          currentUserQuery.error ?? new Error("No active user available."),
-          "createCaseEvent",
-          "users",
-        ),
-      );
-    }
-
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "recordCustomCaseEvent", "users"));
     const supabase = await getSupabaseBrowserClient();
-    const { data, error } = await supabase.rpc("create_case_event" as never, {
+    const { data, error } = await supabase.rpc("record_custom_case_event" as never, {
       p_case_id: input.caseId,
-      p_event_type_code: input.eventTypeCode,
-      p_event_date: input.eventDate,
       p_title: input.title,
-      p_description: input.description?.trim() || null,
-      p_details_jsonb: input.detailsJson ?? {},
+      p_event_date: input.eventDate,
+      p_event_time: input.eventTime,
+      p_remarks: input.remarks?.trim() || null,
+      p_additional_details: input.additionalDetails,
+      p_update_case_status: input.updateCaseStatus,
+      p_selected_case_status_id: input.updateCaseStatus ? input.selectedCaseStatusId ?? null : null,
+      p_selected_case_stage_id: input.updateCaseStatus ? input.selectedCaseStageId ?? null : null,
       p_user_id: currentUserQuery.data.id,
     } as never);
-
-    if (error) {
-      return fail(toQueryError(error, "createCaseEvent", "cases"));
-    }
-
+    if (error) return fail(toQueryError(error, "recordCustomCaseEvent", "case_events" as RelationName));
     return ok(Number(data ?? 0));
   } catch (error) {
-    return fail(toQueryError(error, "createCaseEvent", "cases"));
+    return fail(toQueryError(error, "recordCustomCaseEvent", "case_events" as RelationName));
   }
 }
 
