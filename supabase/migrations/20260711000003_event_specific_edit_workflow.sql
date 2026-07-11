@@ -60,15 +60,10 @@ BEGIN
     SELECT to_jsonb(ca) INTO v_old_source FROM public.case_assignments ca WHERE ca.id=v_source_id AND ca.case_event_id=p_case_event_id AND ca.is_voided=false FOR UPDATE;
     IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active assignment source record cannot be resolved'; END IF;
     SELECT id INTO v_latest_assignment_id FROM public.case_assignments WHERE case_id=v_event.case_id AND is_voided=false AND unassigned_at IS NULL ORDER BY assigned_at DESC NULLS LAST, id DESC LIMIT 1;
-    v_prosecutor := nullif(p_values->>'prosecutor_id','')::bigint;
-    v_staff := nullif(p_values->>'staff_id','')::bigint;
-    IF (v_prosecutor IS DISTINCT FROM (v_old_source->>'prosecutor_id')::bigint OR v_staff IS DISTINCT FROM nullif(v_old_source->>'staff_id','')::bigint) AND v_latest_assignment_id IS DISTINCT FROM v_source_id THEN
-      RAISE EXCEPTION 'Only the latest active assignment/reassignment may have assignment-defining values corrected';
-    END IF;
-    UPDATE public.case_assignments SET prosecutor_id=coalesce(v_prosecutor, prosecutor_id), staff_id=v_staff, assigned_at=(v_date + coalesce(v_time, assigned_at::time, '00:00'::time)) AT TIME ZONE 'Asia/Manila', remarks=v_remarks WHERE id=v_source_id;
+    UPDATE public.case_assignments SET assigned_at=(v_date + coalesce(v_time, assigned_at::time, '00:00'::time)) AT TIME ZONE 'Asia/Manila', remarks=v_remarks WHERE id=v_source_id;
     SELECT to_jsonb(ca) INTO v_new_source FROM public.case_assignments ca WHERE ca.id=v_source_id;
-    v_details := v_details || jsonb_build_object('prosecutor_id', coalesce(v_prosecutor,(v_old_source->>'prosecutor_id')::bigint),'staff_id',v_staff,'remarks',v_remarks);
-    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,prosecutor_id=coalesce(v_prosecutor,prosecutor_id),staff_id=v_staff,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+    v_details := v_details || jsonb_build_object('remarks',v_remarks);
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
 
   ELSIF v_code = 'MOTION_RECEIVED' THEN
     IF v_source_table IS DISTINCT FROM 'case_motions' OR v_source_id IS NULL THEN RAISE EXCEPTION 'Motion source record cannot be resolved'; END IF;
