@@ -1087,7 +1087,6 @@ export default function CasesPage() {
           violation: multilineViolation(caseViolations(caseDetail)),
           assignedProsecutor: assignedProsecutor(caseDetail) ?? '—',
           currentStatus: currentStatusLabel(caseDetail) ?? '—',
-          currentStage: currentStageLabel(caseDetail) ?? '—',
           dateReceived: formatDate(caseDetail.date_received),
         };
       });
