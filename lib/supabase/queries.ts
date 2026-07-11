@@ -1474,18 +1474,28 @@ export async function editCaseOverviewSection(
     }
 
     const supabase = await getSupabaseBrowserClient();
-    const { data, error } = await supabase.rpc(
-      "edit_case_overview_section" as never,
-      {
-        p_payload: {
-          caseId: input.caseId,
-          section: input.section,
-          reason: input.reason,
-          userId: currentUserQuery.data.id,
-          data: input.data,
-        },
-      } as never,
-    );
+    const { data, error } = input.section === "status"
+      ? await supabase.rpc("record_case_status_updated_event" as never, {
+        p_case_id: input.caseId,
+        p_case_status_id: Number(input.data.statusId),
+        p_case_stage_id: Number(input.data.stageId),
+        p_status_date: input.data.statusDate,
+        p_remarks: typeof input.data.remarks === "string" ? input.data.remarks.trim() || null : null,
+        p_reason: input.reason,
+        p_user_id: currentUserQuery.data.id,
+      } as never)
+      : await supabase.rpc(
+        "edit_case_overview_section" as never,
+        {
+          p_payload: {
+            caseId: input.caseId,
+            section: input.section,
+            reason: input.reason,
+            userId: currentUserQuery.data.id,
+            data: input.data,
+          },
+        } as never,
+      );
 
     if (error) {
       return fail(toQueryError(error, "editCaseOverviewSection", "cases"));

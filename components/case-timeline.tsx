@@ -407,6 +407,20 @@ function isPetitionForReviewSourceEvent(event: CaseTimelineEventRecord) {
   );
 }
 
+function caseStatusUpdatedEventDetails(event: CaseTimelineEventRecord) {
+  if (event.event_type_code !== "CASE_STATUS_UPDATED") return null;
+  const details = event.details_jsonb && typeof event.details_jsonb === "object" ? event.details_jsonb as Record<string, unknown> : {};
+  return [
+    { label: "Previous Case Status", value: stringDetail(details.previous_case_status_label) ?? stringDetail(details.previous_case_status_id) },
+    { label: "New Case Status", value: stringDetail(details.selected_case_status_label) ?? event.case_status_label ?? event.status_label },
+    { label: "Previous Case Stage", value: stringDetail(details.previous_case_stage_label) ?? stringDetail(details.previous_case_stage_id) },
+    { label: "New Case Stage", value: stringDetail(details.selected_case_stage_label) ?? event.case_stage_label },
+    { label: "Status Date", value: formatDate(stringDetail(details.status_date) ?? event.event_date) },
+    { label: "Remarks", value: stringDetail(details.remarks) ?? event.description },
+    { label: "Reason for Edit", value: stringDetail(details.reason) },
+  ];
+}
+
 function timelineDetailItems(event: CaseTimelineEventRecord, assignment?: CaseAssignmentRecord | null) {
   if (isPetitionForReviewEvent(event)) {
     return [];
@@ -419,6 +433,11 @@ function timelineDetailItems(event: CaseTimelineEventRecord, assignment?: CaseAs
   const motionWorkflowDetails = motionWorkflowEventDetails(event);
   if (motionWorkflowDetails) {
     return motionWorkflowDetails;
+  }
+
+  const caseStatusUpdatedDetails = caseStatusUpdatedEventDetails(event);
+  if (caseStatusUpdatedDetails) {
+    return caseStatusUpdatedDetails;
   }
 
   const resolutionDetails = resolutionEventDetails(event);
@@ -465,7 +484,7 @@ function visibleEventDetails(event: CaseTimelineEventRecord) {
 
   const hiddenKeys = event.event_type_code === "CASE_RECEIVED"
     ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
-    : event.event_type_code === "CASE_RESOLVED" || event.event_type_code === "CASE_DECISION_APPROVED" || event.event_type_code === "COURT_FILING" || event.event_type_code === "MOTION_RECEIVED" || event.event_type_code === "MOTION_RESOLVED" || event.event_type_code === "MOTION_DECISION_APPROVED"
+    : event.event_type_code === "CASE_RESOLVED" || event.event_type_code === "CASE_DECISION_APPROVED" || event.event_type_code === "COURT_FILING" || event.event_type_code === "MOTION_RECEIVED" || event.event_type_code === "MOTION_RESOLVED" || event.event_type_code === "MOTION_DECISION_APPROVED" || event.event_type_code === "CASE_STATUS_UPDATED"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
       : eventSourceTable(event) === "case_assignments"
       ? new Set(Object.keys(event.details_jsonb as Record<string, unknown>))
