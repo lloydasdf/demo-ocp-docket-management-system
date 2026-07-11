@@ -343,7 +343,7 @@ AS $$
 DECLARE
   v_actor_user_id bigint := public.current_app_user_id();
   v_old jsonb;
-  v_new jsonb;
+  v_auth_user_id uuid;
 BEGIN
   IF NOT public.can_manage_users() THEN
     RAISE EXCEPTION 'You are not authorized to manage users';
@@ -353,18 +353,14 @@ BEGIN
     RAISE EXCEPTION 'You cannot remove your own active application user';
   END IF;
 
-  SELECT to_jsonb(v.*) INTO v_old FROM public.v_user_management_users v WHERE v.id = p_user_id;
+  SELECT to_jsonb(v.*), v.auth_user_id
+  INTO v_old, v_auth_user_id
+  FROM public.v_user_management_users v
+  WHERE v.id = p_user_id;
+
   IF v_old IS NULL THEN
     RAISE EXCEPTION 'User % does not exist', p_user_id;
   END IF;
-
-  DELETE FROM public.user_roles WHERE user_id = p_user_id;
-  UPDATE public.users
-  SET is_active = false,
-      updated_at = now()
-  WHERE id = p_user_id;
-
-  SELECT to_jsonb(v.*) INTO v_new FROM public.v_user_management_users v WHERE v.id = p_user_id;
 
   INSERT INTO public.audit_logs(actor_user_id, entity_name, entity_id, action, old_data, new_data, summary, metadata)
   VALUES (
@@ -373,10 +369,13 @@ BEGIN
     p_user_id,
     'USER_REMOVED',
     v_old,
-    v_new,
-    'User removed from application access.',
-    jsonb_build_object('soft_delete', true, 'auth_account_deleted', false)
+    NULL,
+    'User removed from users table.',
+    jsonb_build_object('hard_delete', true, 'auth_user_id', v_auth_user_id, 'auth_delete_trigger', v_auth_user_id IS NOT NULL)
   );
+
+  DELETE FROM public.user_roles WHERE user_id = p_user_id;
+  DELETE FROM public.users WHERE id = p_user_id;
 END;
 $$;
 

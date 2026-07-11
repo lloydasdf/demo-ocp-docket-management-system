@@ -73,7 +73,7 @@ function getActionText(action: PendingAction | null) {
 
   return {
     title: 'Confirm user removal',
-    description: `Remove ${action.user.email} from application access? This disables the application user, removes assigned roles, preserves the audit trail, and does not delete the Supabase Auth account.`,
+    description: `Remove ${action.user.email}? This permanently deletes the application user row from the users table.`,
     confirm: 'Remove user',
   };
 }
