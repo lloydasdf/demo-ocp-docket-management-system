@@ -1469,13 +1469,41 @@ function nullableDisplay(value: string | number | null | undefined) {
   return text && text !== "—" ? text : null;
 }
 
+function normalizeReportText(value: string) {
+  return value
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .trim();
+}
+
+function allVisibleParticipantAddresses(participant: CaseParticipantRecord) {
+  const addresses = [
+    ...(participant.persons?.person_addresses ?? []),
+    ...(participant.organizations?.organization_addresses ?? []),
+  ];
+  const seen = new Set<string>();
+
+  return addresses.filter((address) => {
+    const key = `${address.id ?? ""}:${formatAddress(address.addresses ?? null) ?? ""}:${address.remarks ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function buildParticipantAddressLines(participant: CaseParticipantRecord) {
-  return participantAddresses(participant)
+  return allVisibleParticipantAddresses(participant)
     .map((address) => {
       const text = formatAddress(address.addresses ?? null);
       if (!text) return null;
-      const badges = [address.is_primary ? "Primary" : null, address.remarks].filter(Boolean).join(" — ");
-      return badges ? `${text} (${badges})` : text;
+      const notes = [address.is_primary ? "Primary" : null, nullableDisplay(address.remarks)].filter(Boolean).join(" — ");
+      const normalizedText = normalizeReportText(text);
+      return notes ? `${normalizedText} (${notes})` : normalizedText;
     })
     .filter((address): address is string => Boolean(address));
 }
@@ -1501,6 +1529,10 @@ function timelineDateSortValue(date: string | null) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
 }
 
+function recordFlag(record: unknown, flag: string) {
+  return typeof record === "object" && record !== null && (record as Record<string, unknown>)[flag] === true;
+}
+
 function normalizeTimeline(data: CaseDetailsState): CaseDetailsReport["timeline"] {
   const entries: Array<CaseDetailsReport["timeline"][number] & { index: number; sortDate: number | null }> = [];
   let index = 0;
@@ -1521,6 +1553,7 @@ function normalizeTimeline(data: CaseDetailsState): CaseDetailsReport["timeline"
   });
 
   data.courts.forEach((court) => {
+    if (recordFlag(court, "is_voided") || recordFlag(court, "is_deleted") || recordFlag(court, "is_removed")) return;
     add({
       date: court.date_filed_in_court ?? court.actual_filing_date ?? court.created_at ?? null,
       category: "Court",
@@ -1577,7 +1610,6 @@ function buildCaseDetailsReport(data: CaseDetailsState, partiesByRole: Array<[st
     generatedBy,
     generatedAt: new Date(),
     overview: {
-      violationSummary: nullableDisplay(compact.violations),
       classification: classificationLabel(details),
       dateReceived: formatDate(compact.date_received ?? details.date_received),
       assignedProsecutor: compact.prosecutor_full_name ?? compact.prosecutor_short_name ?? null,
@@ -1619,7 +1651,7 @@ function buildCaseDetailsReport(data: CaseDetailsState, partiesByRole: Array<[st
       status: attachment.file_status ?? "—",
       webViewLink: attachment.web_view_link ?? null,
     })),
-    unavailableSections: data.warnings,
+    unavailableSections: data.warnings.length > 0 ? ["Some related sections were unavailable and were not included in this report."] : [],
   };
 }
 

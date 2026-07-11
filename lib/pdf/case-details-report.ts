@@ -3,7 +3,6 @@ export type CaseDetailsReport = {
   generatedBy: string;
   generatedAt: Date;
   overview: {
-    violationSummary: string | null;
     classification: string | null;
     dateReceived: string | null;
     assignedProsecutor: string | null;
@@ -63,9 +62,21 @@ type JsPdfWithAutoTable = import('jspdf').jsPDF & {
   lastAutoTable?: { finalY?: number };
 };
 
+function normalizePdfText(value: string) {
+  return value
+    .replace(/\u00a0/g, ' ')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .join('\n')
+    .trim();
+}
+
 function clean(value: string | number | boolean | null | undefined) {
   if (value === null || value === undefined) return null;
-  const text = String(value).trim();
+  const text = normalizePdfText(String(value));
   return text && text !== '—' ? text : null;
 }
 
@@ -126,7 +137,7 @@ export async function generateCaseDetailsReportPdf(
   if (report.unavailableSections.length > 0) {
     autoTable(doc, {
       startY: y,
-      body: [[`Some sections are unavailable and were not included: ${report.unavailableSections.join('; ')}`]],
+      body: [['Some related sections were unavailable and were not included in this report.']],
       theme: 'plain',
       styles: { fontSize: 8, cellPadding: 5, textColor: [120, 53, 15], fillColor: [255, 247, 237] },
       margin: { left: margin, right: margin, bottom: 44 },
@@ -137,7 +148,6 @@ export async function generateCaseDetailsReportPdf(
   y = addSectionTitle(doc, 'A. CASE OVERVIEW', y, margin);
   const overviewRows = [
     ['Docket Number', report.docketNumber],
-    ['Violation summary', report.overview.violationSummary],
     ['Classification', report.overview.classification],
     ['Date Received', report.overview.dateReceived],
     ['Assigned Prosecutor', report.overview.assignedProsecutor],
@@ -181,12 +191,16 @@ export async function generateCaseDetailsReportPdf(
         participant.birthdateAndSex,
         clean(participant.ageAtCase) ? `Age at case: ${participant.ageAtCase}` : null,
         participant.flags.length ? `Flags: ${participant.flags.join(', ')}` : null,
-        participant.addresses.length ? `Addresses:\n${participant.addresses.join('\n')}` : null,
+        participant.addresses.length
+          ? `Addresses:\n${participant.addresses.length === 1
+            ? clean(participant.addresses[0])
+            : participant.addresses.map((address, index) => `${index + 1}. ${clean(address) ?? ''}`).join('\n')}`
+          : null,
         participant.contacts.length ? `Contacts:\n${participant.contacts.join('\n')}` : null,
         participant.remarks ? `Remarks: ${participant.remarks}` : null,
         participant.organizationDetails ? `Organization details: ${participant.organizationDetails}` : null,
-      ].filter(Boolean).join('\n');
-      return [participant.name, details || '—'];
+      ].filter(Boolean).map((detail) => normalizePdfText(String(detail))).join('\n');
+      return [normalizePdfText(participant.name), details || '—'];
     }),
   ]);
   autoTable(doc, {
@@ -196,7 +210,7 @@ export async function generateCaseDetailsReportPdf(
     theme: 'grid', showHead: 'everyPage',
     styles: { fontSize: 7.5, cellPadding: 4, overflow: 'linebreak', valign: 'top' },
     headStyles: { fillColor: [31, 41, 55], fontSize: 7.5 },
-    columnStyles: { 0: { cellWidth: 150, fontStyle: 'bold' }, 1: { cellWidth: usableWidth - 150 } },
+    columnStyles: { 0: { cellWidth: 120, fontStyle: 'bold' }, 1: { cellWidth: usableWidth - 120 } },
     margin: { left: margin, right: margin, bottom: 44 },
     rowPageBreak: 'auto',
   });
