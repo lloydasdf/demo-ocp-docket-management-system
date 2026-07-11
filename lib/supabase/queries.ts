@@ -1961,6 +1961,15 @@ export type CasePetitionForReviewRecord = {
   date_approved: string | null;
   date_approved_raw: string | null;
   remarks: string | null;
+  case_event_id?: number | null;
+  filed_by_code?: string | null;
+  date_filed?: string | null;
+  time_filed?: string | null;
+  status_date?: string | null;
+  additional_details_jsonb?: MotionDetailInput[];
+  assigned_prosecutor_id?: number | null;
+  assigned_prosecutor_name?: string | null;
+  is_voided?: boolean | null;
 };
 
 export type CaseMotionRecord = TableRow<"case_motions"> & {
@@ -2022,7 +2031,7 @@ export async function getCasePetitionsForReview(
       return (await supabase
         .from("v_case_petitions_for_review_detail" as never)
         .select(
-          "id, case_id, petition_title, handling_prosecutor_text, date_received, date_received_raw, filed_by, petition_status, date_resolved, date_resolved_raw, date_approved, date_approved_raw, remarks",
+          "id, case_id, case_event_id, petition_title, handling_prosecutor_text, date_received, date_received_raw, filed_by, filed_by_code, date_filed, time_filed, petition_status, status_date, date_resolved, date_resolved_raw, date_approved, date_approved_raw, remarks, additional_details_jsonb, assigned_prosecutor_id, assigned_prosecutor_name, is_voided",
         )
         .eq("case_id" as never, caseId)
         .order("date_received" as never, { ascending: false, nullsFirst: false })) as {
@@ -3523,5 +3532,81 @@ export async function updateCourtFilingStatusDetails(input: UpdateCourtFilingSta
     return ok(Number(data ?? 0));
   } catch (error) {
     return fail(toQueryError(error, "updateCourtFilingStatusDetails", "case_court_filings" as RelationName));
+  }
+}
+
+export interface RecordPetitionForReviewEventInput {
+  caseId: number;
+  filedByCode: "COMPLAINANT" | "RESPONDENT";
+  dateFiled: string;
+  timeFiled?: string | null;
+  petitionStatus: string;
+  additionalDetails?: MotionDetailInput[];
+  assignedProsecutorId?: number | null;
+  remarks?: string | null;
+}
+
+export async function recordPetitionForReviewEvent(input: RecordPetitionForReviewEventInput): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table: "case_petitions_for_review" as RelationName, operation: "recordPetitionForReviewEvent" });
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "recordPetitionForReviewEvent", "users"));
+    const details = (input.additionalDetails ?? []).map((row) => ({ detail: row.detail.trim(), value: row.value.trim() })).filter((row) => row.detail || row.value);
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("record_petition_for_review_event" as never, {
+      p_case_id: input.caseId,
+      p_filed_by_code: input.filedByCode,
+      p_date_filed: input.dateFiled,
+      p_time_filed: input.timeFiled?.trim() || null,
+      p_petition_status: input.petitionStatus.trim(),
+      p_additional_details_jsonb: details,
+      p_assigned_prosecutor_id: input.assignedProsecutorId ?? null,
+      p_remarks: input.remarks?.trim() || null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "recordPetitionForReviewEvent", "case_petitions_for_review" as RelationName));
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "recordPetitionForReviewEvent", "case_petitions_for_review" as RelationName));
+  }
+}
+
+export interface RecordPetitionForReviewUpdateInput {
+  caseId: number;
+  petitionForReviewId: number;
+  petitionStatus: string;
+  statusDate: string;
+  remarks?: string | null;
+  additionalDetails?: MotionDetailInput[];
+  updateCaseStatus: boolean;
+  selectedCaseStatusId?: number | null;
+  selectedCaseStageId?: number | null;
+}
+
+export async function recordPetitionForReviewUpdate(input: RecordPetitionForReviewUpdateInput): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table: "case_petition_for_review_updates" as RelationName, operation: "recordPetitionForReviewUpdate" });
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "recordPetitionForReviewUpdate", "users"));
+    const details = (input.additionalDetails ?? []).map((row) => ({ detail: row.detail.trim(), value: row.value.trim() })).filter((row) => row.detail || row.value);
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("record_petition_for_review_update" as never, {
+      p_case_id: input.caseId,
+      p_petition_for_review_id: input.petitionForReviewId,
+      p_petition_status: input.petitionStatus.trim(),
+      p_status_date: input.statusDate,
+      p_remarks: input.remarks?.trim() || null,
+      p_additional_details_jsonb: details,
+      p_updates_case_status: input.updateCaseStatus,
+      p_selected_case_status_id: input.updateCaseStatus ? input.selectedCaseStatusId ?? null : null,
+      p_selected_case_stage_id: input.updateCaseStatus ? input.selectedCaseStageId ?? null : null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "recordPetitionForReviewUpdate", "case_petition_for_review_updates" as RelationName));
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, "recordPetitionForReviewUpdate", "case_petition_for_review_updates" as RelationName));
   }
 }

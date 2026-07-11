@@ -71,6 +71,8 @@ import {
   type CourtStatusUpdateCandidateRecord,
   getCourtStatusUpdateCandidates,
   updateCourtFilingStatusDetails,
+  recordPetitionForReviewEvent,
+  recordPetitionForReviewUpdate,
   editCaseEvent,
   getCaseEventTypes,
   voidCaseEvent,
@@ -614,12 +616,15 @@ function PetitionForReviewEventDetails({
   petition: CasePetitionForReviewRecord;
 }) {
   const details = [
-    { label: "Handling Prosecutor", value: petition.handling_prosecutor_text },
-    { label: "Filed By", value: petition.filed_by },
+    { label: "Assigned Prosecutor", value: petition.assigned_prosecutor_name ?? petition.handling_prosecutor_text },
+    { label: "Filed By", value: petition.filed_by ?? motionFiledByLabel(petition.filed_by_code) },
     { label: "Status", value: petition.petition_status },
-    { label: "Date Received", value: formatOptionalDate(petition.date_received, petition.date_received_raw) },
+    { label: "Date Filed", value: formatOptionalDate(petition.date_filed ?? petition.date_received, petition.date_received_raw) },
+    { label: "Time Filed", value: formatTime(petition.time_filed) },
+    { label: "Status Date", value: formatDate(petition.status_date) },
     { label: "Date Resolved", value: formatOptionalDate(petition.date_resolved, petition.date_resolved_raw) },
     { label: "Date Approved", value: formatOptionalDate(petition.date_approved, petition.date_approved_raw) },
+    { label: "Additional Details", value: (petition.additional_details_jsonb ?? []).map((row) => `${row.detail}: ${row.value}`).join("; ") },
     { label: "Remarks", value: petition.remarks },
   ].filter((detail) => hasDetailValue(detail.value));
 
@@ -938,6 +943,7 @@ const ADD_EVENT_TYPE_CODES = new Set([
   "MOTION_RESOLVED",
   "MOTION_DECISION_APPROVED",
   "PETITION_FOR_REVIEW",
+  "PETITION_FOR_REVIEW_UPDATE",
   "CUSTOM_EVENT",
   "ADD_EVENT_TYPE",
 ]);
@@ -947,6 +953,9 @@ function addableEventTypes(eventTypes: CaseEventTypeReference[]) {
     ["COURT_FILING", 140],
     ["COURT_STATUS_UPDATE", 145],
     ["MOTION_RECEIVED", 150],
+    ["MOTION_DECISION_APPROVED", 160],
+    ["PETITION_FOR_REVIEW", 170],
+    ["PETITION_FOR_REVIEW_UPDATE", 171],
   ]);
   return eventTypes
     .filter((eventType) => ADD_EVENT_TYPE_CODES.has(eventType.code))
@@ -988,7 +997,7 @@ export function CaseTimeline({
   const [recommendationLabel, setRecommendationLabel] = useState("");
   const [isCourtPickerOpen, setIsCourtPickerOpen] = useState(false);
   const initialManilaDateTime = getManilaDateTimeInputValues();
-  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: initialManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalResolutionId: "", motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[] });
+  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: initialManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalResolutionId: "", motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[], petitionStatus: "", petitionUpdateStep: 1, petitionUpdatePetitionId: "", petitionUpdateCaseStatus: "", petitionSelectedCaseStatusId: "", petitionSelectedCaseStageId: "", petitionDetails: [] as MotionDetailRow[] });
   const [manilaNow, setManilaNow] = useState(() => new Date());
   const [isAddDateTimeDirty, setIsAddDateTimeDirty] = useState(false);
   const [editForm, setEditForm] = useState({ eventDate: "", title: "", description: "", editReason: "" });
@@ -1042,7 +1051,7 @@ export function CaseTimeline({
     const currentManilaDateTime = getManilaDateTimeInputValues();
     setManilaNow(new Date());
     setIsAddDateTimeDirty(false);
-    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: currentManilaDateTime.date, eventTime: currentManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalResolutionId: "", motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[] });
+    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: currentManilaDateTime.date, eventTime: currentManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalResolutionId: "", motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[], petitionStatus: "", petitionUpdateStep: 1, petitionUpdatePetitionId: "", petitionUpdateCaseStatus: "", petitionSelectedCaseStatusId: "", petitionSelectedCaseStageId: "", petitionDetails: [] as MotionDetailRow[] });
     setIsAddDialogOpen(true);
 
     if (eventTypes.length === 0) {
@@ -1258,6 +1267,29 @@ export function CaseTimeline({
                       selectedCaseStageId: addForm.motionSelectedCaseStageId ? Number(addForm.motionSelectedCaseStageId) : null,
                       remarks: addForm.description,
                     })
+                    : addForm.eventTypeCode === "PETITION_FOR_REVIEW"
+                      ? await recordPetitionForReviewEvent({
+                        caseId,
+                        filedByCode: addForm.filedByCode as "COMPLAINANT" | "RESPONDENT",
+                        dateFiled: addForm.eventDate,
+                        timeFiled: addForm.eventTime || null,
+                        petitionStatus: addForm.petitionStatus,
+                        additionalDetails: addForm.petitionDetails,
+                        assignedProsecutorId: addForm.assignedProsecutorId ? Number(addForm.assignedProsecutorId) : null,
+                        remarks: addForm.description,
+                      })
+                      : addForm.eventTypeCode === "PETITION_FOR_REVIEW_UPDATE"
+                        ? await recordPetitionForReviewUpdate({
+                          caseId,
+                          petitionForReviewId: Number(addForm.petitionUpdatePetitionId),
+                          petitionStatus: addForm.petitionStatus,
+                          statusDate: addForm.eventDate,
+                          remarks: addForm.description,
+                          additionalDetails: addForm.petitionDetails,
+                          updateCaseStatus: addForm.petitionUpdateCaseStatus === "YES",
+                          selectedCaseStatusId: addForm.petitionSelectedCaseStatusId ? Number(addForm.petitionSelectedCaseStatusId) : null,
+                          selectedCaseStageId: addForm.petitionSelectedCaseStageId ? Number(addForm.petitionSelectedCaseStageId) : null,
+                        })
           : await createCaseEvent({
         caseId,
         eventTypeCode: addForm.eventTypeCode,
@@ -1360,6 +1392,13 @@ export function CaseTimeline({
       remarks: filing?.court_status_update_remarks ?? "",
     });
   };
+
+  const isAddingPetitionForReview = addForm.eventTypeCode === "PETITION_FOR_REVIEW";
+  const isAddingPetitionForReviewUpdate = addForm.eventTypeCode === "PETITION_FOR_REVIEW_UPDATE";
+  const activePetitionsForReview = petitionsForReview.filter((petition) => !petition.is_voided);
+  const selectedPetitionForReview = activePetitionsForReview.find((petition) => Number(petition.id) === Number(addForm.petitionUpdatePetitionId)) ?? null;
+  const selectedPetitionStatus = caseStatusOptions.find((status) => Number(status.id) === Number(addForm.petitionSelectedCaseStatusId)) ?? null;
+  const selectedPetitionStage = caseStageOptions.find((stage) => Number(stage.id) === Number(addForm.petitionSelectedCaseStageId)) ?? null;
   const isAddingMotionReceived = addForm.eventTypeCode === "MOTION_RECEIVED";
   const isAddingMotionResolved = addForm.eventTypeCode === "MOTION_RESOLVED";
   const isAddingMotionDecisionApproved = addForm.eventTypeCode === "MOTION_DECISION_APPROVED";
@@ -1403,9 +1442,15 @@ export function CaseTimeline({
     : [emptyApprovalAction()];
 
   useEffect(() => {
-    if (addForm.eventTypeCode !== "MOTION_RECEIVED" || addForm.assignedProsecutorId || !currentAssignment?.prosecutor_id) return;
+    if ((addForm.eventTypeCode !== "MOTION_RECEIVED" && addForm.eventTypeCode !== "PETITION_FOR_REVIEW") || addForm.assignedProsecutorId || !currentAssignment?.prosecutor_id) return;
     setAddForm((form) => ({ ...form, assignedProsecutorId: String(currentAssignment.prosecutor_id) }));
   }, [addForm.assignedProsecutorId, addForm.eventTypeCode, currentAssignment?.prosecutor_id]);
+
+  useEffect(() => {
+    if (addForm.eventTypeCode !== "PETITION_FOR_REVIEW_UPDATE" || addForm.petitionUpdatePetitionId || activePetitionsForReview.length !== 1) return;
+    const petition = activePetitionsForReview[0];
+    setAddForm((form) => ({ ...form, petitionUpdatePetitionId: String(petition.id), petitionStatus: petition.petition_status ?? "", eventDate: toDateInputValue(petition.status_date ?? petition.date_filed ?? petition.date_received), description: petition.remarks ?? "", petitionDetails: petition.additional_details_jsonb ?? [] }));
+  }, [addForm.eventTypeCode, addForm.petitionUpdatePetitionId, activePetitionsForReview]);
 
   useEffect(() => {
     if (addForm.eventTypeCode !== "MOTION_RESOLVED" || addForm.motionResolveMotionId || eligibleMotions.length !== 1) return;
@@ -1591,7 +1636,7 @@ export function CaseTimeline({
             {isAddingMotionDecisionApproved && addForm.motionDecisionStep === 3 ? null : (
               <div className="space-y-2">
                 <Label htmlFor="add-event-type">Event Type</Label>
-                <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : e.target.value === "COURT_FILING" ? "Court Filing" : e.target.value === "COURT_STATUS_UPDATE" ? "Court Status Update" : e.target.value === "MOTION_RECEIVED" ? "Motion Received" : e.target.value === "MOTION_RESOLVED" ? "Motion Resolved" : e.target.value === "MOTION_DECISION_APPROVED" ? "Motion Decision Approved" : form.title }))}>
+                <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : e.target.value === "COURT_FILING" ? "Court Filing" : e.target.value === "COURT_STATUS_UPDATE" ? "Court Status Update" : e.target.value === "MOTION_RECEIVED" ? "Motion Received" : e.target.value === "MOTION_RESOLVED" ? "Motion Resolved" : e.target.value === "MOTION_DECISION_APPROVED" ? "Motion Decision Approved" : e.target.value === "PETITION_FOR_REVIEW" ? "Petition for Review" : e.target.value === "PETITION_FOR_REVIEW_UPDATE" ? "Petition for Review Update" : form.title }))}>
                   {eventTypes.map((eventType) => <option key={eventType.code} value={eventType.code}>{eventType.display_label}</option>)}
                 </select>
               </div>
@@ -1714,6 +1759,22 @@ export function CaseTimeline({
                   <div className="flex justify-start"><Button type="button" variant="outline" onClick={() => setAddForm((form) => ({ ...form, motionDecisionStep: form.motionUpdateCaseStatus === "YES" ? 4 : 3 }))}>Back</Button></div>
                 </> : null}
               </>
+            ) : isAddingPetitionForReview ? (
+              <>
+                <div className="space-y-2"><Label htmlFor="add-petition-filed-by">Filed By</Label><select id="add-petition-filed-by" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.filedByCode} onChange={(e) => setAddForm((form) => ({ ...form, filedByCode: e.target.value }))}><option value="">Select filer</option><option value="COMPLAINANT">Complainant</option><option value="RESPONDENT">Respondent</option></select></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-petition-date-filed">Date Filed</Label><Input id="add-petition-date-filed" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div><div className="space-y-1"><Label htmlFor="add-petition-time-filed">Time Filed</Label><Input id="add-petition-time-filed" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div></div>
+                <div className="space-y-2"><Label htmlFor="add-petition-status">Status</Label><Input id="add-petition-status" value={addForm.petitionStatus} onChange={(e) => setAddForm((form) => ({ ...form, petitionStatus: e.target.value }))} /></div>
+                <div className="space-y-2"><Label htmlFor="add-petition-assigned-prosecutor">Assigned Prosecutor</Label><select id="add-petition-assigned-prosecutor" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.assignedProsecutorId} onChange={(e) => setAddForm((form) => ({ ...form, assignedProsecutorId: e.target.value }))}><option value="">No prosecutor selected</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select></div>
+                <div className="space-y-2"><div className="flex items-center justify-between gap-2"><Label>Additional Details</Label><Button type="button" variant="outline" size="sm" onClick={() => setAddForm((form) => ({ ...form, petitionDetails: [...form.petitionDetails, { detail: "", value: "" }] }))}>Add Detail</Button></div>{addForm.petitionDetails.map((row, index) => <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]"><Input placeholder="Detail" value={row.detail} onChange={(e) => setAddForm((form) => ({ ...form, petitionDetails: form.petitionDetails.map((item, itemIndex) => itemIndex === index ? { ...item, detail: e.target.value } : item) }))} /><Input placeholder="Value" value={row.value} onChange={(e) => setAddForm((form) => ({ ...form, petitionDetails: form.petitionDetails.map((item, itemIndex) => itemIndex === index ? { ...item, value: e.target.value } : item) }))} /><Button type="button" variant="outline" size="sm" onClick={() => setAddForm((form) => ({ ...form, petitionDetails: form.petitionDetails.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</Button></div>)}</div>
+                <div className="space-y-2"><Label htmlFor="add-petition-remarks">Remarks</Label><Textarea id="add-petition-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
+              </>
+            ) : isAddingPetitionForReviewUpdate ? (
+              <>
+                <div className="rounded-md border bg-muted/30 p-3 text-sm font-medium">Step {addForm.petitionUpdateStep} of 3</div>
+                {addForm.petitionUpdateStep === 1 ? <><div className="space-y-2"><Label htmlFor="petition-update-petition">Petition for Review</Label><select id="petition-update-petition" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.petitionUpdatePetitionId} onChange={(e) => { const petition = activePetitionsForReview.find((item) => String(item.id) === e.target.value); setAddForm((form) => ({ ...form, petitionUpdatePetitionId: e.target.value, petitionStatus: petition?.petition_status ?? "", eventDate: toDateInputValue(petition?.status_date ?? petition?.date_filed ?? petition?.date_received), description: petition?.remarks ?? "", petitionDetails: petition?.additional_details_jsonb ?? [] })); }}><option value="">Select petition</option>{activePetitionsForReview.map((petition) => <option key={petition.id} value={petition.id}>{petition.filed_by ?? motionFiledByLabel(petition.filed_by_code)} • {formatDate(petition.date_filed ?? petition.date_received)} • {petition.petition_status ?? "—"}</option>)}</select></div>{activePetitionsForReview.length === 0 ? <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">No active Petition for Review is available for update.</div> : null}<div className="flex justify-end"><Button type="button" onClick={() => setAddForm((form) => ({ ...form, petitionUpdateStep: 2 }))} disabled={!addForm.petitionUpdatePetitionId}>Next</Button></div></> : null}
+                {addForm.petitionUpdateStep === 2 ? <><div className="rounded-md border bg-background p-3"><p className="mb-2 text-sm font-medium">Original Petition Details</p><div className="grid gap-3 sm:grid-cols-2"><OptionalDetailItem label="Filed By" value={selectedPetitionForReview?.filed_by ?? motionFiledByLabel(selectedPetitionForReview?.filed_by_code)} /><OptionalDetailItem label="Date Filed" value={formatDate(selectedPetitionForReview?.date_filed ?? selectedPetitionForReview?.date_received)} /><OptionalDetailItem label="Time Filed" value={formatTime(selectedPetitionForReview?.time_filed)} /><OptionalDetailItem label="Assigned Prosecutor" value={selectedPetitionForReview?.assigned_prosecutor_name ?? selectedPetitionForReview?.handling_prosecutor_text} /></div></div><div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="petition-update-status">Petition Status</Label><Input id="petition-update-status" value={addForm.petitionStatus} onChange={(e) => setAddForm((form) => ({ ...form, petitionStatus: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="petition-update-date">Status Date</Label><Input id="petition-update-date" type="date" value={addForm.eventDate} onChange={(e) => setAddForm((form) => ({ ...form, eventDate: e.target.value }))} /></div></div><div className="space-y-2"><div className="flex items-center justify-between gap-2"><Label>Additional Details</Label><Button type="button" variant="outline" size="sm" onClick={() => setAddForm((form) => ({ ...form, petitionDetails: [...form.petitionDetails, { detail: "", value: "" }] }))}>Add Detail</Button></div>{addForm.petitionDetails.map((row, index) => <div key={index} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]"><Input placeholder="Detail" value={row.detail} onChange={(e) => setAddForm((form) => ({ ...form, petitionDetails: form.petitionDetails.map((item, itemIndex) => itemIndex === index ? { ...item, detail: e.target.value } : item) }))} /><Input placeholder="Value" value={row.value} onChange={(e) => setAddForm((form) => ({ ...form, petitionDetails: form.petitionDetails.map((item, itemIndex) => itemIndex === index ? { ...item, value: e.target.value } : item) }))} /><Button type="button" variant="outline" size="sm" onClick={() => setAddForm((form) => ({ ...form, petitionDetails: form.petitionDetails.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</Button></div>)}</div><div className="space-y-2"><Label htmlFor="petition-update-remarks">Remarks</Label><Textarea id="petition-update-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div><p className="text-sm font-medium">Update Case Status?</p><div className="grid gap-2 sm:grid-cols-2"><Button type="button" variant={addForm.petitionUpdateCaseStatus === "YES" ? "default" : "outline"} onClick={() => setAddForm((form) => ({ ...form, petitionUpdateCaseStatus: "YES" }))}>Yes</Button><Button type="button" variant={addForm.petitionUpdateCaseStatus === "NO" ? "default" : "outline"} onClick={() => setAddForm((form) => ({ ...form, petitionUpdateCaseStatus: "NO", petitionSelectedCaseStatusId: "", petitionSelectedCaseStageId: "" }))}>No</Button></div>{addForm.petitionUpdateCaseStatus === "YES" ? <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label>Case Status</Label><select className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.petitionSelectedCaseStatusId} onChange={(e) => setAddForm((form) => ({ ...form, petitionSelectedCaseStatusId: e.target.value }))}><option value="">Select status</option>{caseStatusOptions.map((status) => <option key={status.id} value={status.id}>{status.display_label}</option>)}</select></div><div className="space-y-2"><Label>Case Stage</Label><select className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.petitionSelectedCaseStageId} onChange={(e) => setAddForm((form) => ({ ...form, petitionSelectedCaseStageId: e.target.value }))}><option value="">Select stage</option>{caseStageOptions.map((stage) => <option key={stage.id} value={stage.id}>{stage.display_label}</option>)}</select></div></div> : null}<div className="flex justify-between"><Button type="button" variant="outline" onClick={() => setAddForm((form) => ({ ...form, petitionUpdateStep: 1 }))}>Back</Button><Button type="button" onClick={() => setAddForm((form) => ({ ...form, petitionUpdateStep: 3 }))} disabled={!addForm.petitionStatus.trim() || !addForm.eventDate || !addForm.petitionUpdateCaseStatus || (addForm.petitionUpdateCaseStatus === "YES" && (!addForm.petitionSelectedCaseStatusId || !addForm.petitionSelectedCaseStageId))}>Next</Button></div></> : null}
+                {addForm.petitionUpdateStep === 3 ? <><div className="rounded-md border bg-background p-3"><p className="mb-2 text-sm font-medium">Review</p><div className="grid gap-3 sm:grid-cols-2"><OptionalDetailItem label="Petition" value={selectedPetitionForReview ? `${selectedPetitionForReview.filed_by ?? motionFiledByLabel(selectedPetitionForReview.filed_by_code)} • ${formatDate(selectedPetitionForReview.date_filed ?? selectedPetitionForReview.date_received)}` : null} /><OptionalDetailItem label="Petition Status" value={addForm.petitionStatus} /><OptionalDetailItem label="Status Date" value={formatDate(addForm.eventDate)} /><OptionalDetailItem label="Additional Details" value={addForm.petitionDetails.filter((row) => row.detail.trim() || row.value.trim()).map((row) => `${row.detail.trim()}: ${row.value.trim()}`).join("; ")} /><OptionalDetailItem label="Update Case Status" value={addForm.petitionUpdateCaseStatus === "YES" ? "Yes" : "No"} /><OptionalDetailItem label="Selected Case Status" value={addForm.petitionUpdateCaseStatus === "YES" ? selectedPetitionStatus?.display_label : null} /><OptionalDetailItem label="Selected Case Stage" value={addForm.petitionUpdateCaseStatus === "YES" ? selectedPetitionStage?.display_label : null} /><OptionalDetailItem label="Remarks" value={addForm.description} /></div></div><div className="flex justify-start"><Button type="button" variant="outline" onClick={() => setAddForm((form) => ({ ...form, petitionUpdateStep: 2 }))}>Back</Button></div></> : null}
+              </>
             ) : (
               <>
                 <div className="space-y-2"><Label htmlFor="add-event-date">Event Date</Label><Input id="add-event-date" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div>
@@ -1724,7 +1785,7 @@ export function CaseTimeline({
           </div>
           <DialogFooter className="border-t pt-3">
             <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
-            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.caseResolutionId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : isAddingCourtFiling ? !addForm.courtFilingDecisionId || !addForm.courtName.trim() || !addForm.chargeFiled.trim() : isAddingCourtStatusUpdate ? !courtStatusForm.courtFilingId || courtStatusStep !== 3 : isAddingMotionReceived ? !addForm.motionTitle.trim() || !addForm.filedByCode : isAddingMotionResolved ? !addForm.motionResolveMotionId || !addForm.motionRecommendationId : isAddingMotionDecisionApproved ? addForm.motionDecisionStep !== 5 || !addForm.motionApprovalResolutionId || !addForm.motionApprovalDecisionId || !addForm.motionApprovedByProsecutorId || !addForm.motionUpdateCaseStatus || (addForm.motionUpdateCaseStatus === "YES" && (!addForm.motionSelectedCaseStatusId || !addForm.motionSelectedCaseStageId)) : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : isAddingCourtFiling ? "Record Court Filing" : isAddingCourtStatusUpdate ? "Save Court Status Update" : isAddingMotionReceived ? "Record Motion Received" : isAddingMotionResolved ? "Record Motion Resolved" : isAddingMotionDecisionApproved ? "Save Motion Decision Approval" : "Add event"}</Button>
+            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId || (isAddingReassignment && !addForm.reason.trim()) : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.caseResolutionId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : isAddingCourtFiling ? !addForm.courtFilingDecisionId || !addForm.courtName.trim() || !addForm.chargeFiled.trim() : isAddingCourtStatusUpdate ? !courtStatusForm.courtFilingId || courtStatusStep !== 3 : isAddingMotionReceived ? !addForm.motionTitle.trim() || !addForm.filedByCode : isAddingMotionResolved ? !addForm.motionResolveMotionId || !addForm.motionRecommendationId : isAddingMotionDecisionApproved ? addForm.motionDecisionStep !== 5 || !addForm.motionApprovalResolutionId || !addForm.motionApprovalDecisionId || !addForm.motionApprovedByProsecutorId || !addForm.motionUpdateCaseStatus || (addForm.motionUpdateCaseStatus === "YES" && (!addForm.motionSelectedCaseStatusId || !addForm.motionSelectedCaseStageId)) : isAddingPetitionForReview ? !addForm.filedByCode || !addForm.petitionStatus.trim() : isAddingPetitionForReviewUpdate ? addForm.petitionUpdateStep !== 3 || !addForm.petitionUpdatePetitionId || !addForm.petitionStatus.trim() || !addForm.petitionUpdateCaseStatus || (addForm.petitionUpdateCaseStatus === "YES" && (!addForm.petitionSelectedCaseStatusId || !addForm.petitionSelectedCaseStageId)) : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : isAddingCourtFiling ? "Record Court Filing" : isAddingCourtStatusUpdate ? "Save Court Status Update" : isAddingMotionReceived ? "Record Motion Received" : isAddingMotionResolved ? "Record Motion Resolved" : isAddingMotionDecisionApproved ? "Save Motion Decision Approval" : isAddingPetitionForReview ? "Record Petition for Review" : isAddingPetitionForReviewUpdate ? "Save Petition Update" : "Add event"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
