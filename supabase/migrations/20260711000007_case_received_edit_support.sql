@@ -71,6 +71,7 @@ BEGIN
     SELECT to_jsonb(csh) INTO v_old_source FROM public.case_status_history csh WHERE csh.id=v_source_id AND csh.case_event_id=p_case_event_id FOR UPDATE;
     IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active Case Received status history source record cannot be resolved'; END IF;
     UPDATE public.case_status_history SET status_date=v_date, remarks=v_remarks WHERE id=v_source_id;
+    UPDATE public.cases SET date_received=v_date, updated_by_user_id=p_user_id, updated_at=now() WHERE id=v_event.case_id;
     SELECT to_jsonb(csh) INTO v_new_source FROM public.case_status_history csh WHERE csh.id=v_source_id;
     UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details || jsonb_build_object('date_received',v_date,'time_received',v_time,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
 
