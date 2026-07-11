@@ -769,36 +769,79 @@ function formatJsonPreview(value: unknown) {
   return JSON.stringify(value ?? null, null, 2);
 }
 
-function correctionSnapshot(snapshot: unknown, key: "person" | "organization" | "attributes") {
-  return typeof snapshot === "object" && snapshot && !Array.isArray(snapshot) && key in snapshot ? (snapshot as Record<string, unknown>)[key] : null;
+function correctionSnapshot(snapshot: unknown, key: "person" | "organization" | "attributes" | "participant" | "private_details") {
+  return typeof snapshot === "object" && snapshot && !Array.isArray(snapshot) && key in snapshot ? (snapshot as Record<string, unknown>)[key] as Record<string, unknown> | null : null;
 }
 
-const snapshotFieldLabels: Record<string, string> = {
-  age: "Age", age_text: "Age", birth_date: "Birth date", contact_number: "Contact number", contact_person: "Contact person", display_name: "Display name", email: "Email", first_name: "First name", full_name: "Full name", gender: "Gender", gender_text: "Gender", is_minor_at_case: "Minor at case", is_pwd_at_case: "PWD at case", is_senior_at_case: "Senior at case", last_name: "Last name", middle_name: "Middle name", notes: "Notes", organization_name: "Organization name", person_descriptor: "Descriptor", remarks: "Remarks", source_detail: "Source detail", suffix: "Suffix",
-};
-
-function humanizeSnapshotKey(key: string) {
-  return snapshotFieldLabels[key] ?? key.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+function snapshotValue(snapshot: Record<string, unknown> | null, key: string) {
+  const value = snapshot?.[key];
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "string" && ["UNKNOWN", "MANUAL_ENTRY"].includes(value.trim().toUpperCase())) return null;
+  if (typeof value === "boolean" && value === false) return null;
+  return value;
 }
 
-function formatSnapshotValue(value: unknown): React.ReactNode {
-  if (value === null || value === undefined || value === "") return "—";
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (typeof value === "string") return value;
-  if (typeof value === "number") return String(value);
-  return <pre className="whitespace-pre-wrap text-xs font-normal">{formatJsonPreview(value)}</pre>;
+function formattedSnapshotDate(value: unknown) {
+  return typeof value === "string" ? formatLongDate(value) : null;
 }
 
-function SnapshotDetails({ snapshot }: { snapshot: unknown }) {
-  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return <SectionEmpty>No previous details captured.</SectionEmpty>;
-  const entries = Object.entries(snapshot as Record<string, unknown>).filter(([, value]) => value !== null && value !== undefined && value !== "");
-  if (entries.length === 0) return <SectionEmpty>No previous details captured.</SectionEmpty>;
-  return <div className="grid gap-3 sm:grid-cols-2">{entries.map(([key, value]) => <DetailItem key={key} label={humanizeSnapshotKey(key)} value={formatSnapshotValue(value)} />)}</div>;
+function snapshotText(value: unknown): string | null {
+  const normalized = value === null || value === undefined ? "" : String(value).trim();
+  return normalized ? normalized : null;
+}
+
+function snapshotBooleanLabel(value: unknown) {
+  return value === true ? "Yes" : null;
+}
+
+function sourceDetailValue(privateDetails: Record<string, unknown> | null, identity: Record<string, unknown> | null) {
+  return snapshotText(snapshotValue(privateDetails, "source_detail") ?? snapshotValue(identity, "source_detail"));
+}
+
+function correctionDetail(label: string, value: React.ReactNode) {
+  return hasDetailValue(value) ? { label, value } : null;
+}
+
+function uniqueCorrectionDetails(details: Array<{ label: string; value: React.ReactNode } | null>) {
+  const seen = new Set<string>();
+  return details.filter((detail): detail is { label: string; value: React.ReactNode } => {
+    if (!detail) return false;
+    const key = `${detail.label}:${typeof detail.value === "string" || typeof detail.value === "number" ? detail.value : "node"}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function CorrectionSection({ details, title }: { details: Array<{ label: string; value: React.ReactNode } | null>; title: string }) {
+  const visibleDetails = uniqueCorrectionDetails(details);
+  if (visibleDetails.length === 0) return null;
+  return <Card><CardHeader className="pb-3"><CardTitle className="text-base">{title}</CardTitle></CardHeader><CardContent><div className="grid gap-3 sm:grid-cols-2">{visibleDetails.map((detail) => <DetailItem key={`${detail.label}-${String(detail.value)}`} label={detail.label} value={detail.value} />)}</div></CardContent></Card>;
+}
+
+function ParticipantPreviousSnapshot({ entry, participant }: { entry: CaseParticipantCorrectionRecord; participant: CaseParticipantRecord | null }) {
+  const isOrganization = participant?.participant_kind === "ORGANIZATION";
+  const identity = correctionSnapshot(entry.old_snapshot_json, isOrganization ? "organization" : "person");
+  const attributes = correctionSnapshot(entry.old_snapshot_json, "attributes");
+  const privateDetails = correctionSnapshot(entry.old_snapshot_json, "private_details");
+  const participantSnapshot = correctionSnapshot(entry.old_snapshot_json, "participant");
+  const remarks = snapshotText(snapshotValue(privateDetails, "remarks") ?? snapshotValue(participantSnapshot, "remarks"));
+  const sourceDetail = sourceDetailValue(privateDetails, identity);
+
+  if (isOrganization) {
+    return <div className="space-y-3"><CorrectionSection title="Previous identity" details={[correctionDetail("Organization name", snapshotText(snapshotValue(identity, "organization_name"))), correctionDetail("Contact person", snapshotText(snapshotValue(identity, "contact_person"))), correctionDetail("Contact number", snapshotText(snapshotValue(identity, "contact_number"))), correctionDetail("Email", snapshotText(snapshotValue(identity, "email")))]} /><CorrectionSection title="Previous remarks" details={[correctionDetail("Participant remarks", remarks), correctionDetail("Source detail", sourceDetail), correctionDetail("Notes", snapshotText(snapshotValue(identity, "notes")))]} /></div>;
+  }
+
+  const personAge = snapshotText(snapshotValue(identity, "age"));
+  const attributeAge = snapshotText(snapshotValue(attributes, "age_text") ?? snapshotValue(attributes, "age_years"));
+  const personGender = snapshotText(snapshotValue(identity, "gender"));
+  const attributeGender = snapshotText(snapshotValue(attributes, "gender_text") ?? snapshotValue(attributes, "gender_normalized"));
+
+  return <div className="space-y-3"><CorrectionSection title="Previous identity" details={[correctionDetail("Full name", snapshotText(snapshotValue(identity, "full_name"))), correctionDetail("First name", snapshotText(snapshotValue(identity, "first_name"))), correctionDetail("Middle name", snapshotText(snapshotValue(identity, "middle_name"))), correctionDetail("Last name", snapshotText(snapshotValue(identity, "last_name"))), correctionDetail("Suffix", snapshotText(snapshotValue(identity, "suffix"))), correctionDetail("Birthdate", formattedSnapshotDate(snapshotValue(identity, "birth_date"))), correctionDetail("Gender", personGender ?? attributeGender), correctionDetail("Age", personAge ?? attributeAge), correctionDetail("Person descriptor", snapshotText(snapshotValue(identity, "person_descriptor"))), correctionDetail("Notes", snapshotText(snapshotValue(identity, "notes")))]} /><CorrectionSection title="Previous case-specific details" details={[correctionDetail("Minor", snapshotBooleanLabel(snapshotValue(attributes, "is_minor_at_case") ?? snapshotValue(identity, "is_minor"))), correctionDetail("Senior", snapshotBooleanLabel(snapshotValue(attributes, "is_senior_at_case") ?? snapshotValue(identity, "is_senior"))), correctionDetail("PWD", snapshotBooleanLabel(snapshotValue(attributes, "is_pwd_at_case") ?? snapshotValue(identity, "is_pwd"))), correctionDetail("Source detail", sourceDetail)]} /><CorrectionSection title="Previous remarks" details={[correctionDetail("Participant remarks", remarks), correctionDetail("Notes", snapshotText(snapshotValue(attributes, "notes")))]} /></div>;
 }
 
 function ParticipantCorrectionHistoryDialog({ corrections, onOpenChange, open, participant }: { corrections: CaseParticipantCorrectionRecord[]; onOpenChange: (open: boolean) => void; open: boolean; participant: CaseParticipantRecord | null }) {
-  const identityKey = participant?.participant_kind === "ORGANIZATION" ? "organization" : "person";
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl"><DialogHeader><DialogTitle>Participant Correction History</DialogTitle><DialogDescription>Previous incorrect details for {participant ? participantName(participant) : "this participant"}.</DialogDescription></DialogHeader><div className="space-y-3">{corrections.length === 0 ? <SectionEmpty>No participant corrections recorded.</SectionEmpty> : corrections.map((entry) => <Card key={entry.id}><CardHeader className="space-y-2 pb-3"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Correction</Badge><span className="text-sm text-muted-foreground">{formatDate(entry.corrected_at)}</span><span className="text-sm text-muted-foreground">by {entry.corrected_by_display ?? (entry.corrected_by_user_id ? `User #${entry.corrected_by_user_id}` : "—")}</span></div><CardDescription>Reason: {entry.reason ?? "—"}</CardDescription></CardHeader><CardContent className="space-y-4"><DetailItem label="Previous incorrect version" value={<SnapshotDetails snapshot={correctionSnapshot(entry.old_snapshot_json, identityKey)} />} /><OptionalDetailItem label="Previous attributes" value={<SnapshotDetails snapshot={correctionSnapshot(entry.old_snapshot_json, "attributes")} />} /></CardContent></Card>)}</div><DialogFooter><Button type="button" onClick={() => onOpenChange(false)}>Close</Button></DialogFooter></DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl"><DialogHeader><DialogTitle>Participant Correction History</DialogTitle><DialogDescription>Previous incorrect details for {participant ? participantName(participant) : "this participant"}.</DialogDescription></DialogHeader><div className="space-y-3">{corrections.length === 0 ? <SectionEmpty>No participant corrections recorded.</SectionEmpty> : corrections.map((entry) => <Card key={entry.id}><CardHeader className="space-y-2 pb-3"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Correction</Badge><span className="text-sm text-muted-foreground">{formatLongDate(entry.corrected_at) ?? formatDate(entry.corrected_at)}</span><span className="text-sm text-muted-foreground">by {entry.corrected_by_display ?? (entry.corrected_by_user_id ? `User #${entry.corrected_by_user_id}` : "—")}</span></div><CardDescription>Reason: {entry.reason ?? "—"}</CardDescription></CardHeader><CardContent><ParticipantPreviousSnapshot entry={entry} participant={participant} /></CardContent></Card>)}</div><DialogFooter><Button type="button" onClick={() => onOpenChange(false)}>Close</Button></DialogFooter></DialogContent></Dialog>;
 }
 
 function placeOfCommissionAddressTypeId(refs: OverviewRefs) {
