@@ -22,6 +22,9 @@ type CreatableLookupSelectProps<TOption extends LookupOption> = {
   className?: string;
   noneOption?: { value: string; label: string };
   renderOption?: (option: TOption) => string;
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
+  searchPlaceholder?: string;
   onCreate: (label: string) => Promise<{ id: number; error?: string | null }>;
 };
 
@@ -39,6 +42,9 @@ export function CreatableLookupSelect<TOption extends LookupOption>({
   className,
   noneOption,
   renderOption = (option) => option.display_label,
+  searchValue,
+  onSearchChange,
+  searchPlaceholder = 'Search',
   onCreate,
 }: CreatableLookupSelectProps<TOption>) {
   const [isOpen, setIsOpen] = useState(false);
@@ -81,6 +87,7 @@ export function CreatableLookupSelect<TOption extends LookupOption>({
       <Select value={value} onValueChange={handleValueChange} disabled={disabled}>
         <SelectTrigger className={className}><SelectValue placeholder={placeholder} /></SelectTrigger>
         <SelectContent>
+          {onSearchChange ? <div className="p-2"><Input value={searchValue ?? ''} onChange={(event) => onSearchChange(event.target.value)} onKeyDown={(event) => event.stopPropagation()} placeholder={searchPlaceholder} /></div> : null}
           {noneOption ? <SelectItem value={noneOption.value}>{noneOption.label}</SelectItem> : null}
           {options.map((option) => <SelectItem key={option.id} value={option.id.toString()}>{renderOption(option)}</SelectItem>)}
           <SelectItem value={addValue}>+ {addLabel}</SelectItem>
