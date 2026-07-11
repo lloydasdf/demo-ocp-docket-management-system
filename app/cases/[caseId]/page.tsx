@@ -660,7 +660,6 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
   const [error, setError] = useState<string | null>(null);
   const [isStageDialogOpen, setIsStageDialogOpen] = useState(false);
   const [stageLabel, setStageLabel] = useState("");
-  const [stageCode, setStageCode] = useState("");
   const [localStages, setLocalStages] = useState<RefOption[]>(refs.stages);
 
   useEffect(() => {
@@ -690,13 +689,12 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
     if (!stageLabel.trim()) { setError("Display Label is required."); return; }
     setIsSaving(true);
     setError(null);
-    const result = await addCaseStage({ displayLabel: stageLabel, code: stageCode });
+    const result = await addCaseStage({ displayLabel: stageLabel });
     if (result.error) { setIsSaving(false); setError(result.error.message); return; }
     const stagesResult = await getCaseStages();
     if (!stagesResult.error) setLocalStages((stagesResult.data ?? []) as RefOption[]);
     setValue("stageId", String(result.data));
     setStageLabel("");
-    setStageCode("");
     setIsStageDialogOpen(false);
     setIsSaving(false);
   }
@@ -729,7 +727,7 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
               </>) : null}
               {section === "status" ? (<>
                 <FieldSelect label="Case Status" value={String(formData.statusId ?? "")} onChange={(v) => setValue("statusId", v)} options={refs.statuses} optionLabel={optionLabel} />
-                <FieldSelect label="Case Stage" value={String(formData.stageId ?? "")} onChange={(v) => { if (v === "__add__") { setStageLabel(""); setStageCode(""); setIsStageDialogOpen(true); return; } setValue("stageId", v); }} options={localStages} optionLabel={optionLabel} extraOption={{ value: "__add__", label: "+ Add Case Stage" }} />
+                <FieldSelect label="Case Stage" value={String(formData.stageId ?? "")} onChange={(v) => { if (v === "__add__") { setStageLabel(""); setIsStageDialogOpen(true); return; } setValue("stageId", v); }} options={localStages} optionLabel={optionLabel} extraOption={{ value: "__add__", label: "+ Add Case Stage" }} />
                 <FieldInput label="Status Date" type="date" value={String(formData.statusDate ?? "")} onChange={(v) => setValue("statusDate", v)} className="sm:col-span-2" />
                 <FieldTextarea label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} className="sm:col-span-2" />
               </>) : null}
@@ -744,10 +742,9 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
         </DialogContent>
         <Dialog open={isStageDialogOpen} onOpenChange={setIsStageDialogOpen}>
           <DialogContent className="sm:max-w-md">
-            <DialogHeader><DialogTitle>Add Case Stage</DialogTitle><DialogDescription>Create an active Case Stage option for manual status updates.</DialogDescription></DialogHeader>
+            <DialogHeader><DialogTitle>Add Case Stage</DialogTitle><DialogDescription>Create an active Case Stage option for manual status updates. The code is generated automatically.</DialogDescription></DialogHeader>
             <div className="space-y-4 py-2">
               <FieldInput label="Display Label" value={stageLabel} onChange={setStageLabel} />
-              <FieldInput label="Code (optional)" value={stageCode} onChange={(value) => setStageCode(value.toUpperCase().replace(/[^A-Z0-9]+/g, "_"))} />
             </div>
             <DialogFooter><Button type="button" variant="outline" onClick={() => setIsStageDialogOpen(false)}>Cancel</Button><Button type="button" onClick={handleAddStageSave} disabled={isSaving || !stageLabel.trim()}>{isSaving ? "Saving..." : "Save Case Stage"}</Button></DialogFooter>
           </DialogContent>

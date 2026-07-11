@@ -1193,7 +1193,7 @@ export function CaseTimeline({
   const [recommendationLabel, setRecommendationLabel] = useState("");
   const [isCourtPickerOpen, setIsCourtPickerOpen] = useState(false);
   const [isCourtDialogOpen, setIsCourtDialogOpen] = useState(false);
-  const [courtCreateForm, setCourtCreateForm] = useState({ name: "", code: "", courtType: "", error: "" });
+  const [courtCreateForm, setCourtCreateForm] = useState({ name: "", error: "" });
   const initialManilaDateTime = getManilaDateTimeInputValues();
   const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: initialManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalResolutionId: "", motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[], petitionStatus: "", petitionUpdateStep: 1, petitionUpdatePetitionId: "", petitionUpdateCaseStatus: "", petitionSelectedCaseStatusId: "", petitionSelectedCaseStageId: "", petitionDetails: [] as MotionDetailRow[], customStep: 1, customUpdateCaseStatus: "", customSelectedCaseStatusId: "", customSelectedCaseStageId: "", customDetails: [] as MotionDetailRow[] });
   const [manilaNow, setManilaNow] = useState(() => new Date());
@@ -1675,7 +1675,7 @@ export function CaseTimeline({
   const selectedEventTypeLabel = eventTypes.find((eventType) => eventType.code === addForm.eventTypeCode)?.display_label ?? "";
   const selectedApprovalResolution = caseResolutions.find((resolution) => resolution.id === addForm.caseResolutionId) ?? null;
   const openAddCourtDialog = () => {
-    setCourtCreateForm({ name: addForm.courtName.trim(), code: "", courtType: "", error: "" });
+    setCourtCreateForm({ name: addForm.courtName.trim(), error: "" });
     setIsCourtDialogOpen(true);
     setIsCourtPickerOpen(false);
   };
@@ -1695,13 +1695,13 @@ export function CaseTimeline({
     if (!name) return;
     setIsSaving(true);
     setCourtCreateForm((form) => ({ ...form, error: "" }));
-    const result = await addCourt({ name, code: courtCreateForm.code, courtType: courtCreateForm.courtType });
+    const result = await addCourt({ name });
     setIsSaving(false);
     if (result.error) {
       setCourtCreateForm((form) => ({ ...form, error: result.error.message }));
       return;
     }
-    const createdCourt: CourtReferenceRecord = { id: result.data, code: courtCreateForm.code.trim() || name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "COURT", name, court_type: courtCreateForm.courtType.trim() || null, is_active: true };
+    const createdCourt: CourtReferenceRecord = { id: result.data, code: name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "COURT", name, court_type: null, is_active: true };
     const refreshError = await refreshCourtsAfterCreate(createdCourt);
     setAddForm((form) => ({ ...form, courtId: result.data, courtName: name }));
     if (refreshError) {
@@ -2087,12 +2087,10 @@ export function CaseTimeline({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Court</DialogTitle>
-            <DialogDescription>Add a court to the active court list. Court code is generated automatically when blank.</DialogDescription>
+            <DialogDescription>Add a court to the active court list. Court code and metadata are generated automatically.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3">
             <div className="space-y-2"><Label htmlFor="court-create-name">Court Name</Label><Input id="court-create-name" value={courtCreateForm.name} onChange={(e) => setCourtCreateForm((form) => ({ ...form, name: e.target.value }))} /></div>
-            <div className="space-y-2"><Label htmlFor="court-create-code">Court Code</Label><Input id="court-create-code" value={courtCreateForm.code} onChange={(e) => setCourtCreateForm((form) => ({ ...form, code: e.target.value }))} placeholder="Auto-generated when blank" /></div>
-            <div className="space-y-2"><Label htmlFor="court-create-type">Court Type</Label><Input id="court-create-type" value={courtCreateForm.courtType} onChange={(e) => setCourtCreateForm((form) => ({ ...form, courtType: e.target.value }))} placeholder="Optional" /></div>
             {courtCreateForm.error ? <p className="text-sm text-destructive">{courtCreateForm.error}</p> : null}
           </div>
           <DialogFooter>
