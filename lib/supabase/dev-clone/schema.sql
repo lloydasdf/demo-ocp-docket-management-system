@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 9uiXo0JQ3fNdY2egtNMvaRzBRlxluqnK7Au4lIptrCHnEecQbMLGKf8C2c6RfHW
+\restrict ZZxgz8VkUNe2ETXfwo9Pf64nL1Wu9sXk1BVibtF4Zdw8kc0kJDEbS70DC9MKg5o
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 18.1
@@ -759,6 +759,65 @@ CREATE FUNCTION pgbouncer.get_auth(p_usename text) RETURNS TABLE(username text, 
       WHERE rolname=$1 and rolcanlogin;
   END;
   $_$;
+
+
+--
+-- Name: add_case_stage(text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.add_case_stage(p_display_label text, p_code text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+DECLARE
+  v_label text := nullif(btrim(p_display_label), '');
+  v_code text := nullif(upper(regexp_replace(btrim(coalesce(p_code, p_display_label)), '[^A-Za-z0-9]+', '_', 'g')), '');
+  v_id bigint;
+  v_new jsonb;
+BEGIN
+  IF v_label IS NULL THEN RAISE EXCEPTION 'Display Label is required'; END IF;
+  v_code := regexp_replace(v_code, '^_+|_+$', '', 'g');
+  IF v_code IS NULL OR v_code = '' THEN RAISE EXCEPTION 'Case Stage code is required'; END IF;
+  IF EXISTS (SELECT 1 FROM public.case_stages WHERE upper(code) = v_code) THEN RAISE EXCEPTION 'Case Stage code already exists'; END IF;
+  IF EXISTS (SELECT 1 FROM public.case_stages WHERE is_active IS TRUE AND lower(regexp_replace(btrim(display_label::text), '\s+', ' ', 'g')) = lower(regexp_replace(v_label, '\s+', ' ', 'g'))) THEN RAISE EXCEPTION 'An active Case Stage with this label already exists'; END IF;
+
+  INSERT INTO public.case_stages(code, display_label, sort_order, is_final_stage, is_milestone, is_active)
+  VALUES (v_code, v_label, COALESCE((SELECT max(sort_order) + 10 FROM public.case_stages), 10), false, false, true)
+  RETURNING id INTO v_id;
+
+  SELECT to_jsonb(cs) INTO v_new FROM public.case_stages cs WHERE cs.id = v_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,new_data,summary,metadata)
+  VALUES (p_user_id,'case_stages',v_id,'ADD_CASE_STAGE',v_new,'Added Case Stage ' || v_label || '.',jsonb_build_object('code',v_code));
+  RETURN v_id;
+END;
+$_$;
+
+
+--
+-- Name: add_motion_resolution_recommendation(text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.add_motion_resolution_recommendation(p_display_label text, p_code text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_label text := NULLIF(btrim(coalesce(p_display_label,'')), ''); v_code text; v_id bigint; v_old jsonb; v_new jsonb;
+BEGIN
+  IF v_label IS NULL THEN RAISE EXCEPTION 'Recommendation Label is required'; END IF;
+  v_code := upper(regexp_replace(coalesce(NULLIF(btrim(p_code), ''), v_label), '[^a-zA-Z0-9]+', '_', 'g'));
+  v_code := trim(both '_' FROM coalesce(nullif(v_code,''), 'RECOMMENDATION'));
+  IF EXISTS (SELECT 1 FROM public.motion_resolution_recommendations WHERE is_active AND (lower(code)=lower(v_code) OR lower(display_label)=lower(v_label))) THEN
+    RAISE EXCEPTION 'An active recommendation with this code or label already exists.';
+  END IF;
+  INSERT INTO public.motion_resolution_recommendations(code, display_label, sort_order, is_active)
+  VALUES (v_code, v_label, 100, true) RETURNING id INTO v_id;
+  SELECT to_jsonb(r) INTO v_new FROM public.motion_resolution_recommendations r WHERE r.id = v_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,summary,metadata)
+  VALUES (p_user_id,'motion_resolution_recommendations',v_id,'CREATE_MOTION_RESOLUTION_RECOMMENDATION',v_old,v_new,'Motion resolution recommendation added.',jsonb_build_object('code',v_code,'display_label',v_label));
+  RETURN v_id;
+END;
+$$;
 
 
 --
@@ -1612,64 +1671,74 @@ CREATE FUNCTION public.compute_current_case_state(p_case_id bigint) RETURNS TABL
     SET search_path TO 'public'
     AS $$
 DECLARE
-  v_unapproved_resolution_count integer;
-  v_unfiled_for_filing_count integer;
-  v_filed_for_filing_count integer;
-  v_dismissal_count integer;
-  v_active_assignment_count integer;
+  v_active_petition_count integer; v_petition_status_code text; v_petition_stage_code text;
+  v_motion_resolution_for_approval_count integer; v_pending_motion_count integer; v_unapproved_resolution_count integer; v_unfiled_for_filing_count integer; v_filed_for_filing_count integer; v_dismissal_count integer; v_active_assignment_count integer; v_explicit_status_code text; v_explicit_stage_code text;
 BEGIN
-  SELECT count(*) INTO v_unapproved_resolution_count
-  FROM public.case_resolutions cr
-  WHERE cr.case_id = p_case_id
-    AND cr.is_voided = false
-    AND NOT EXISTS (
-      SELECT 1 FROM public.case_resolution_approvals a
-      WHERE a.case_resolution_id = cr.id AND a.is_voided = false
-    );
+  SELECT count(*) INTO v_active_petition_count
+  FROM public.case_petitions_for_review p
+  JOIN public.case_events ce ON ce.id=p.case_event_id AND ce.is_voided=false
+  WHERE p.case_id=p_case_id AND p.is_voided=false;
 
-  SELECT
-    count(*) FILTER (WHERE aa.decision_code = 'FOR_FILING' AND EXISTS (
-      SELECT 1 FROM public.case_court_filings cf
-      WHERE cf.case_resolution_approval_action_id = aa.id AND cf.is_voided = false
-    )),
-    count(*) FILTER (WHERE aa.decision_code = 'FOR_FILING' AND NOT EXISTS (
-      SELECT 1 FROM public.case_court_filings cf
-      WHERE cf.case_resolution_approval_action_id = aa.id AND cf.is_voided = false
-    )),
-    count(*) FILTER (WHERE aa.decision_code = 'DISMISSAL')
-  INTO v_filed_for_filing_count, v_unfiled_for_filing_count, v_dismissal_count
-  FROM public.case_resolution_approval_actions aa
-  JOIN public.case_resolution_approvals a ON a.id = aa.approval_id AND a.is_voided = false
-  JOIN public.case_resolutions cr ON cr.id = a.case_resolution_id AND cr.is_voided = false
-  WHERE aa.case_id = p_case_id;
+  SELECT cs.code, cst.code INTO v_petition_status_code, v_petition_stage_code
+  FROM public.case_petition_for_review_updates u
+  JOIN public.case_petitions_for_review p ON p.id=u.petition_for_review_id AND p.is_voided=false
+  JOIN public.case_events pe ON pe.id=p.case_event_id AND pe.is_voided=false
+  JOIN public.case_statuses cs ON cs.id=u.selected_case_status_id AND cs.is_active IS TRUE
+  JOIN public.case_stages cst ON cst.id=u.selected_case_stage_id AND cst.is_active IS TRUE
+  WHERE u.case_id=p_case_id AND u.is_voided=false AND u.updates_case_status=true
+  ORDER BY u.status_date DESC, NULL::time without time zone DESC NULLS LAST, pe.id DESC, u.id DESC
+  LIMIT 1;
 
-  SELECT count(*) INTO v_active_assignment_count
-  FROM public.case_assignments ca
-  WHERE ca.case_id = p_case_id AND ca.unassigned_at IS NULL AND ca.is_voided IS FALSE;
+  SELECT count(*) INTO v_motion_resolution_for_approval_count FROM public.case_motion_resolutions cmr JOIN public.case_motions cm ON cm.id=cmr.case_motion_id AND cm.is_voided=false JOIN public.case_events re ON re.id=cmr.case_event_id AND re.is_voided=false JOIN public.case_events me ON me.id=cm.case_event_id AND me.is_voided=false WHERE cmr.case_id=p_case_id AND cmr.is_voided=false AND NOT EXISTS (SELECT 1 FROM public.case_motion_resolution_approvals a JOIN public.case_events ae ON ae.id=a.case_event_id AND ae.is_voided=false WHERE a.case_motion_resolution_id=cmr.id AND a.is_voided=false);
+  SELECT count(*) INTO v_pending_motion_count FROM public.case_motions cm JOIN public.case_events ce ON ce.id=cm.case_event_id AND ce.is_voided=false WHERE cm.case_id=p_case_id AND cm.is_voided=false AND cm.case_event_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.case_motion_resolutions cmr WHERE cmr.case_motion_id=cm.id AND cmr.is_voided=false);
+  IF COALESCE(v_motion_resolution_for_approval_count,0)>0 THEN RETURN QUERY SELECT 'PENDING'::text,'MOTION_RESO_FOR_APPROVAL'::text; RETURN; ELSIF COALESCE(v_pending_motion_count,0)>0 THEN RETURN QUERY SELECT 'PENDING'::text,'MOTION_PENDING'::text; RETURN; END IF;
 
-  IF COALESCE(v_unapproved_resolution_count, 0) > 0 THEN
-    IF COALESCE(v_filed_for_filing_count, 0) > 0 THEN
-      RETURN QUERY SELECT 'PENDING'::text, 'FILED_OTHER_RESO_FOR_APPROVAL'::text;
-    ELSE
-      RETURN QUERY SELECT 'PENDING'::text, 'RESO_FOR_APPROVAL'::text;
-    END IF;
-  ELSIF COALESCE(v_unfiled_for_filing_count, 0) > 0 THEN
-    IF COALESCE(v_filed_for_filing_count, 0) > 0 THEN
-      RETURN QUERY SELECT 'PENDING'::text, 'FILED_OTHER_INFO_FOR_FILING'::text;
-    ELSE
-      RETURN QUERY SELECT 'PENDING'::text, 'FOR_FILING'::text;
-    END IF;
-  ELSIF COALESCE(v_filed_for_filing_count, 0) > 0 AND COALESCE(v_dismissal_count, 0) > 0 THEN
-    RETURN QUERY SELECT 'MIXED_RESULT'::text, 'MIXED_RESULT'::text;
-  ELSIF COALESCE(v_filed_for_filing_count, 0) > 0 THEN
-    RETURN QUERY SELECT 'FILED'::text, 'FILED'::text;
-  ELSIF COALESCE(v_dismissal_count, 0) > 0 THEN
-    RETURN QUERY SELECT 'DISMISSED'::text, 'DISMISSED'::text;
-  ELSIF COALESCE(v_active_assignment_count, 0) > 0 THEN
-    RETURN QUERY SELECT 'PENDING'::text, 'CASE_RAFFLED'::text;
-  ELSE
-    RETURN QUERY SELECT 'PENDING'::text, 'FOR_RAFFLE'::text;
-  END IF;
+  SELECT count(*) INTO v_unapproved_resolution_count FROM public.case_resolutions cr WHERE cr.case_id=p_case_id AND cr.is_voided=false AND NOT EXISTS (SELECT 1 FROM public.case_resolution_approvals a WHERE a.case_resolution_id=cr.id AND a.is_voided=false);
+  SELECT count(*) FILTER (WHERE aa.decision_code='FOR_FILING' AND EXISTS (SELECT 1 FROM public.case_court_filings cf WHERE cf.case_resolution_approval_action_id=aa.id AND cf.is_voided=false)), count(*) FILTER (WHERE aa.decision_code='FOR_FILING' AND NOT EXISTS (SELECT 1 FROM public.case_court_filings cf WHERE cf.case_resolution_approval_action_id=aa.id AND cf.is_voided=false)), count(*) FILTER (WHERE aa.decision_code='DISMISSAL') INTO v_filed_for_filing_count, v_unfiled_for_filing_count, v_dismissal_count FROM public.case_resolution_approval_actions aa JOIN public.case_resolution_approvals a ON a.id=aa.approval_id AND a.is_voided=false JOIN public.case_resolutions cr ON cr.id=a.case_resolution_id AND cr.is_voided=false WHERE aa.case_id=p_case_id;
+  IF COALESCE(v_unapproved_resolution_count,0)>0 THEN IF COALESCE(v_filed_for_filing_count,0)>0 THEN RETURN QUERY SELECT 'PENDING'::text,'FILED_OTHER_RESO_FOR_APPROVAL'::text; ELSE RETURN QUERY SELECT 'PENDING'::text,'RESO_FOR_APPROVAL'::text; END IF; RETURN; ELSIF COALESCE(v_unfiled_for_filing_count,0)>0 THEN IF COALESCE(v_filed_for_filing_count,0)>0 THEN RETURN QUERY SELECT 'PENDING'::text,'FILED_OTHER_INFO_FOR_FILING'::text; ELSE RETURN QUERY SELECT 'PENDING'::text,'FOR_FILING'::text; END IF; RETURN; END IF;
+
+  IF COALESCE(v_active_petition_count,0) > 0 AND v_petition_status_code IS NULL THEN RETURN QUERY SELECT 'PENDING'::text, 'PENDING_PETREV'::text; RETURN; END IF;
+
+  SELECT explicit_state.status_code, explicit_state.stage_code INTO v_explicit_status_code, v_explicit_stage_code
+  FROM (
+    SELECT cs.code AS status_code, cst.code AS stage_code, ce.event_date, ce.event_time, ce.id AS case_event_id, msu.id AS source_id
+    FROM public.case_manual_status_updates msu
+    JOIN public.case_events ce ON ce.id=msu.case_event_id AND ce.is_voided=false
+    JOIN public.case_event_types cet ON cet.id=ce.event_type_id AND cet.code='CASE_STATUS_UPDATED'
+    JOIN public.case_statuses cs ON cs.id=msu.selected_case_status_id AND cs.is_active IS TRUE
+    JOIN public.case_stages cst ON cst.id=msu.selected_case_stage_id AND cst.is_active IS TRUE
+    WHERE msu.case_id=p_case_id AND msu.is_voided=false AND (COALESCE(v_active_petition_count,0)=0 OR v_petition_status_code IS NOT NULL)
+    UNION ALL
+    SELECT cs.code, cst.code, ce.event_date, ce.event_time, ce.id, a.id
+    FROM public.case_motion_resolution_approvals a
+    JOIN public.case_events ce ON ce.id=a.case_event_id AND ce.is_voided=false
+    JOIN public.case_statuses cs ON cs.id=a.selected_case_status_id AND cs.is_active IS TRUE
+    JOIN public.case_stages cst ON cst.id=a.selected_case_stage_id AND cst.is_active IS TRUE
+    JOIN public.case_motion_resolutions r ON r.id=a.case_motion_resolution_id AND r.is_voided=false
+    JOIN public.case_motions m ON m.id=a.case_motion_id AND m.is_voided=false
+    WHERE a.case_id=p_case_id AND a.is_voided=false AND a.updates_case_status=true
+    UNION ALL
+    SELECT cs.code, cst.code, u.status_date, NULL::time without time zone, pe.id, u.id
+    FROM public.case_petition_for_review_updates u
+    JOIN public.case_petitions_for_review p ON p.id=u.petition_for_review_id AND p.is_voided=false
+    JOIN public.case_events pe ON pe.id=p.case_event_id AND pe.is_voided=false
+    JOIN public.case_statuses cs ON cs.id=u.selected_case_status_id AND cs.is_active IS TRUE
+    JOIN public.case_stages cst ON cst.id=u.selected_case_stage_id AND cst.is_active IS TRUE
+    WHERE u.case_id=p_case_id AND u.is_voided=false AND u.updates_case_status=true
+    UNION ALL
+    SELECT cs.code, cst.code, ce.event_date, ce.event_time, ce.id, ce.id
+    FROM public.case_events ce
+    JOIN public.case_event_types cet ON cet.id=ce.event_type_id AND cet.code='CUSTOM_EVENT'
+    JOIN public.case_statuses cs ON cs.id=ce.case_status_id AND cs.is_active IS TRUE
+    JOIN public.case_stages cst ON cst.id=ce.case_stage_id AND cst.is_active IS TRUE
+    WHERE ce.case_id=p_case_id AND ce.is_voided=false AND COALESCE((ce.details_jsonb->>'updates_case_status')::boolean,false)=true
+  ) explicit_state
+  ORDER BY explicit_state.event_date DESC, explicit_state.event_time DESC NULLS LAST, explicit_state.case_event_id DESC, explicit_state.source_id DESC
+  LIMIT 1;
+  IF v_explicit_status_code IS NOT NULL THEN RETURN QUERY SELECT v_explicit_status_code, v_explicit_stage_code; RETURN; END IF;
+
+  SELECT count(*) INTO v_active_assignment_count FROM public.case_assignments ca WHERE ca.case_id=p_case_id AND ca.unassigned_at IS NULL AND ca.is_voided IS FALSE;
+  IF COALESCE(v_filed_for_filing_count,0)>0 AND COALESCE(v_dismissal_count,0)>0 THEN RETURN QUERY SELECT 'MIXED_RESULT'::text,'MIXED_RESULT'::text; ELSIF COALESCE(v_filed_for_filing_count,0)>0 THEN RETURN QUERY SELECT 'FILED'::text,'FILED'::text; ELSIF COALESCE(v_dismissal_count,0)>0 THEN RETURN QUERY SELECT 'DISMISSED'::text,'DISMISSED'::text; ELSIF COALESCE(v_active_assignment_count,0)>0 THEN RETURN QUERY SELECT 'PENDING'::text,'CASE_RAFFLED'::text; ELSE RETURN QUERY SELECT 'PENDING'::text,'FOR_RAFFLE'::text; END IF;
 END;
 $$;
 
@@ -1678,7 +1747,7 @@ $$;
 -- Name: FUNCTION compute_current_case_state(p_case_id bigint); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.compute_current_case_state(p_case_id bigint) IS 'Verification coverage: recording CASE_RESOLVED yields PENDING/RESO_FOR_APPROVAL; voiding it recomputes CASE_RAFFLED when only assignment remains, FOR_RAFFLE with no assignment, RESO_FOR_APPROVAL when another resolution awaits approval, FOR_FILING when approved filing remains, and final FILED/DISMISSED/MIXED_RESULT from active linked resolution approvals and filings.';
+COMMENT ON FUNCTION public.compute_current_case_state(p_case_id bigint) IS 'Manual Case Status Updated, Motion Decision Approved, Petition Update, and Custom Event explicit statuses share deterministic explicit-state recompute; active Custom Events with updates_case_status=true participate in void recomputation.';
 
 
 --
@@ -2257,6 +2326,187 @@ $$;
 
 
 --
+-- Name: edit_case_event_specific(bigint, text, jsonb, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.edit_case_event_specific(p_case_event_id bigint, p_expected_event_type_code text, p_values jsonb DEFAULT '{}'::jsonb, p_edit_reason text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_event public.case_events%ROWTYPE;
+  v_code text;
+  v_old_event jsonb;
+  v_new_event jsonb;
+  v_old_source jsonb;
+  v_new_source jsonb;
+  v_source_table text;
+  v_source_id bigint;
+  v_date date;
+  v_time time without time zone;
+  v_remarks text;
+  v_details jsonb;
+  v_title text;
+  v_prosecutor bigint;
+  v_staff bigint;
+  v_latest_assignment_id bigint;
+  v_assigned_name text;
+  v_recompute boolean := false;
+BEGIN
+  IF nullif(btrim(coalesce(p_edit_reason,'')), '') IS NULL THEN
+    RAISE EXCEPTION 'Reason for Edit is required';
+  END IF;
+
+  SELECT ce.* INTO v_event
+  FROM public.case_events ce
+  WHERE ce.id = p_case_event_id AND ce.is_voided = false
+  FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Active timeline event % not found', p_case_event_id; END IF;
+
+  SELECT cet.code INTO v_code
+  FROM public.case_event_types cet
+  WHERE cet.id = v_event.event_type_id;
+  IF v_code IS DISTINCT FROM p_expected_event_type_code THEN RAISE EXCEPTION 'This activity is %, not %', v_code, p_expected_event_type_code; END IF;
+
+  v_source_table := v_event.source_table;
+  v_source_id := v_event.source_id;
+  v_date := coalesce(nullif(p_values->>'event_date','')::date, v_event.event_date);
+  v_time := nullif(p_values->>'event_time','')::time;
+  v_remarks := nullif(btrim(coalesce(p_values->>'remarks', p_values->>'description', '')), '');
+  v_details := coalesce(v_event.details_jsonb, '{}'::jsonb);
+  v_old_event := to_jsonb(v_event);
+
+  IF v_code IN ('COURT_STATUS_UPDATE','PETITION_FOR_REVIEW_UPDATE') THEN
+    RAISE EXCEPTION '% is updated through its own update-history workflow and cannot be edited from the timeline', v_code;
+  END IF;
+
+  IF v_code IN ('CASE_ASSIGNMENT','CASE_REASSIGNMENT') THEN
+    IF v_source_table IS DISTINCT FROM 'case_assignments' OR v_source_id IS NULL THEN RAISE EXCEPTION 'Assignment source record cannot be resolved'; END IF;
+    SELECT to_jsonb(ca) INTO v_old_source FROM public.case_assignments ca WHERE ca.id=v_source_id AND ca.case_event_id=p_case_event_id AND ca.is_voided=false FOR UPDATE;
+    IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active assignment source record cannot be resolved'; END IF;
+    SELECT id INTO v_latest_assignment_id FROM public.case_assignments WHERE case_id=v_event.case_id AND is_voided=false AND unassigned_at IS NULL ORDER BY assigned_at DESC NULLS LAST, id DESC LIMIT 1;
+    v_prosecutor := nullif(p_values->>'prosecutor_id','')::bigint;
+    v_staff := nullif(p_values->>'staff_id','')::bigint;
+    IF (v_prosecutor IS DISTINCT FROM (v_old_source->>'prosecutor_id')::bigint OR v_staff IS DISTINCT FROM nullif(v_old_source->>'staff_id','')::bigint) AND v_latest_assignment_id IS DISTINCT FROM v_source_id THEN
+      RAISE EXCEPTION 'Only the latest active assignment/reassignment may have assignment-defining values corrected';
+    END IF;
+    UPDATE public.case_assignments SET prosecutor_id=coalesce(v_prosecutor, prosecutor_id), staff_id=v_staff, assigned_at=(v_date + coalesce(v_time, assigned_at::time, '00:00'::time)) AT TIME ZONE 'Asia/Manila', remarks=v_remarks WHERE id=v_source_id;
+    SELECT to_jsonb(ca) INTO v_new_source FROM public.case_assignments ca WHERE ca.id=v_source_id;
+    v_details := v_details || jsonb_build_object('prosecutor_id', coalesce(v_prosecutor,(v_old_source->>'prosecutor_id')::bigint),'staff_id',v_staff,'remarks',v_remarks);
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,prosecutor_id=coalesce(v_prosecutor,prosecutor_id),staff_id=v_staff,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+
+  ELSIF v_code = 'MOTION_RECEIVED' THEN
+    IF v_source_table IS DISTINCT FROM 'case_motions' OR v_source_id IS NULL THEN RAISE EXCEPTION 'Motion source record cannot be resolved'; END IF;
+    SELECT to_jsonb(cm) INTO v_old_source FROM public.case_motions cm WHERE cm.id=v_source_id AND cm.case_event_id=p_case_event_id AND cm.is_voided=false FOR UPDATE;
+    IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active motion source record cannot be resolved'; END IF;
+    IF upper(coalesce(p_values->>'filed_by_code','')) NOT IN ('COMPLAINANT','RESPONDENT') THEN RAISE EXCEPTION 'Filed By must be COMPLAINANT or RESPONDENT'; END IF;
+    v_title := nullif(btrim(coalesce(p_values->>'motion_title','')), ''); IF v_title IS NULL THEN RAISE EXCEPTION 'Motion Title is required'; END IF;
+    v_prosecutor := nullif(p_values->>'assigned_prosecutor_id','')::bigint;
+    IF v_prosecutor IS NOT NULL THEN
+      SELECT coalesce(short_name, full_name) INTO v_assigned_name FROM public.prosecutors WHERE id=v_prosecutor AND coalesce(is_active,true) IS TRUE;
+      IF v_assigned_name IS NULL THEN RAISE EXCEPTION 'Assigned Prosecutor must be active'; END IF;
+    END IF;
+    UPDATE public.case_motions SET motion_name=v_title,motion_title=v_title,filed_by=CASE upper(p_values->>'filed_by_code') WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,filed_by_code=upper(p_values->>'filed_by_code'),assigned_prosecutor_id=v_prosecutor,date_received=v_date,date_filed=v_date,time_filed=v_time,details_jsonb=coalesce(p_values->'details','[]'::jsonb),remarks=v_remarks,updated_by_user_id=p_user_id,updated_at=now() WHERE id=v_source_id;
+    SELECT to_jsonb(cm) INTO v_new_source FROM public.case_motions cm WHERE cm.id=v_source_id;
+    v_details := v_details || jsonb_build_object('motion_title',v_title,'filed_by_code',upper(p_values->>'filed_by_code'),'filed_by_label',CASE upper(p_values->>'filed_by_code') WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,'assigned_prosecutor_id',v_prosecutor,'assigned_prosecutor_name',v_assigned_name,'date_filed',v_date,'time_filed',v_time,'details',coalesce(p_values->'details','[]'::jsonb),'remarks',v_remarks);
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,title='Motion Received',description=v_remarks,prosecutor_id=v_prosecutor,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+
+  ELSIF v_code = 'COURT_FILING' THEN
+    SELECT to_jsonb(cf) INTO v_old_source FROM public.case_court_filings cf WHERE cf.id=v_source_id AND cf.case_event_id=p_case_event_id AND cf.is_voided=false FOR UPDATE;
+    IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active court filing source record cannot be resolved'; END IF;
+    UPDATE public.case_court_filings SET court_name=coalesce(nullif(p_values->>'court_name',''),court_name), court_branch=nullif(p_values->>'court_branch',''), date_filed=v_date, time_filed=v_time, information_count=nullif(p_values->>'information_count','')::integer, remarks=v_remarks, updated_by_user_id=p_user_id, updated_at=now() WHERE id=v_source_id;
+    SELECT to_jsonb(cf) INTO v_new_source FROM public.case_court_filings cf WHERE cf.id=v_source_id;
+    v_details := v_details || jsonb_build_object('court_name',p_values->>'court_name','court_branch',p_values->>'court_branch','date_filed',v_date,'time_filed',v_time,'information_count',nullif(p_values->>'information_count','')::integer,'remarks',v_remarks);
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+
+  ELSIF v_code = 'PETITION_FOR_REVIEW' THEN
+    SELECT to_jsonb(p) INTO v_old_source FROM public.case_petitions_for_review p WHERE p.id=v_source_id AND p.case_event_id=p_case_event_id FOR UPDATE;
+    IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active petition source record cannot be resolved'; END IF;
+    IF upper(coalesce(p_values->>'filed_by_code','')) NOT IN ('COMPLAINANT','RESPONDENT') THEN RAISE EXCEPTION 'Filed By must be COMPLAINANT or RESPONDENT'; END IF;
+    v_prosecutor := nullif(p_values->>'assigned_prosecutor_id','')::bigint;
+    IF v_prosecutor IS NOT NULL THEN
+      SELECT coalesce(short_name, full_name) INTO v_assigned_name FROM public.prosecutors WHERE id=v_prosecutor AND coalesce(is_active,true) IS TRUE;
+      IF v_assigned_name IS NULL THEN RAISE EXCEPTION 'Assigned Prosecutor must be active'; END IF;
+    END IF;
+    UPDATE public.case_petitions_for_review SET filed_by=CASE upper(p_values->>'filed_by_code') WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,filed_by_code=upper(p_values->>'filed_by_code'),date_received=v_date,date_filed=v_date,time_filed=v_time,petition_status=nullif(p_values->>'petition_status',''),status_date=v_date,additional_details_jsonb=coalesce(p_values->'details','[]'::jsonb),assigned_prosecutor_id=v_prosecutor,handling_prosecutor_text=v_assigned_name,remarks=v_remarks,updated_by_user_id=p_user_id,updated_at=now() WHERE id=v_source_id;
+    SELECT to_jsonb(p) INTO v_new_source FROM public.case_petitions_for_review p WHERE p.id=v_source_id;
+    v_details := v_details || jsonb_build_object('filed_by_code',upper(p_values->>'filed_by_code'),'filed_by_label',CASE upper(p_values->>'filed_by_code') WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,'date_filed',v_date,'time_filed',v_time,'petition_status',p_values->>'petition_status','status_date',v_date,'additional_details',coalesce(p_values->'details','[]'::jsonb),'assigned_prosecutor_id',v_prosecutor,'assigned_prosecutor_name',v_assigned_name,'remarks',v_remarks);
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,prosecutor_id=v_prosecutor,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+
+  ELSIF v_code = 'CASE_RESOLVED' THEN
+    SELECT to_jsonb(cr) INTO v_old_source FROM public.case_resolutions cr WHERE cr.id=v_source_id AND cr.case_event_id=p_case_event_id AND cr.is_voided=false FOR UPDATE;
+    IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active case resolution source record cannot be resolved'; END IF;
+    IF EXISTS (SELECT 1 FROM public.case_resolution_approvals a WHERE a.case_resolution_id=v_source_id AND a.is_voided=false) AND v_date IS DISTINCT FROM (v_old_source->>'date_resolved')::date THEN
+      RAISE EXCEPTION 'This resolution has an active approval dependency; void dependent approval before changing resolution-defining dates';
+    END IF;
+    UPDATE public.case_resolutions SET date_resolved=v_date,time_resolved=v_time,remarks=v_remarks,updated_by_user_id=p_user_id,updated_at=now() WHERE id=v_source_id;
+    SELECT to_jsonb(cr) INTO v_new_source FROM public.case_resolutions cr WHERE cr.id=v_source_id;
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details || jsonb_build_object('date_resolved',v_date,'time_resolved',v_time,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+
+  ELSIF v_code = 'CASE_DECISION_APPROVED' THEN
+    SELECT to_jsonb(a) INTO v_old_source FROM public.case_resolution_approvals a WHERE a.id=v_source_id AND a.case_event_id=p_case_event_id AND a.is_voided=false FOR UPDATE;
+    IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active case decision approval source record cannot be resolved'; END IF;
+    UPDATE public.case_resolution_approvals SET approved_by_prosecutor_id=coalesce(nullif(p_values->>'approved_by_prosecutor_id','')::bigint,approved_by_prosecutor_id),date_approved=v_date,time_approved=v_time,remarks=v_remarks,updated_by_user_id=p_user_id,updated_at=now() WHERE id=v_source_id;
+    SELECT to_jsonb(a) INTO v_new_source FROM public.case_resolution_approvals a WHERE a.id=v_source_id;
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details || jsonb_build_object('approved_by_prosecutor_id',nullif(p_values->>'approved_by_prosecutor_id','')::bigint,'date_approved',v_date,'time_approved',v_time,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+
+  ELSIF v_code = 'MOTION_RESOLVED' THEN
+    SELECT to_jsonb(cmr) INTO v_old_source FROM public.case_motion_resolutions cmr WHERE cmr.id=v_source_id AND cmr.case_event_id=p_case_event_id AND cmr.is_voided=false FOR UPDATE;
+    IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active motion resolution source record cannot be resolved'; END IF;
+    IF EXISTS (SELECT 1 FROM public.case_motion_resolution_approvals a WHERE a.case_motion_resolution_id=v_source_id AND a.is_voided=false)
+       AND (v_date IS DISTINCT FROM (v_old_source->>'date_resolved')::date OR v_time IS DISTINCT FROM nullif(v_old_source->>'time_resolved','')::time) THEN
+      RAISE EXCEPTION 'This Motion Resolution has an active Motion Decision Approval. Only remarks can be corrected until the approval is voided.';
+    END IF;
+    UPDATE public.case_motion_resolutions SET date_resolved=v_date,time_resolved=v_time,remarks=v_remarks,updated_by_user_id=p_user_id,updated_at=now() WHERE id=v_source_id;
+    SELECT to_jsonb(cmr) INTO v_new_source FROM public.case_motion_resolutions cmr WHERE cmr.id=v_source_id;
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details || jsonb_build_object('date_resolved',v_date,'time_resolved',v_time,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+
+  ELSIF v_code = 'MOTION_DECISION_APPROVED' THEN
+    SELECT to_jsonb(a) INTO v_old_source FROM public.case_motion_resolution_approvals a WHERE a.id=v_source_id AND a.case_event_id=p_case_event_id AND a.is_voided=false FOR UPDATE;
+    IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active motion approval source record cannot be resolved'; END IF;
+    v_recompute := coalesce((v_old_source->>'updates_case_status')::boolean,false) AND (v_date IS DISTINCT FROM (v_old_source->>'date_approved')::date OR v_time IS DISTINCT FROM nullif(v_old_source->>'time_approved','')::time);
+    UPDATE public.case_motion_resolution_approvals SET approved_by_prosecutor_id=coalesce(nullif(p_values->>'approved_by_prosecutor_id','')::bigint,approved_by_prosecutor_id),date_approved=v_date,time_approved=v_time,remarks=v_remarks,updated_by_user_id=p_user_id,updated_at=now() WHERE id=v_source_id;
+    SELECT to_jsonb(a) INTO v_new_source FROM public.case_motion_resolution_approvals a WHERE a.id=v_source_id;
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details || jsonb_build_object('approved_by_prosecutor_id',nullif(p_values->>'approved_by_prosecutor_id','')::bigint,'date_approved',v_date,'time_approved',v_time,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+
+  ELSIF v_code = 'CASE_STATUS_UPDATED' THEN
+    IF v_source_table IS DISTINCT FROM 'case_manual_status_updates' OR v_source_id IS NULL THEN RAISE EXCEPTION 'Manual status update source record cannot be resolved'; END IF;
+    SELECT to_jsonb(msu) INTO v_old_source FROM public.case_manual_status_updates msu WHERE msu.id=v_source_id AND msu.case_event_id=p_case_event_id AND msu.is_voided=false FOR UPDATE;
+    IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active manual status update source record cannot be resolved'; END IF;
+    v_recompute := v_date IS DISTINCT FROM (v_old_source->>'status_date')::date OR v_time IS DISTINCT FROM v_event.event_time;
+    UPDATE public.case_manual_status_updates SET status_date=v_date, remarks=v_remarks, updated_at=now() WHERE id=v_source_id;
+    UPDATE public.case_status_history SET status_date=v_date, remarks=v_remarks WHERE case_event_id=p_case_event_id;
+    UPDATE public.case_stage_history SET stage_date=v_date, remarks=v_remarks WHERE case_event_id=p_case_event_id;
+    SELECT to_jsonb(msu) INTO v_new_source FROM public.case_manual_status_updates msu WHERE msu.id=v_source_id;
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details || jsonb_build_object('status_date',v_date,'event_time',v_time,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+
+  ELSIF v_code = 'CUSTOM_EVENT' THEN
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,title=coalesce(nullif(p_values->>'title',''),title),description=v_remarks,details_jsonb=v_details || jsonb_build_object('custom_details',coalesce(p_values->'details','[]'::jsonb),'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+    v_old_source := NULL; v_new_source := NULL;
+  ELSE
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+  END IF;
+
+  IF v_recompute THEN
+    PERFORM public.apply_case_state_recompute(v_event.case_id, v_date, v_remarks, p_case_event_id, p_user_id);
+  END IF;
+
+  SELECT to_jsonb(ce) INTO v_new_event FROM public.case_events ce WHERE ce.id=p_case_event_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+  VALUES (p_user_id,'case_events',p_case_event_id,'EDIT_CASE_EVENT_SPECIFIC',jsonb_build_object('event',v_old_event,'source',v_old_source),jsonb_build_object('event',v_new_event,'source',v_new_source),v_event.case_id,'Edited timeline activity with event-specific validation.',jsonb_build_object('reason',p_edit_reason,'event_type_code',v_code,'source_table',v_source_table,'source_id',v_source_id,'status_stage_recomputed',v_recompute));
+  RETURN p_case_event_id;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION edit_case_event_specific(p_case_event_id bigint, p_expected_event_type_code text, p_values jsonb, p_edit_reason text, p_user_id bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.edit_case_event_specific(p_case_event_id bigint, p_expected_event_type_code text, p_values jsonb, p_edit_reason text, p_user_id bigint) IS 'Event-specific timeline edit dispatcher. Preserves case_event id, event type, source linkage, dependency links, immutable decision/status fields, and creates no case_events rows. Verification coverage: supported event dispatch/prefill is in the UI; Motion Received updates same motion/event; Court Filing keeps approval action ids; Reassignment keeps previous assignment chain; superseded assignment edits are guarded; resolution/approval recommendations, selected status/stage, and case decision actions are not accepted in payload; Petition status is editable; custom/legacy remain constrained; reason/audit are required; descriptive edits do not recompute status/stage; explicit date corrections recompute once for CASE_STATUS_UPDATED and status-updating MOTION_DECISION_APPROVED; recording and voiding functions are untouched.';
+
+
+--
 -- Name: edit_case_overview_section(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2273,142 +2523,40 @@ DECLARE
   v_new jsonb;
   v_event_type_id bigint;
   v_event_id bigint;
-  v_status_history_id bigint;
-  v_from_status_id bigint;
-  v_to_status_id bigint;
-  v_status_date date;
-  v_status_remarks text;
   v_old_date_received date;
   v_new_date_received date;
   v_case_received_sync text;
 BEGIN
+  IF v_section = 'status' THEN
+    RETURN public.record_case_status_updated_event(v_case_id, nullif(p_payload#>>'{data,statusId}','')::bigint, nullif(p_payload#>>'{data,stageId}','')::bigint, nullif(p_payload#>>'{data,statusDate}','')::date, nullif(btrim(p_payload#>>'{data,remarks}'),''), v_reason, v_user_id);
+  END IF;
   IF v_case_id IS NULL THEN RAISE EXCEPTION 'caseId is required'; END IF;
   IF v_section IS NULL THEN RAISE EXCEPTION 'section is required'; END IF;
   IF v_reason IS NULL THEN RAISE EXCEPTION 'reason is required'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = v_case_id) THEN RAISE EXCEPTION 'Case % not found', v_case_id; END IF;
-
-  SELECT jsonb_build_object('cases', to_jsonb(c), 'case_private_details', to_jsonb(cpd)) INTO v_old
-  FROM public.cases c LEFT JOIN public.case_private_details cpd ON cpd.case_id = c.id WHERE c.id = v_case_id;
-
+  SELECT jsonb_build_object('cases', to_jsonb(c), 'case_private_details', to_jsonb(cpd)) INTO v_old FROM public.cases c LEFT JOIN public.case_private_details cpd ON cpd.case_id = c.id WHERE c.id = v_case_id;
   IF v_section = 'docket_info' THEN
     SELECT date_received INTO v_old_date_received FROM public.cases WHERE id = v_case_id;
-    UPDATE public.cases SET
-      docket_type_id = COALESCE(nullif(p_payload#>>'{data,docketTypeId}','')::bigint, docket_type_id),
-      docket_year = COALESCE(nullif(p_payload#>>'{data,docketYear}','')::int, docket_year),
-      docket_number = COALESCE(nullif(p_payload#>>'{data,docketNumber}','')::int, docket_number),
-      docket_month_code = COALESCE(nullif(btrim(p_payload#>>'{data,docketMonthCode}'),''), docket_month_code),
-      date_received = COALESCE(nullif(p_payload#>>'{data,dateReceived}','')::date, date_received),
-      updated_by_user_id = v_user_id,
-      updated_at = now()
-    WHERE id = v_case_id;
-
+    UPDATE public.cases SET docket_type_id = COALESCE(nullif(p_payload#>>'{data,docketTypeId}','')::bigint, docket_type_id), docket_year = COALESCE(nullif(p_payload#>>'{data,docketYear}','')::int, docket_year), docket_number = COALESCE(nullif(p_payload#>>'{data,docketNumber}','')::int, docket_number), docket_month_code = COALESCE(nullif(btrim(p_payload#>>'{data,docketMonthCode}'),''), docket_month_code), date_received = COALESCE(nullif(p_payload#>>'{data,dateReceived}','')::date, date_received), updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_case_id;
     SELECT date_received INTO v_new_date_received FROM public.cases WHERE id = v_case_id;
     IF v_new_date_received IS DISTINCT FROM v_old_date_received THEN
-      SELECT id INTO v_event_type_id
-      FROM public.case_event_types
-      WHERE code = 'CASE_RECEIVED' AND is_active IS TRUE
-      LIMIT 1;
-
-      IF v_event_type_id IS NULL THEN
-        v_case_received_sync := 'skipped_missing_event_type';
-      ELSE
-        SELECT id INTO v_event_id
-        FROM public.case_events
-        WHERE case_id = v_case_id
-          AND event_type_id = v_event_type_id
-          AND COALESCE(is_voided, false) IS FALSE
-        ORDER BY event_date DESC NULLS LAST, id DESC
-        LIMIT 1;
-
-        IF v_event_id IS NOT NULL THEN
-          UPDATE public.case_events
-          SET event_date = v_new_date_received,
-              title = COALESCE(NULLIF(title, ''), 'Case received'),
-              description = COALESCE(NULLIF(description, ''), 'Case received date updated from overview edit'),
-              details_jsonb = COALESCE(details_jsonb, '{}'::jsonb) || jsonb_build_object(
-                'action', 'sync_case_received_from_overview',
-                'old_date_received', v_old_date_received,
-                'new_date_received', v_new_date_received,
-                'reason', v_reason
-              ),
-              updated_by_user_id = v_user_id,
-              updated_at = now()
-          WHERE id = v_event_id;
-          v_case_received_sync := 'updated_existing_event';
-        ELSIF v_new_date_received IS NOT NULL THEN
-          INSERT INTO public.case_events(case_id,event_type_id,event_date,title,description,details_jsonb,source,source_table,source_id,created_by_user_id,updated_by_user_id)
-          VALUES (
-            v_case_id,
-            v_event_type_id,
-            v_new_date_received,
-            'Case received',
-            'Case received date updated from overview edit',
-            jsonb_build_object('action', 'sync_case_received_from_overview', 'old_date_received', v_old_date_received, 'new_date_received', v_new_date_received, 'reason', v_reason),
-            'MANUAL_EDIT',
-            'cases',
-            v_case_id,
-            v_user_id,
-            v_user_id
-          );
-          v_case_received_sync := 'created_missing_event';
-        ELSE
-          v_case_received_sync := 'skipped_null_date_received';
-        END IF;
+      SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code = 'CASE_RECEIVED' AND is_active IS TRUE LIMIT 1;
+      IF v_event_type_id IS NULL THEN v_case_received_sync := 'skipped_missing_event_type'; ELSE
+        SELECT id INTO v_event_id FROM public.case_events WHERE case_id = v_case_id AND event_type_id = v_event_type_id AND COALESCE(is_voided, false) IS FALSE ORDER BY event_date DESC NULLS LAST, id DESC LIMIT 1;
+        IF v_event_id IS NOT NULL THEN UPDATE public.case_events SET event_date = v_new_date_received, title = COALESCE(NULLIF(title, ''), 'Case received'), description = COALESCE(NULLIF(description, ''), 'Case received date updated from overview edit'), details_jsonb = COALESCE(details_jsonb, '{}'::jsonb) || jsonb_build_object('action', 'sync_case_received_from_overview', 'old_date_received', v_old_date_received, 'new_date_received', v_new_date_received, 'reason', v_reason), updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_event_id; v_case_received_sync := 'updated_existing_event';
+        ELSIF v_new_date_received IS NOT NULL THEN INSERT INTO public.case_events(case_id,event_type_id,event_date,title,description,details_jsonb,source,source_table,source_id,created_by_user_id,updated_by_user_id) VALUES (v_case_id,v_event_type_id,v_new_date_received,'Case received','Case received date updated from overview edit',jsonb_build_object('action', 'sync_case_received_from_overview', 'old_date_received', v_old_date_received, 'new_date_received', v_new_date_received, 'reason', v_reason),'MANUAL_EDIT','cases',v_case_id,v_user_id,v_user_id); v_case_received_sync := 'created_missing_event';
+        ELSE v_case_received_sync := 'skipped_null_date_received'; END IF;
       END IF;
     END IF;
   ELSIF v_section = 'case_details' THEN
-    UPDATE public.cases SET
-      case_classification_id = nullif(p_payload#>>'{data,caseClassificationId}','')::bigint,
-      updated_by_user_id = v_user_id,
-      updated_at = now()
-    WHERE id = v_case_id;
+    UPDATE public.cases SET case_classification_id = nullif(p_payload#>>'{data,caseClassificationId}','')::bigint, updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_case_id;
     INSERT INTO public.case_private_details(case_id, source) VALUES (v_case_id, 'MANUAL_ENTRY') ON CONFLICT (case_id) DO NOTHING;
-    UPDATE public.case_private_details SET
-      is_summary_procedure = COALESCE(nullif(p_payload#>>'{data,isSummaryProcedure}','')::boolean, false),
-      summary_text = nullif(btrim(p_payload#>>'{data,summaryText}'),''),
-      remarks = nullif(btrim(p_payload#>>'{data,remarks}'),'')
-    WHERE case_id = v_case_id;
-  ELSIF v_section = 'status' THEN
-    v_to_status_id := nullif(p_payload#>>'{data,statusId}','')::bigint;
-    v_status_date := COALESCE(nullif(p_payload#>>'{data,statusDate}','')::date, current_date);
-    v_status_remarks := COALESCE(nullif(btrim(p_payload#>>'{data,remarks}'),''), v_reason);
-    IF v_to_status_id IS NULL THEN RAISE EXCEPTION 'statusId is required'; END IF;
-    SELECT current_status_id INTO v_from_status_id FROM public.case_private_details WHERE case_id = v_case_id;
-    INSERT INTO public.case_private_details(case_id, source) VALUES (v_case_id, 'MANUAL_ENTRY') ON CONFLICT (case_id) DO NOTHING;
-    SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code = 'STATUS_UPDATED' AND is_active IS TRUE LIMIT 1;
-    IF v_event_type_id IS NULL THEN SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code = 'CASE_RECEIVED' LIMIT 1; END IF;
-    IF v_event_type_id IS NULL THEN RAISE EXCEPTION 'Missing case event type STATUS_UPDATED or CASE_RECEIVED'; END IF;
-    INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks)
-    VALUES (v_case_id,v_from_status_id,v_to_status_id,v_user_id,now(),v_status_date,v_status_remarks)
-    RETURNING id INTO v_status_history_id;
-    INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,details_jsonb,source,source_table,source_id,created_by_user_id,updated_by_user_id)
-    VALUES (
-      v_case_id,
-      v_event_type_id,
-      v_status_date,
-      now()::time,
-      'Status updated',
-      v_status_remarks,
-      v_to_status_id,
-      jsonb_build_object('from_status_id', v_from_status_id, 'to_status_id', v_to_status_id, 'status_date', v_status_date, 'remarks', v_status_remarks, 'reason', v_reason),
-      'MANUAL_EDIT',
-      'case_status_history',
-      v_status_history_id,
-      v_user_id,
-      v_user_id
-    ) RETURNING id INTO v_event_id;
-    UPDATE public.case_status_history SET case_event_id = v_event_id WHERE id = v_status_history_id;
-    UPDATE public.cases SET updated_by_user_id = v_user_id, updated_at = now() WHERE id = v_case_id;
-    UPDATE public.case_private_details SET current_status_id = v_to_status_id, current_status_date = v_status_date, current_status_remarks = v_status_remarks, current_status_approved_date_raw = nullif(btrim(p_payload#>>'{data,statusApprovedDateRaw}'),'') WHERE case_id = v_case_id;
+    UPDATE public.case_private_details SET is_summary_procedure = COALESCE(nullif(p_payload#>>'{data,isSummaryProcedure}','')::boolean, false), summary_text = nullif(btrim(p_payload#>>'{data,summaryText}'),''), remarks = nullif(btrim(p_payload#>>'{data,remarks}'),'') WHERE case_id = v_case_id;
   ELSE
     RAISE EXCEPTION 'Editing section % is not implemented yet', v_section;
   END IF;
-
-  SELECT jsonb_build_object('cases', to_jsonb(c), 'case_private_details', to_jsonb(cpd)) INTO v_new
-  FROM public.cases c LEFT JOIN public.case_private_details cpd ON cpd.case_id = c.id WHERE c.id = v_case_id;
-
-  INSERT INTO public.audit_logs(actor_user_id, action, entity_name, entity_id, case_id, summary, metadata, old_data, new_data)
-  VALUES (v_user_id, 'EDIT_CASE_OVERVIEW_' || upper(v_section), 'cases', v_case_id, v_case_id, 'Edited case overview ' || replace(v_section, '_', ' '), jsonb_strip_nulls(jsonb_build_object('reason', v_reason, 'section', v_section, 'case_received_event_sync', v_case_received_sync)), v_old, v_new);
+  SELECT jsonb_build_object('cases', to_jsonb(c), 'case_private_details', to_jsonb(cpd)) INTO v_new FROM public.cases c LEFT JOIN public.case_private_details cpd ON cpd.case_id = c.id WHERE c.id = v_case_id;
+  INSERT INTO public.audit_logs(actor_user_id, action, entity_name, entity_id, case_id, summary, metadata, old_data, new_data) VALUES (v_user_id, 'EDIT_CASE_OVERVIEW_' || upper(v_section), 'cases', v_case_id, v_case_id, 'Edited case overview ' || replace(v_section, '_', ' '), jsonb_strip_nulls(jsonb_build_object('reason', v_reason, 'section', v_section, 'case_received_event_sync', v_case_received_sync)), v_old, v_new);
   RETURN v_case_id;
 END;
 $$;
@@ -6901,6 +7049,26 @@ $$;
 
 
 --
+-- Name: normalize_petition_details(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.normalize_petition_details(p_details jsonb) RETURNS jsonb
+    LANGUAGE plpgsql IMMUTABLE
+    AS $$
+DECLARE v_details jsonb := '[]'::jsonb; v_item jsonb;
+BEGIN
+  IF p_details IS NOT NULL AND jsonb_typeof(p_details) <> 'array' THEN RAISE EXCEPTION 'Additional Details must be a JSON array'; END IF;
+  FOR v_item IN SELECT value FROM jsonb_array_elements(coalesce(p_details,'[]'::jsonb)) LOOP
+    IF nullif(btrim(v_item->>'detail'), '') IS NOT NULL OR nullif(btrim(v_item->>'value'), '') IS NOT NULL THEN
+      v_details := v_details || jsonb_build_array(jsonb_build_object('detail', btrim(coalesce(v_item->>'detail','')), 'value', btrim(coalesce(v_item->>'value',''))));
+    END IF;
+  END LOOP;
+  RETURN v_details;
+END;
+$$;
+
+
+--
 -- Name: pe2024_bool(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7263,11 +7431,13 @@ DECLARE
   v_pending_status_id bigint;
   v_case_raffled_stage_id bigint;
   v_event_id bigint;
+  v_assignment_id bigint;
   v_status_history_id bigint;
   v_stage_history_id bigint;
   v_previous_status_id bigint;
   v_previous_case_status_id bigint;
   v_previous_stage_id bigint;
+  v_assigned_at timestamptz;
   v_assignment_time time without time zone;
   v_prosecutor_name text;
   v_staff_name text;
@@ -7690,6 +7860,7 @@ DECLARE
   v_reassigned_at timestamptz;
   v_reassignment_time time without time zone;
   v_previous_prosecutor_name text;
+  v_new_prosecutor_name text;
   v_staff_name text;
   v_reason text := NULLIF(btrim(COALESCE(p_reason, '')), '');
   v_remarks text := NULLIF(btrim(COALESCE(p_remarks, '')), '');
@@ -7954,6 +8125,60 @@ $$;
 
 
 --
+-- Name: record_case_status_updated_event(bigint, bigint, bigint, date, text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_case_status_updated_event(p_case_id bigint, p_case_status_id bigint, p_case_stage_id bigint, p_status_date date, p_remarks text DEFAULT NULL::text, p_reason text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_event_type_id bigint; v_event_id bigint; v_update_id bigint; v_status_code text; v_status_label text; v_stage_code text; v_stage_label text; v_prev_status_id bigint; v_prev_stage_id bigint; v_prev_status_label text; v_prev_stage_label text; v_status_history_id bigint; v_stage_history_id bigint; v_old jsonb; v_new jsonb; v_remarks text:=nullif(btrim(coalesce(p_remarks,'')), ''); v_reason text:=nullif(btrim(coalesce(p_reason,'')), ''); v_time time;
+BEGIN
+  IF p_case_id IS NULL OR NOT EXISTS (SELECT 1 FROM public.cases WHERE id=p_case_id) THEN RAISE EXCEPTION 'Case % not found', p_case_id; END IF;
+  IF p_status_date IS NULL THEN RAISE EXCEPTION 'Status Date is required'; END IF;
+  IF v_reason IS NULL THEN RAISE EXCEPTION 'Reason for Edit is required'; END IF;
+  SELECT code, display_label INTO v_status_code, v_status_label FROM public.case_statuses WHERE id=p_case_status_id AND is_active IS TRUE;
+  IF v_status_code IS NULL THEN RAISE EXCEPTION 'Selected Case Status must be active'; END IF;
+  IF v_status_code NOT IN ('PENDING','FILED','DISMISSED','MIXED_RESULT') THEN RAISE EXCEPTION 'Selected Case Status must be PENDING, FILED, DISMISSED, or MIXED_RESULT'; END IF;
+  SELECT code, display_label INTO v_stage_code, v_stage_label FROM public.case_stages WHERE id=p_case_stage_id AND is_active IS TRUE;
+  IF v_stage_code IS NULL THEN RAISE EXCEPTION 'Selected Case Stage must be active'; END IF;
+  SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code='CASE_STATUS_UPDATED' AND is_active IS TRUE LIMIT 1;
+  IF v_event_type_id IS NULL THEN RAISE EXCEPTION 'Missing CASE_STATUS_UPDATED event type'; END IF;
+  INSERT INTO public.case_private_details(case_id, source) VALUES (p_case_id, 'MANUAL_ENTRY') ON CONFLICT (case_id) DO NOTHING;
+  SELECT current_case_status_id, current_case_stage_id, to_jsonb(cpd) INTO v_prev_status_id, v_prev_stage_id, v_old FROM public.case_private_details cpd WHERE cpd.case_id=p_case_id;
+  v_prev_status_id := COALESCE(v_prev_status_id, (SELECT current_status_id FROM public.case_private_details WHERE case_id=p_case_id));
+  SELECT display_label INTO v_prev_status_label FROM public.case_statuses WHERE id=v_prev_status_id;
+  SELECT display_label INTO v_prev_stage_label FROM public.case_stages WHERE id=v_prev_stage_id;
+  v_time := (now() AT TIME ZONE 'Asia/Manila')::time(0);
+
+  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,case_status_id,case_stage_id,details_jsonb,source,source_table,created_by_user_id,updated_by_user_id)
+  VALUES (p_case_id,v_event_type_id,p_status_date,v_time,'Case Status Updated',COALESCE(v_remarks,v_reason),p_case_status_id,p_case_status_id,p_case_stage_id,jsonb_build_object('selected_case_status_id',p_case_status_id,'selected_case_status_code',v_status_code,'selected_case_status_label',v_status_label,'selected_case_stage_id',p_case_stage_id,'selected_case_stage_code',v_stage_code,'selected_case_stage_label',v_stage_label,'status_date',p_status_date,'remarks',v_remarks,'reason',v_reason,'previous_case_status_id',v_prev_status_id,'previous_case_status_label',v_prev_status_label,'previous_case_stage_id',v_prev_stage_id,'previous_case_stage_label',v_prev_stage_label),'MANUAL_ENTRY','case_manual_status_updates',p_user_id,p_user_id)
+  RETURNING id INTO v_event_id;
+
+  INSERT INTO public.case_manual_status_updates(case_id,case_event_id,selected_case_status_id,selected_case_stage_id,status_date,remarks,reason,created_by_user_id)
+  VALUES (p_case_id,v_event_id,p_case_status_id,p_case_stage_id,p_status_date,v_remarks,v_reason,p_user_id)
+  RETURNING id INTO v_update_id;
+  UPDATE public.case_events SET source_id=v_update_id WHERE id=v_event_id;
+
+  UPDATE public.case_private_details SET current_status_id=p_case_status_id,current_status_date=p_status_date,current_status_remarks=COALESCE(v_remarks,v_reason),current_case_status_id=p_case_status_id,current_case_status_date=p_status_date,current_case_status_remarks=COALESCE(v_remarks,v_reason),current_case_stage_id=p_case_stage_id,current_case_stage_date=p_status_date,current_case_stage_remarks=COALESCE(v_remarks,v_reason),updated_at=now() WHERE case_id=p_case_id;
+  UPDATE public.cases SET updated_by_user_id=p_user_id, updated_at=now() WHERE id=p_case_id;
+  IF v_prev_status_id IS DISTINCT FROM p_case_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES(p_case_id,v_prev_status_id,p_case_status_id,p_user_id,now(),p_status_date,COALESCE(v_remarks,v_reason),v_event_id) RETURNING id INTO v_status_history_id; END IF;
+  IF v_prev_stage_id IS DISTINCT FROM p_case_stage_id THEN INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id) VALUES(p_case_id,v_prev_stage_id,p_case_stage_id,p_user_id,now(),p_status_date,COALESCE(v_remarks,v_reason),v_event_id) RETURNING id INTO v_stage_history_id; END IF;
+  SELECT to_jsonb(cpd) INTO v_new FROM public.case_private_details cpd WHERE cpd.case_id=p_case_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES(p_user_id,'case_manual_status_updates',v_update_id,'CASE_STATUS_UPDATED',v_old,v_new,p_case_id,'Case Status Updated recorded.',jsonb_build_object('case_event_id',v_event_id,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id,'selected_case_status_code',v_status_code,'selected_case_stage_code',v_stage_code));
+  RETURN v_event_id;
+END; $$;
+
+
+--
+-- Name: FUNCTION record_case_status_updated_event(p_case_id bigint, p_case_status_id bigint, p_case_stage_id bigint, p_status_date date, p_remarks text, p_reason text, p_user_id bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.record_case_status_updated_event(p_case_id bigint, p_case_status_id bigint, p_case_stage_id bigint, p_status_date date, p_remarks text, p_reason text, p_user_id bigint) IS 'Records a voidable CASE_STATUS_UPDATED timeline event and synchronized Case Status / Case Stage current state with conditional history linked to the event.';
+
+
+--
 -- Name: record_court_filing_event(bigint, bigint, bigint, text, text, text, date, time without time zone, integer, text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8045,6 +8270,308 @@ $$;
 --
 
 COMMENT ON FUNCTION public.record_court_filing_event(p_case_id bigint, p_case_resolution_approval_action_id bigint, p_court_id bigint, p_court_name text, p_court_branch text, p_charge_filed text, p_date_filed date, p_time_filed time without time zone, p_information_count integer, p_criminal_case_no text, p_remarks text, p_user_id bigint) IS 'Records COURT_FILING using split Case Status / Case Stage from public.compute_current_case_state().';
+
+
+--
+-- Name: record_custom_case_event(bigint, text, date, time without time zone, text, jsonb, boolean, bigint, bigint, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_custom_case_event(p_case_id bigint, p_title text, p_event_date date, p_event_time time without time zone, p_remarks text DEFAULT NULL::text, p_additional_details jsonb DEFAULT '[]'::jsonb, p_update_case_status boolean DEFAULT false, p_selected_case_status_id bigint DEFAULT NULL::bigint, p_selected_case_stage_id bigint DEFAULT NULL::bigint, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_event_type_id bigint; v_event_id bigint; v_title text:=nullif(btrim(coalesce(p_title,'')), ''); v_remarks text:=nullif(btrim(coalesce(p_remarks,'')), '');
+  v_details jsonb:='[]'::jsonb; v_row jsonb; v_status_code text; v_status_label text; v_stage_code text; v_stage_label text; v_prev_status_id bigint; v_prev_stage_id bigint; v_status_history_id bigint; v_stage_history_id bigint; v_old jsonb; v_new jsonb;
+BEGIN
+  IF p_case_id IS NULL OR NOT EXISTS (SELECT 1 FROM public.cases WHERE id=p_case_id) THEN RAISE EXCEPTION 'Case % not found', p_case_id; END IF;
+  IF v_title IS NULL THEN RAISE EXCEPTION 'Event Title is required'; END IF;
+  IF p_event_date IS NULL THEN RAISE EXCEPTION 'Event Date is required'; END IF;
+  IF p_event_time IS NULL THEN RAISE EXCEPTION 'Event Time is required'; END IF;
+  IF jsonb_typeof(COALESCE(p_additional_details,'[]'::jsonb)) <> 'array' THEN RAISE EXCEPTION 'Additional Details input must be an array'; END IF;
+  FOR v_row IN SELECT value FROM jsonb_array_elements(COALESCE(p_additional_details,'[]'::jsonb)) LOOP
+    IF nullif(btrim(coalesce(v_row->>'detail','')), '') IS NOT NULL OR nullif(btrim(coalesce(v_row->>'value','')), '') IS NOT NULL THEN
+      v_details := v_details || jsonb_build_array(jsonb_build_object('detail', btrim(coalesce(v_row->>'detail','')), 'value', btrim(coalesce(v_row->>'value',''))));
+    END IF;
+  END LOOP;
+  IF p_update_case_status THEN
+    SELECT code, display_label INTO v_status_code, v_status_label FROM public.case_statuses WHERE id=p_selected_case_status_id AND is_active IS TRUE;
+    IF v_status_code IS NULL THEN RAISE EXCEPTION 'Selected Case Status must be active'; END IF;
+    IF v_status_code NOT IN ('PENDING','FILED','DISMISSED','MIXED_RESULT') THEN RAISE EXCEPTION 'Selected Case Status must be PENDING, FILED, DISMISSED, or MIXED_RESULT'; END IF;
+    SELECT code, display_label INTO v_stage_code, v_stage_label FROM public.case_stages WHERE id=p_selected_case_stage_id AND is_active IS TRUE;
+    IF v_stage_code IS NULL THEN RAISE EXCEPTION 'Selected Case Stage must be active'; END IF;
+  END IF;
+  SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code='CUSTOM_EVENT' AND is_active IS TRUE LIMIT 1;
+  IF v_event_type_id IS NULL THEN RAISE EXCEPTION 'Missing CUSTOM_EVENT event type'; END IF;
+  INSERT INTO public.case_private_details(case_id, source) VALUES (p_case_id, 'MANUAL_ENTRY') ON CONFLICT (case_id) DO NOTHING;
+  SELECT current_case_status_id, current_case_stage_id, to_jsonb(cpd) INTO v_prev_status_id, v_prev_stage_id, v_old FROM public.case_private_details cpd WHERE cpd.case_id=p_case_id;
+  v_prev_status_id := COALESCE(v_prev_status_id, (SELECT current_status_id FROM public.case_private_details WHERE case_id=p_case_id));
+  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,case_status_id,case_stage_id,details_jsonb,source,source_table,created_by_user_id,updated_by_user_id)
+  VALUES (p_case_id,v_event_type_id,p_event_date,p_event_time,v_title,v_remarks,CASE WHEN p_update_case_status THEN p_selected_case_status_id ELSE NULL END,CASE WHEN p_update_case_status THEN p_selected_case_status_id ELSE NULL END,CASE WHEN p_update_case_status THEN p_selected_case_stage_id ELSE NULL END,jsonb_build_object('title',v_title,'event_date',p_event_date,'event_time',p_event_time,'remarks',v_remarks,'additional_details',v_details,'updates_case_status',p_update_case_status,'selected_case_status_id',CASE WHEN p_update_case_status THEN p_selected_case_status_id ELSE NULL END,'selected_case_status_code',v_status_code,'selected_case_status_label',v_status_label,'selected_case_stage_id',CASE WHEN p_update_case_status THEN p_selected_case_stage_id ELSE NULL END,'selected_case_stage_code',v_stage_code,'selected_case_stage_label',v_stage_label),'MANUAL_ENTRY','case_events',p_user_id,p_user_id)
+  RETURNING id INTO v_event_id;
+  UPDATE public.case_events SET source_id=v_event_id WHERE id=v_event_id;
+  IF p_update_case_status THEN
+    UPDATE public.case_private_details SET current_status_id=p_selected_case_status_id,current_status_date=p_event_date,current_status_remarks=COALESCE(v_remarks,v_title),current_case_status_id=p_selected_case_status_id,current_case_status_date=p_event_date,current_case_status_remarks=COALESCE(v_remarks,v_title),current_case_stage_id=p_selected_case_stage_id,current_case_stage_date=p_event_date,current_case_stage_remarks=COALESCE(v_remarks,v_title),updated_at=now() WHERE case_id=p_case_id;
+    IF v_prev_status_id IS DISTINCT FROM p_selected_case_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES(p_case_id,v_prev_status_id,p_selected_case_status_id,p_user_id,now(),p_event_date,COALESCE(v_remarks,v_title),v_event_id) RETURNING id INTO v_status_history_id; END IF;
+    IF v_prev_stage_id IS DISTINCT FROM p_selected_case_stage_id THEN INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id) VALUES(p_case_id,v_prev_stage_id,p_selected_case_stage_id,p_user_id,now(),p_event_date,COALESCE(v_remarks,v_title),v_event_id) RETURNING id INTO v_stage_history_id; END IF;
+  END IF;
+  UPDATE public.cases SET updated_by_user_id=p_user_id, updated_at=now() WHERE id=p_case_id;
+  SELECT jsonb_build_object('case_event', to_jsonb(ce), 'case_private_details', to_jsonb(cpd)) INTO v_new FROM public.case_events ce LEFT JOIN public.case_private_details cpd ON cpd.case_id=ce.case_id WHERE ce.id=v_event_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES(p_user_id,'case_events',v_event_id,'RECORD_CUSTOM_CASE_EVENT',v_old,v_new,p_case_id,'Custom Event recorded.',jsonb_build_object('updates_case_status',p_update_case_status,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id));
+  RETURN v_event_id;
+END; $$;
+
+
+--
+-- Name: FUNCTION record_custom_case_event(p_case_id bigint, p_title text, p_event_date date, p_event_time time without time zone, p_remarks text, p_additional_details jsonb, p_update_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_user_id bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.record_custom_case_event(p_case_id bigint, p_title text, p_event_date date, p_event_time time without time zone, p_remarks text, p_additional_details jsonb, p_update_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_user_id bigint) IS 'Records a Custom Event in case_events only, optionally applying selected active broad Case Status and Case Stage.';
+
+
+--
+-- Name: record_motion_decision_approved_event(bigint, bigint, bigint, bigint, date, time without time zone, boolean, bigint, bigint, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_motion_decision_approved_event(p_case_id bigint, p_case_motion_resolution_id bigint, p_approved_decision_recommendation_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone DEFAULT NULL::time without time zone, p_update_case_status boolean DEFAULT false, p_selected_case_status_id bigint DEFAULT NULL::bigint, p_selected_case_stage_id bigint DEFAULT NULL::bigint, p_remarks text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_event_type_id bigint; v_event_id bigint; v_approval_id bigint; v_case_motion_id bigint; v_status_id bigint; v_stage_id bigint; v_prev_status_id bigint; v_prev_case_status_id bigint; v_prev_stage_id bigint; v_status_history_id bigint; v_stage_history_id bigint; v_old_details jsonb; v_new_details jsonb; v_effective_time time without time zone; v_remarks text := NULLIF(btrim(coalesce(p_remarks,'')), '');
+  v_motion_title text; v_filed_by_code text; v_filed_by_label text; v_assigned_prosecutor_id bigint; v_assigned_prosecutor_name text; v_original_recommendation_id bigint; v_original_recommendation_code text; v_original_recommendation_label text; v_approved_decision_code text; v_approved_decision_label text; v_approved_by_name text; v_approver_position_code text; v_approver_position_group_type text; v_status_code text; v_stage_code text; v_status_label text; v_stage_label text;
+BEGIN
+  IF p_case_id IS NULL OR NOT EXISTS (SELECT 1 FROM public.cases WHERE id=p_case_id) THEN RAISE EXCEPTION 'Unknown case id %', p_case_id; END IF;
+  IF p_date_approved IS NULL THEN RAISE EXCEPTION 'Date Approved is required'; END IF;
+
+  SELECT cmr.case_motion_id, cm.motion_title, cm.filed_by_code, cm.filed_by, cm.assigned_prosecutor_id, coalesce(ap.short_name,ap.full_name), cmr.recommendation_id, rr.code, rr.display_label
+  INTO v_case_motion_id, v_motion_title, v_filed_by_code, v_filed_by_label, v_assigned_prosecutor_id, v_assigned_prosecutor_name, v_original_recommendation_id, v_original_recommendation_code, v_original_recommendation_label
+  FROM public.case_motion_resolutions cmr
+  JOIN public.case_motions cm ON cm.id = cmr.case_motion_id AND cm.is_voided = false
+  JOIN public.case_events me ON me.id = cm.case_event_id AND me.is_voided = false
+  JOIN public.case_events re ON re.id = cmr.case_event_id AND re.is_voided = false
+  JOIN public.motion_resolution_recommendations rr ON rr.id = cmr.recommendation_id
+  LEFT JOIN public.prosecutors ap ON ap.id = cm.assigned_prosecutor_id
+  WHERE cmr.id = p_case_motion_resolution_id AND cmr.case_id = p_case_id AND cmr.is_voided = false;
+  IF v_case_motion_id IS NULL THEN RAISE EXCEPTION 'Selected motion resolution is not active for this case'; END IF;
+  IF EXISTS (SELECT 1 FROM public.case_motion_resolution_approvals a WHERE a.case_motion_resolution_id = p_case_motion_resolution_id AND a.is_voided = false) THEN RAISE EXCEPTION 'This motion resolution already has an active approval.'; END IF;
+
+  SELECT code, display_label INTO v_approved_decision_code, v_approved_decision_label FROM public.motion_resolution_recommendations WHERE id=p_approved_decision_recommendation_id AND is_active IS TRUE LIMIT 1;
+  IF v_approved_decision_code IS NULL THEN RAISE EXCEPTION 'Approved decision recommendation must be active'; END IF;
+
+  SELECT pr.full_name, p.code, p.group_type INTO v_approved_by_name, v_approver_position_code, v_approver_position_group_type
+  FROM public.prosecutors pr LEFT JOIN public.positions p ON p.id = pr.position_id
+  WHERE pr.id = p_approved_by_prosecutor_id AND pr.is_active IS TRUE LIMIT 1;
+  IF v_approved_by_name IS NULL THEN RAISE EXCEPTION 'Approved By prosecutor must be active'; END IF;
+  IF COALESCE(v_approver_position_group_type, '') <> 'PROSECUTOR' OR COALESCE(v_approver_position_code, '') NOT IN ('CHIEF_PROSECUTOR','DEPUTY_PROSECUTOR') THEN
+    RAISE EXCEPTION 'Approved By must be an active Chief Prosecutor or Deputy Prosecutor';
+  END IF;
+
+  IF COALESCE(p_update_case_status, false) THEN
+    IF p_selected_case_status_id IS NULL OR p_selected_case_stage_id IS NULL THEN RAISE EXCEPTION 'Case Status and Case Stage are required when updating case status'; END IF;
+    SELECT code, display_label INTO v_status_code, v_status_label FROM public.case_statuses WHERE id=p_selected_case_status_id AND is_active IS TRUE LIMIT 1;
+    SELECT code, display_label INTO v_stage_code, v_stage_label FROM public.case_stages WHERE id=p_selected_case_stage_id AND is_active IS TRUE LIMIT 1;
+    IF v_status_code IS NULL OR v_status_code NOT IN ('PENDING','FILED','DISMISSED','MIXED_RESULT') THEN RAISE EXCEPTION 'Selected Case Status is not allowed'; END IF;
+    IF v_stage_code IS NULL THEN RAISE EXCEPTION 'Selected Case Stage must be active'; END IF;
+    v_status_id := p_selected_case_status_id; v_stage_id := p_selected_case_stage_id;
+  END IF;
+
+  v_effective_time := coalesce(p_time_approved, (now() AT TIME ZONE 'Asia/Manila')::time(0));
+  SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code='MOTION_DECISION_APPROVED' AND is_active IS TRUE LIMIT 1;
+  IF v_event_type_id IS NULL THEN RAISE EXCEPTION 'Missing Motion Decision Approved event type'; END IF;
+  SELECT current_status_id,current_case_status_id,current_case_stage_id,to_jsonb(cpd) INTO v_prev_status_id,v_prev_case_status_id,v_prev_stage_id,v_old_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
+
+  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,details_jsonb,source,source_table,created_by_user_id,updated_by_user_id)
+  VALUES (p_case_id,v_event_type_id,p_date_approved,v_effective_time,'Motion Decision Approved',v_remarks,jsonb_build_object('motion_id',v_case_motion_id,'motion_resolution_id',p_case_motion_resolution_id,'motion_title',v_motion_title,'filed_by_code',v_filed_by_code,'filed_by_label',v_filed_by_label,'assigned_prosecutor_id',v_assigned_prosecutor_id,'assigned_prosecutor_name',v_assigned_prosecutor_name,'original_recommendation_id',v_original_recommendation_id,'original_recommendation_code',v_original_recommendation_code,'original_recommendation_label',v_original_recommendation_label,'approved_decision_recommendation_id',p_approved_decision_recommendation_id,'approved_decision_code',v_approved_decision_code,'approved_decision_label',v_approved_decision_label,'approved_by_prosecutor_id',p_approved_by_prosecutor_id,'approved_by_name',v_approved_by_name,'date_approved',p_date_approved,'time_approved',v_effective_time,'updates_case_status',COALESCE(p_update_case_status,false),'selected_case_status_id',CASE WHEN COALESCE(p_update_case_status,false) THEN p_selected_case_status_id ELSE NULL END,'selected_case_status_label',CASE WHEN COALESCE(p_update_case_status,false) THEN v_status_label ELSE NULL END,'selected_case_stage_id',CASE WHEN COALESCE(p_update_case_status,false) THEN p_selected_case_stage_id ELSE NULL END,'selected_case_stage_label',CASE WHEN COALESCE(p_update_case_status,false) THEN v_stage_label ELSE NULL END,'remarks',v_remarks),'MANUAL_ENTRY','case_motion_resolution_approvals',p_user_id,p_user_id) RETURNING id INTO v_event_id;
+
+  INSERT INTO public.case_motion_resolution_approvals(case_id,case_motion_id,case_motion_resolution_id,case_event_id,approved_decision_recommendation_id,approved_by_prosecutor_id,date_approved,time_approved,updates_case_status,selected_case_status_id,selected_case_stage_id,remarks,created_by_user_id,updated_by_user_id)
+  VALUES (p_case_id,v_case_motion_id,p_case_motion_resolution_id,v_event_id,p_approved_decision_recommendation_id,p_approved_by_prosecutor_id,p_date_approved,v_effective_time,COALESCE(p_update_case_status,false),CASE WHEN COALESCE(p_update_case_status,false) THEN p_selected_case_status_id ELSE NULL END,CASE WHEN COALESCE(p_update_case_status,false) THEN p_selected_case_stage_id ELSE NULL END,v_remarks,p_user_id,p_user_id) RETURNING id INTO v_approval_id;
+
+  IF NOT COALESCE(p_update_case_status, false) THEN
+    SELECT case_status_code, case_stage_code INTO v_status_code, v_stage_code FROM public.compute_current_case_state(p_case_id) LIMIT 1;
+    SELECT id, display_label INTO v_status_id, v_status_label FROM public.case_statuses WHERE code=v_status_code AND is_active IS TRUE LIMIT 1;
+    SELECT id, display_label INTO v_stage_id, v_stage_label FROM public.case_stages WHERE code=v_stage_code AND is_active IS TRUE LIMIT 1;
+  END IF;
+  IF v_status_id IS NULL OR v_stage_id IS NULL THEN RAISE EXCEPTION 'Unable to determine case status/stage'; END IF;
+
+  UPDATE public.case_events SET source_id=v_approval_id,status_id=v_status_id,case_status_id=v_status_id,case_stage_id=v_stage_id,details_jsonb=details_jsonb || jsonb_build_object('case_status_id',v_status_id,'case_status_code',v_status_code,'case_status_label',v_status_label,'case_stage_id',v_stage_id,'case_stage_code',v_stage_code,'case_stage_label',v_stage_label),updated_at=now(),updated_by_user_id=p_user_id WHERE id=v_event_id;
+  INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,current_case_status_id,current_case_status_date,current_case_status_remarks,current_case_stage_id,current_case_stage_date,current_case_stage_remarks,updated_at) VALUES (p_case_id,v_status_id,p_date_approved,v_remarks,v_status_id,p_date_approved,v_remarks,v_stage_id,p_date_approved,v_remarks,now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,current_case_status_remarks=EXCLUDED.current_case_status_remarks,current_case_stage_id=EXCLUDED.current_case_stage_id,current_case_stage_date=EXCLUDED.current_case_stage_date,current_case_stage_remarks=EXCLUDED.current_case_stage_remarks,updated_at=now();
+  IF coalesce(v_prev_case_status_id,v_prev_status_id) IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (p_case_id,coalesce(v_prev_case_status_id,v_prev_status_id),v_status_id,p_user_id,now(),p_date_approved,v_remarks,v_event_id) RETURNING id INTO v_status_history_id; END IF;
+  IF v_prev_stage_id IS DISTINCT FROM v_stage_id THEN INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id) VALUES (p_case_id,v_prev_stage_id,v_stage_id,p_user_id,now(),p_date_approved,v_remarks,v_event_id) RETURNING id INTO v_stage_history_id; END IF;
+  SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES (p_user_id,'case_motion_resolution_approvals',v_approval_id,'MOTION_DECISION_APPROVED',v_old_details,v_new_details,p_case_id,'Motion decision approved.',jsonb_build_object('case_event_id',v_event_id,'motion_id',v_case_motion_id,'motion_resolution_id',p_case_motion_resolution_id,'motion_resolution_approval_id',v_approval_id,'original_recommendation_id',v_original_recommendation_id,'approved_decision_recommendation_id',p_approved_decision_recommendation_id,'approved_by_prosecutor_id',p_approved_by_prosecutor_id,'updates_case_status',COALESCE(p_update_case_status,false),'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id));
+  RETURN v_event_id;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION record_motion_decision_approved_event(p_case_id bigint, p_case_motion_resolution_id bigint, p_approved_decision_recommendation_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone, p_update_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_remarks text, p_user_id bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.record_motion_decision_approved_event(p_case_id bigint, p_case_motion_resolution_id bigint, p_approved_decision_recommendation_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone, p_update_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_remarks text, p_user_id bigint) IS 'Records MOTION_DECISION_APPROVED, storing original and approved recommendations, optional manual status/stage impact, audit metadata, and Asia/Manila default time.';
+
+
+--
+-- Name: record_motion_received_event(bigint, text, text, date, time without time zone, jsonb, text, bigint, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_motion_received_event(p_case_id bigint, p_motion_title text, p_filed_by_code text, p_date_filed date, p_time_filed time without time zone DEFAULT NULL::time without time zone, p_details_jsonb jsonb DEFAULT '[]'::jsonb, p_remarks text DEFAULT NULL::text, p_assigned_prosecutor_id bigint DEFAULT NULL::bigint, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_event_type_id bigint; v_event_id bigint; v_motion_id bigint; v_status_id bigint; v_stage_id bigint; v_prev_status_id bigint; v_prev_case_status_id bigint; v_prev_stage_id bigint; v_status_history_id bigint; v_stage_history_id bigint; v_old_details jsonb; v_new_details jsonb; v_details jsonb := '[]'::jsonb; v_item jsonb; v_detail text; v_value text; v_title text := NULLIF(btrim(coalesce(p_motion_title,'')), ''); v_filed_by_code text := upper(btrim(coalesce(p_filed_by_code,''))); v_remarks text := NULLIF(btrim(coalesce(p_remarks,'')), ''); v_effective_time time without time zone; v_assigned_prosecutor_name text;
+BEGIN
+  IF p_case_id IS NULL OR NOT EXISTS (SELECT 1 FROM public.cases WHERE id=p_case_id) THEN RAISE EXCEPTION 'Unknown case id %', p_case_id; END IF;
+  IF v_title IS NULL THEN RAISE EXCEPTION 'Motion Title is required'; END IF;
+  IF v_filed_by_code NOT IN ('COMPLAINANT','RESPONDENT') THEN RAISE EXCEPTION 'Filed By must be COMPLAINANT or RESPONDENT'; END IF;
+  IF p_date_filed IS NULL THEN RAISE EXCEPTION 'Date Filed is required'; END IF;
+  IF p_assigned_prosecutor_id IS NOT NULL THEN
+    SELECT coalesce(p.short_name, p.full_name) INTO v_assigned_prosecutor_name FROM public.prosecutors p WHERE p.id = p_assigned_prosecutor_id AND p.is_active IS TRUE LIMIT 1;
+    IF v_assigned_prosecutor_name IS NULL THEN RAISE EXCEPTION 'Assigned Prosecutor must be an active prosecutor'; END IF;
+  END IF;
+  IF p_details_jsonb IS NOT NULL AND jsonb_typeof(p_details_jsonb) <> 'array' THEN RAISE EXCEPTION 'Additional Details must be a JSON array'; END IF;
+  FOR v_item IN SELECT value FROM jsonb_array_elements(coalesce(p_details_jsonb, '[]'::jsonb)) LOOP
+    v_detail := btrim(coalesce(v_item->>'detail', '')); v_value := btrim(coalesce(v_item->>'value', ''));
+    IF v_detail <> '' OR v_value <> '' THEN v_details := v_details || jsonb_build_array(jsonb_build_object('detail', v_detail, 'value', v_value)); END IF;
+  END LOOP;
+  v_effective_time := coalesce(p_time_filed, (now() AT TIME ZONE 'Asia/Manila')::time(0));
+  SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code='MOTION_RECEIVED' AND is_active IS TRUE LIMIT 1;
+  SELECT id INTO v_status_id FROM public.case_statuses WHERE code='PENDING' AND is_active IS TRUE LIMIT 1;
+  SELECT id INTO v_stage_id FROM public.case_stages WHERE code='MOTION_PENDING' AND is_active IS TRUE LIMIT 1;
+  IF v_event_type_id IS NULL OR v_status_id IS NULL OR v_stage_id IS NULL THEN RAISE EXCEPTION 'Missing Motion Received seed data'; END IF;
+  SELECT current_status_id,current_case_status_id,current_case_stage_id,to_jsonb(cpd) INTO v_prev_status_id,v_prev_case_status_id,v_prev_stage_id,v_old_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
+  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,case_status_id,case_stage_id,details_jsonb,source,source_table,created_by_user_id,updated_by_user_id)
+  VALUES (p_case_id,v_event_type_id,p_date_filed,v_effective_time,'Motion Received',v_remarks,v_status_id,v_status_id,v_stage_id,jsonb_build_object('motion_title',v_title,'filed_by_code',v_filed_by_code,'filed_by_label',CASE v_filed_by_code WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,'assigned_prosecutor_id',p_assigned_prosecutor_id,'assigned_prosecutor_name',v_assigned_prosecutor_name,'date_filed',p_date_filed,'time_filed',v_effective_time,'details',v_details,'remarks',v_remarks),'MANUAL_ENTRY','case_motions',p_user_id,p_user_id) RETURNING id INTO v_event_id;
+  INSERT INTO public.case_motions(case_id,case_event_id,motion_name,motion_title,filed_by,filed_by_code,assigned_prosecutor_id,date_received,date_filed,time_filed,details_jsonb,motion_status,remarks,created_by_user_id,updated_by_user_id)
+  VALUES (p_case_id,v_event_id,v_title,v_title,CASE v_filed_by_code WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END,v_filed_by_code,p_assigned_prosecutor_id,p_date_filed,p_date_filed,v_effective_time,v_details,'PENDING',v_remarks,p_user_id,p_user_id) RETURNING id INTO v_motion_id;
+  UPDATE public.case_events SET source_id=v_motion_id, updated_at=now(), updated_by_user_id=p_user_id WHERE id=v_event_id;
+  INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,current_case_status_id,current_case_status_date,current_case_status_remarks,current_case_stage_id,current_case_stage_date,current_case_stage_remarks,updated_at) VALUES (p_case_id,v_status_id,p_date_filed,v_remarks,v_status_id,p_date_filed,v_remarks,v_stage_id,p_date_filed,v_remarks,now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,current_case_status_remarks=EXCLUDED.current_case_status_remarks,current_case_stage_id=EXCLUDED.current_case_stage_id,current_case_stage_date=EXCLUDED.current_case_stage_date,current_case_stage_remarks=EXCLUDED.current_case_stage_remarks,updated_at=now();
+  IF coalesce(v_prev_case_status_id,v_prev_status_id) IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (p_case_id,coalesce(v_prev_case_status_id,v_prev_status_id),v_status_id,p_user_id,now(),p_date_filed,v_remarks,v_event_id) RETURNING id INTO v_status_history_id; END IF;
+  IF v_prev_stage_id IS DISTINCT FROM v_stage_id THEN INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id) VALUES (p_case_id,v_prev_stage_id,v_stage_id,p_user_id,now(),p_date_filed,v_remarks,v_event_id) RETURNING id INTO v_stage_history_id; END IF;
+  SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES (p_user_id,'case_motions',v_motion_id,'MOTION_RECEIVED',v_old_details,v_new_details,p_case_id,'Motion received recorded.',jsonb_build_object('case_event_id',v_event_id,'motion_id',v_motion_id,'filed_by_code',v_filed_by_code,'assigned_prosecutor_id',p_assigned_prosecutor_id,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id));
+  RETURN v_event_id;
+END;
+$$;
+
+
+--
+-- Name: record_motion_resolved_event(bigint, bigint, bigint, date, time without time zone, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_motion_resolved_event(p_case_id bigint, p_case_motion_id bigint, p_recommendation_id bigint, p_date_resolved date, p_time_resolved time without time zone DEFAULT NULL::time without time zone, p_remarks text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_event_type_id bigint; v_event_id bigint; v_resolution_id bigint; v_status_id bigint; v_stage_id bigint; v_prev_status_id bigint; v_prev_case_status_id bigint; v_prev_stage_id bigint; v_status_history_id bigint; v_stage_history_id bigint; v_old_details jsonb; v_new_details jsonb; v_effective_time time without time zone; v_remarks text := NULLIF(btrim(coalesce(p_remarks,'')), ''); v_motion_title text; v_filed_by_code text; v_filed_by_label text; v_assigned_prosecutor_id bigint; v_assigned_prosecutor_name text; v_recommendation_code text; v_recommendation_label text;
+BEGIN
+  IF p_case_id IS NULL OR NOT EXISTS (SELECT 1 FROM public.cases WHERE id=p_case_id) THEN RAISE EXCEPTION 'Unknown case id %', p_case_id; END IF;
+  IF p_date_resolved IS NULL THEN RAISE EXCEPTION 'Date Resolved is required'; END IF;
+  SELECT cm.motion_title, cm.filed_by_code, cm.filed_by, cm.assigned_prosecutor_id, coalesce(p.short_name,p.full_name)
+  INTO v_motion_title, v_filed_by_code, v_filed_by_label, v_assigned_prosecutor_id, v_assigned_prosecutor_name
+  FROM public.case_motions cm
+  LEFT JOIN public.prosecutors p ON p.id = cm.assigned_prosecutor_id
+  JOIN public.case_events ce ON ce.id = cm.case_event_id AND ce.is_voided = false
+  WHERE cm.id = p_case_motion_id AND cm.case_id = p_case_id AND cm.is_voided = false;
+  IF v_motion_title IS NULL THEN RAISE EXCEPTION 'Selected motion is not active for this case'; END IF;
+  IF EXISTS (SELECT 1 FROM public.case_motion_resolutions cmr WHERE cmr.case_motion_id = p_case_motion_id AND cmr.is_voided = false) THEN RAISE EXCEPTION 'This motion already has an active resolution.'; END IF;
+  SELECT code, display_label INTO v_recommendation_code, v_recommendation_label FROM public.motion_resolution_recommendations WHERE id=p_recommendation_id AND is_active IS TRUE LIMIT 1;
+  IF v_recommendation_code IS NULL THEN RAISE EXCEPTION 'Recommendation must be active'; END IF;
+  v_effective_time := coalesce(p_time_resolved, (now() AT TIME ZONE 'Asia/Manila')::time(0));
+  SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code='MOTION_RESOLVED' AND is_active IS TRUE LIMIT 1;
+  SELECT id INTO v_status_id FROM public.case_statuses WHERE code='PENDING' AND is_active IS TRUE LIMIT 1;
+  SELECT id INTO v_stage_id FROM public.case_stages WHERE code='MOTION_RESO_FOR_APPROVAL' AND is_active IS TRUE LIMIT 1;
+  IF v_event_type_id IS NULL OR v_status_id IS NULL OR v_stage_id IS NULL THEN RAISE EXCEPTION 'Missing Motion Resolved seed data'; END IF;
+  SELECT current_status_id,current_case_status_id,current_case_stage_id,to_jsonb(cpd) INTO v_prev_status_id,v_prev_case_status_id,v_prev_stage_id,v_old_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
+  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,case_status_id,case_stage_id,details_jsonb,source,source_table,created_by_user_id,updated_by_user_id)
+  VALUES (p_case_id,v_event_type_id,p_date_resolved,v_effective_time,'Motion Resolved',v_remarks,v_status_id,v_status_id,v_stage_id,jsonb_build_object('motion_id',p_case_motion_id,'motion_title',v_motion_title,'filed_by_code',v_filed_by_code,'filed_by_label',v_filed_by_label,'assigned_prosecutor_id',v_assigned_prosecutor_id,'assigned_prosecutor_name',v_assigned_prosecutor_name,'recommendation_id',p_recommendation_id,'recommendation_code',v_recommendation_code,'recommendation_label',v_recommendation_label,'date_resolved',p_date_resolved,'time_resolved',v_effective_time,'remarks',v_remarks),'MANUAL_ENTRY','case_motion_resolutions',p_user_id,p_user_id) RETURNING id INTO v_event_id;
+  INSERT INTO public.case_motion_resolutions(case_id,case_motion_id,case_event_id,recommendation_id,date_resolved,time_resolved,remarks,created_by_user_id,updated_by_user_id)
+  VALUES (p_case_id,p_case_motion_id,v_event_id,p_recommendation_id,p_date_resolved,v_effective_time,v_remarks,p_user_id,p_user_id) RETURNING id INTO v_resolution_id;
+  UPDATE public.case_events SET source_id=v_resolution_id, updated_at=now(), updated_by_user_id=p_user_id WHERE id=v_event_id;
+  UPDATE public.case_motions SET motion_status='RESO_FOR_APPROVAL', updated_by_user_id=p_user_id, updated_at=now() WHERE id=p_case_motion_id;
+  INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,current_case_status_id,current_case_status_date,current_case_status_remarks,current_case_stage_id,current_case_stage_date,current_case_stage_remarks,updated_at) VALUES (p_case_id,v_status_id,p_date_resolved,v_remarks,v_status_id,p_date_resolved,v_remarks,v_stage_id,p_date_resolved,v_remarks,now()) ON CONFLICT (case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,current_case_status_remarks=EXCLUDED.current_case_status_remarks,current_case_stage_id=EXCLUDED.current_case_stage_id,current_case_stage_date=EXCLUDED.current_case_stage_date,current_case_stage_remarks=EXCLUDED.current_case_stage_remarks,updated_at=now();
+  IF coalesce(v_prev_case_status_id,v_prev_status_id) IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (p_case_id,coalesce(v_prev_case_status_id,v_prev_status_id),v_status_id,p_user_id,now(),p_date_resolved,v_remarks,v_event_id) RETURNING id INTO v_status_history_id; END IF;
+  IF v_prev_stage_id IS DISTINCT FROM v_stage_id THEN INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id) VALUES (p_case_id,v_prev_stage_id,v_stage_id,p_user_id,now(),p_date_resolved,v_remarks,v_event_id) RETURNING id INTO v_stage_history_id; END IF;
+  SELECT to_jsonb(cpd) INTO v_new_details FROM public.case_private_details cpd WHERE case_id=p_case_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES (p_user_id,'case_motion_resolutions',v_resolution_id,'MOTION_RESOLVED',v_old_details,v_new_details,p_case_id,'Motion resolved recorded.',jsonb_build_object('case_event_id',v_event_id,'motion_id',p_case_motion_id,'motion_resolution_id',v_resolution_id,'recommendation_id',p_recommendation_id,'recommendation_code',v_recommendation_code,'recommendation_label',v_recommendation_label,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id));
+  RETURN v_event_id;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION record_motion_resolved_event(p_case_id bigint, p_case_motion_id bigint, p_recommendation_id bigint, p_date_resolved date, p_time_resolved time without time zone, p_remarks text, p_user_id bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.record_motion_resolved_event(p_case_id bigint, p_case_motion_id bigint, p_recommendation_id bigint, p_date_resolved date, p_time_resolved time without time zone, p_remarks text, p_user_id bigint) IS 'Records MOTION_RESOLVED as PENDING/MOTION_RESO_FOR_APPROVAL, linked to one active motion and an active recommendation; verification covers Granted/Denied/custom recommendations, duplicate active resolution blocking, history-on-change, and Asia/Manila time default.';
+
+
+--
+-- Name: record_petition_for_review_event(bigint, text, date, time without time zone, text, jsonb, bigint, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_petition_for_review_event(p_case_id bigint, p_filed_by_code text, p_date_filed date, p_time_filed time without time zone DEFAULT NULL::time without time zone, p_petition_status text DEFAULT NULL::text, p_additional_details_jsonb jsonb DEFAULT '[]'::jsonb, p_assigned_prosecutor_id bigint DEFAULT NULL::bigint, p_remarks text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE v_event_type_id bigint; v_event_id bigint; v_petition_id bigint; v_status_id bigint; v_stage_id bigint; v_prev_status_id bigint; v_prev_stage_id bigint; v_status_history_id bigint; v_stage_history_id bigint; v_details jsonb; v_assigned bigint; v_assigned_name text; v_old jsonb; v_new jsonb; v_time time; v_filed_by_label text; v_status text := nullif(btrim(coalesce(p_petition_status,'')), ''); v_remarks text := nullif(btrim(coalesce(p_remarks,'')), '');
+BEGIN
+  IF p_case_id IS NULL OR NOT EXISTS (SELECT 1 FROM public.cases WHERE id=p_case_id) THEN RAISE EXCEPTION 'Unknown case id %', p_case_id; END IF;
+  IF p_date_filed IS NULL THEN RAISE EXCEPTION 'Date Filed is required'; END IF;
+  IF p_filed_by_code NOT IN ('COMPLAINANT','RESPONDENT') THEN RAISE EXCEPTION 'Filed By must be COMPLAINANT or RESPONDENT'; END IF;
+  v_filed_by_label := CASE p_filed_by_code WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END;
+  v_details := public.normalize_petition_details(p_additional_details_jsonb);
+  v_time := coalesce(p_time_filed, (now() AT TIME ZONE 'Asia/Manila')::time(0));
+  SELECT coalesce(p_assigned_prosecutor_id, ca.prosecutor_id) INTO v_assigned FROM public.case_assignments ca WHERE ca.case_id=p_case_id AND ca.unassigned_at IS NULL AND ca.is_voided=false ORDER BY ca.assigned_at DESC NULLS LAST, ca.id DESC LIMIT 1;
+  IF p_assigned_prosecutor_id IS NOT NULL THEN v_assigned := p_assigned_prosecutor_id; END IF;
+  SELECT coalesce(short_name,full_name) INTO v_assigned_name FROM public.prosecutors WHERE id=v_assigned;
+  SELECT id INTO v_event_type_id FROM public.case_event_types WHERE code='PETITION_FOR_REVIEW' AND is_active IS TRUE LIMIT 1;
+  SELECT id INTO v_status_id FROM public.case_statuses WHERE code='PENDING' AND is_active IS TRUE LIMIT 1;
+  SELECT id INTO v_stage_id FROM public.case_stages WHERE code='PENDING_PETREV' AND is_active IS TRUE LIMIT 1;
+  IF v_event_type_id IS NULL OR v_status_id IS NULL OR v_stage_id IS NULL THEN RAISE EXCEPTION 'Missing Petition for Review seed data'; END IF;
+  SELECT current_status_id,current_case_stage_id,to_jsonb(cpd) INTO v_prev_status_id,v_prev_stage_id,v_old FROM public.case_private_details cpd WHERE case_id=p_case_id;
+  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,title,description,status_id,case_status_id,case_stage_id,details_jsonb,source,source_table,created_by_user_id,updated_by_user_id) VALUES (p_case_id,v_event_type_id,p_date_filed,v_time,'Petition for Review',v_remarks,v_status_id,v_status_id,v_stage_id,jsonb_build_object('filed_by_code',p_filed_by_code,'filed_by_label',v_filed_by_label,'date_filed',p_date_filed,'time_filed',v_time,'petition_status',v_status,'status_date',p_date_filed,'additional_details',v_details,'assigned_prosecutor_id',v_assigned,'assigned_prosecutor_name',v_assigned_name,'remarks',v_remarks),'MANUAL_ENTRY','case_petitions_for_review',p_user_id,p_user_id) RETURNING id INTO v_event_id;
+  INSERT INTO public.case_petitions_for_review(case_id,case_event_id,petition_title,filed_by,filed_by_code,date_received,date_filed,time_filed,petition_status,status_date,additional_details_jsonb,assigned_prosecutor_id,handling_prosecutor_text,remarks,source,created_by_user_id,updated_by_user_id) VALUES (p_case_id,v_event_id,'Petition for Review',v_filed_by_label,p_filed_by_code,p_date_filed,p_date_filed,v_time,v_status,p_date_filed,v_details,v_assigned,v_assigned_name,v_remarks,'MANUAL_ENTRY',p_user_id,p_user_id) RETURNING id INTO v_petition_id;
+  UPDATE public.case_events SET source_id=v_petition_id, details_jsonb=details_jsonb || jsonb_build_object('petition_for_review_id',v_petition_id) WHERE id=v_event_id;
+  INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,current_case_status_id,current_case_status_date,current_case_status_remarks,current_case_stage_id,current_case_stage_date,current_case_stage_remarks,updated_at) VALUES(p_case_id,v_status_id,p_date_filed,v_remarks,v_status_id,p_date_filed,v_remarks,v_stage_id,p_date_filed,v_remarks,now()) ON CONFLICT(case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,current_case_status_remarks=EXCLUDED.current_case_status_remarks,current_case_stage_id=EXCLUDED.current_case_stage_id,current_case_stage_date=EXCLUDED.current_case_stage_date,current_case_stage_remarks=EXCLUDED.current_case_stage_remarks,updated_at=now();
+  IF v_prev_status_id IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES(p_case_id,v_prev_status_id,v_status_id,p_user_id,now(),p_date_filed,v_remarks,v_event_id) RETURNING id INTO v_status_history_id; END IF;
+  IF v_prev_stage_id IS DISTINCT FROM v_stage_id THEN INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id) VALUES(p_case_id,v_prev_stage_id,v_stage_id,p_user_id,now(),p_date_filed,v_remarks,v_event_id) RETURNING id INTO v_stage_history_id; END IF;
+  SELECT to_jsonb(cpd) INTO v_new FROM public.case_private_details cpd WHERE case_id=p_case_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES(p_user_id,'case_petitions_for_review',v_petition_id,'PETITION_FOR_REVIEW',v_old,v_new,p_case_id,'Petition for Review recorded.',jsonb_build_object('case_event_id',v_event_id,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id));
+  RETURN v_event_id;
+END; $$;
+
+
+--
+-- Name: record_petition_for_review_update(bigint, bigint, text, date, text, jsonb, boolean, bigint, bigint, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_petition_for_review_update(p_case_id bigint, p_petition_for_review_id bigint, p_petition_status text, p_status_date date, p_remarks text DEFAULT NULL::text, p_additional_details_jsonb jsonb DEFAULT '[]'::jsonb, p_updates_case_status boolean DEFAULT false, p_selected_case_status_id bigint DEFAULT NULL::bigint, p_selected_case_stage_id bigint DEFAULT NULL::bigint, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE v_update_id bigint; v_details jsonb; v_old jsonb; v_new jsonb; v_status_id bigint; v_stage_id bigint; v_prev_status_id bigint; v_prev_stage_id bigint; v_status_history_id bigint; v_stage_history_id bigint; v_status_code text; v_stage_code text; v_remarks text:=nullif(btrim(coalesce(p_remarks,'')), '');
+BEGIN
+ IF nullif(btrim(coalesce(p_petition_status,'')), '') IS NULL THEN RAISE EXCEPTION 'Petition Status is required'; END IF;
+ IF p_status_date IS NULL THEN RAISE EXCEPTION 'Status Date is required'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM public.case_petitions_for_review p JOIN public.case_events ce ON ce.id=p.case_event_id AND ce.is_voided=false WHERE p.id=p_petition_for_review_id AND p.case_id=p_case_id AND p.is_voided=false) THEN RAISE EXCEPTION 'Selected Petition for Review is not active for this case'; END IF;
+ v_details := public.normalize_petition_details(p_additional_details_jsonb);
+ IF p_updates_case_status THEN IF p_selected_case_status_id IS NULL OR p_selected_case_stage_id IS NULL THEN RAISE EXCEPTION 'Case Status and Case Stage are required'; END IF; SELECT code INTO v_status_code FROM public.case_statuses WHERE id=p_selected_case_status_id AND is_active IS TRUE; SELECT code INTO v_stage_code FROM public.case_stages WHERE id=p_selected_case_stage_id AND is_active IS TRUE; IF v_status_code IS NULL OR v_stage_code IS NULL THEN RAISE EXCEPTION 'Selected Case Status and Case Stage must be active'; END IF; ELSE SELECT id INTO p_selected_case_status_id FROM public.case_statuses WHERE code='PENDING' AND is_active IS TRUE; SELECT id INTO p_selected_case_stage_id FROM public.case_stages WHERE code='PENDING_PETREV' AND is_active IS TRUE; END IF;
+ SELECT current_status_id,current_case_stage_id,to_jsonb(cpd) INTO v_prev_status_id,v_prev_stage_id,v_old FROM public.case_private_details cpd WHERE case_id=p_case_id;
+ INSERT INTO public.case_petition_for_review_updates(case_id,petition_for_review_id,petition_status,status_date,remarks,additional_details_jsonb,updates_case_status,selected_case_status_id,selected_case_stage_id,created_by_user_id) VALUES(p_case_id,p_petition_for_review_id,btrim(p_petition_status),p_status_date,v_remarks,v_details,p_updates_case_status,CASE WHEN p_updates_case_status THEN p_selected_case_status_id ELSE NULL END,CASE WHEN p_updates_case_status THEN p_selected_case_stage_id ELSE NULL END,p_user_id) RETURNING id INTO v_update_id;
+ UPDATE public.case_petitions_for_review SET petition_status=btrim(p_petition_status), status_date=p_status_date, remarks=v_remarks, additional_details_jsonb=v_details, updated_at=now(), updated_by_user_id=p_user_id WHERE id=p_petition_for_review_id;
+ v_status_id:=p_selected_case_status_id; v_stage_id:=p_selected_case_stage_id;
+ INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,current_case_status_id,current_case_status_date,current_case_status_remarks,current_case_stage_id,current_case_stage_date,current_case_stage_remarks,updated_at) VALUES(p_case_id,v_status_id,p_status_date,v_remarks,v_status_id,p_status_date,v_remarks,v_stage_id,p_status_date,v_remarks,now()) ON CONFLICT(case_id) DO UPDATE SET current_status_id=EXCLUDED.current_status_id,current_status_date=EXCLUDED.current_status_date,current_status_remarks=EXCLUDED.current_status_remarks,current_case_status_id=EXCLUDED.current_case_status_id,current_case_status_date=EXCLUDED.current_case_status_date,current_case_status_remarks=EXCLUDED.current_case_status_remarks,current_case_stage_id=EXCLUDED.current_case_stage_id,current_case_stage_date=EXCLUDED.current_case_stage_date,current_case_stage_remarks=EXCLUDED.current_case_stage_remarks,updated_at=now();
+ IF v_prev_status_id IS DISTINCT FROM v_status_id THEN INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks) VALUES(p_case_id,v_prev_status_id,v_status_id,p_user_id,now(),p_status_date,v_remarks) RETURNING id INTO v_status_history_id; END IF;
+ IF v_prev_stage_id IS DISTINCT FROM v_stage_id THEN INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks) VALUES(p_case_id,v_prev_stage_id,v_stage_id,p_user_id,now(),p_status_date,v_remarks) RETURNING id INTO v_stage_history_id; END IF;
+ PERFORM public.update_petition_event_details(p_petition_for_review_id,p_user_id);
+ SELECT to_jsonb(cpd) INTO v_new FROM public.case_private_details cpd WHERE case_id=p_case_id;
+ INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES(p_user_id,'case_petition_for_review_updates',v_update_id,'PETITION_FOR_REVIEW_UPDATE',v_old,v_new,p_case_id,'Petition for Review update recorded.',jsonb_build_object('petition_for_review_id',p_petition_for_review_id,'updates_case_status',p_updates_case_status,'status_history_id',v_status_history_id,'case_stage_history_id',v_stage_history_id));
+ RETURN v_update_id;
+END; $$;
 
 
 --
@@ -8772,6 +9299,110 @@ $$;
 
 
 --
+-- Name: update_court_filing_status_details(bigint, bigint, jsonb, jsonb, integer, jsonb, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.update_court_filing_status_details(p_case_id bigint, p_court_filing_id bigint, p_criminal_case_numbers jsonb DEFAULT '[]'::jsonb, p_court_statuses jsonb DEFAULT '[]'::jsonb, p_information_count integer DEFAULT NULL::integer, p_additional_details_jsonb jsonb DEFAULT '[]'::jsonb, p_remarks text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  v_filing public.case_court_filings%ROWTYPE;
+  v_event public.case_events%ROWTYPE;
+  v_old jsonb;
+  v_new jsonb;
+  v_numbers jsonb := '[]'::jsonb;
+  v_statuses jsonb := '[]'::jsonb;
+  v_details jsonb := '[]'::jsonb;
+  v_item jsonb;
+  v_text text;
+  v_date date;
+  v_idx integer := 0;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN RAISE EXCEPTION 'Case does not exist'; END IF;
+  SELECT * INTO v_filing FROM public.case_court_filings WHERE id = p_court_filing_id;
+  IF v_filing.id IS NULL THEN RAISE EXCEPTION 'Court Filing does not exist'; END IF;
+  IF v_filing.case_id <> p_case_id THEN RAISE EXCEPTION 'Court Filing does not belong to this case'; END IF;
+  IF v_filing.is_voided THEN RAISE EXCEPTION 'Court Filing is not active'; END IF;
+  SELECT * INTO v_event FROM public.case_events WHERE id = v_filing.case_event_id AND case_id = p_case_id AND is_voided = false;
+  IF v_event.id IS NULL THEN RAISE EXCEPTION 'Linked Court Filing event is not active'; END IF;
+  IF p_information_count IS NOT NULL AND p_information_count < 0 THEN RAISE EXCEPTION 'Information Count must be a non-negative integer'; END IF;
+  IF p_criminal_case_numbers IS NOT NULL AND jsonb_typeof(p_criminal_case_numbers) <> 'array' THEN RAISE EXCEPTION 'Criminal Case Numbers must be a JSON array'; END IF;
+  IF p_court_statuses IS NOT NULL AND jsonb_typeof(p_court_statuses) <> 'array' THEN RAISE EXCEPTION 'Court Statuses must be a JSON array'; END IF;
+  IF p_additional_details_jsonb IS NOT NULL AND jsonb_typeof(p_additional_details_jsonb) <> 'array' THEN RAISE EXCEPTION 'Additional Details must be a JSON array'; END IF;
+
+  SELECT jsonb_build_object('court_filing', to_jsonb(v_filing), 'event_details_jsonb', v_event.details_jsonb,
+    'criminal_case_numbers', COALESCE(jsonb_agg(to_jsonb(cc) ORDER BY cc.sort_order, cc.id) FILTER (WHERE cc.id IS NOT NULL), '[]'::jsonb),
+    'court_statuses', COALESCE((SELECT jsonb_agg(to_jsonb(cs) ORDER BY cs.sort_order, cs.id) FROM public.case_court_filing_statuses cs WHERE cs.court_filing_id=p_court_filing_id AND cs.is_voided=false), '[]'::jsonb))
+  INTO v_old FROM public.case_court_filing_criminal_cases cc WHERE cc.court_filing_id=p_court_filing_id AND cc.is_voided=false;
+
+  FOR v_item IN SELECT value FROM jsonb_array_elements(coalesce(p_criminal_case_numbers,'[]'::jsonb)) LOOP
+    v_text := nullif(btrim(CASE WHEN jsonb_typeof(v_item)='object' THEN v_item->>'criminal_case_no' ELSE trim(both '"' from v_item::text) END), '');
+    IF v_text IS NOT NULL AND NOT v_numbers @> jsonb_build_array(v_text) THEN v_numbers := v_numbers || jsonb_build_array(v_text); END IF;
+  END LOOP;
+
+  FOR v_item IN SELECT value FROM jsonb_array_elements(coalesce(p_court_statuses,'[]'::jsonb)) LOOP
+    v_text := nullif(btrim(v_item->>'court_status'), '');
+    IF v_text IS NULL AND nullif(btrim(v_item->>'status_date'), '') IS NULL THEN CONTINUE; END IF;
+    IF v_text IS NULL OR nullif(btrim(v_item->>'status_date'), '') IS NULL THEN RAISE EXCEPTION 'Court Status and Status Date are required'; END IF;
+    v_date := (v_item->>'status_date')::date;
+    IF NOT v_statuses @> jsonb_build_array(jsonb_build_object('court_status', v_text, 'status_date', v_date)) THEN
+      v_statuses := v_statuses || jsonb_build_array(jsonb_build_object('court_status', v_text, 'status_date', v_date));
+    END IF;
+  END LOOP;
+
+  FOR v_item IN SELECT value FROM jsonb_array_elements(coalesce(p_additional_details_jsonb,'[]'::jsonb)) LOOP
+    IF nullif(btrim(v_item->>'detail'), '') IS NOT NULL OR nullif(btrim(v_item->>'value'), '') IS NOT NULL THEN
+      v_details := v_details || jsonb_build_array(jsonb_build_object('detail', btrim(coalesce(v_item->>'detail','')), 'value', btrim(coalesce(v_item->>'value',''))));
+    END IF;
+  END LOOP;
+
+  UPDATE public.case_court_filing_criminal_cases SET is_voided=true, voided_at=now(), voided_by_user_id=p_user_id, void_reason='Removed by Court Status Update', updated_at=now(), updated_by_user_id=p_user_id WHERE court_filing_id=p_court_filing_id AND is_voided=false AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(v_numbers) n WHERE lower(n.value)=lower(criminal_case_no));
+  v_idx := 0;
+  FOR v_text IN SELECT value FROM jsonb_array_elements_text(v_numbers) LOOP
+    v_idx := v_idx + 1;
+    INSERT INTO public.case_court_filing_criminal_cases(case_id,court_filing_id,criminal_case_no,sort_order,created_by_user_id,updated_by_user_id) VALUES(p_case_id,p_court_filing_id,v_text,v_idx,p_user_id,p_user_id)
+    ON CONFLICT (court_filing_id, (lower(criminal_case_no))) WHERE is_voided=false DO UPDATE SET sort_order=EXCLUDED.sort_order, updated_at=now(), updated_by_user_id=p_user_id;
+  END LOOP;
+
+  UPDATE public.case_court_filing_statuses SET is_voided=true, voided_at=now(), voided_by_user_id=p_user_id, void_reason='Removed by Court Status Update', updated_at=now(), updated_by_user_id=p_user_id WHERE court_filing_id=p_court_filing_id AND is_voided=false AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_statuses) s WHERE lower(s.value->>'court_status')=lower(court_status) AND (s.value->>'status_date')::date=status_date);
+  v_idx := 0;
+  FOR v_item IN SELECT value FROM jsonb_array_elements(v_statuses) LOOP
+    v_idx := v_idx + 1;
+    INSERT INTO public.case_court_filing_statuses(case_id,court_filing_id,court_status,status_date,sort_order,remarks,created_by_user_id,updated_by_user_id) VALUES(p_case_id,p_court_filing_id,v_item->>'court_status',(v_item->>'status_date')::date,v_idx,p_remarks,p_user_id,p_user_id)
+    ON CONFLICT (court_filing_id, (lower(court_status)), status_date) WHERE is_voided=false DO UPDATE SET sort_order=EXCLUDED.sort_order, remarks=EXCLUDED.remarks, updated_at=now(), updated_by_user_id=p_user_id;
+  END LOOP;
+
+  UPDATE public.case_court_filings SET information_count=p_information_count, additional_details_jsonb=v_details, court_status_update_remarks=nullif(btrim(coalesce(p_remarks,'')), ''), criminal_case_no=CASE WHEN jsonb_array_length(v_numbers) = 0 THEN NULL ELSE v_numbers->>0 END, court_status=CASE WHEN jsonb_array_length(v_statuses) = 0 THEN NULL ELSE (v_statuses->(jsonb_array_length(v_statuses)-1))->>'court_status' END, updated_at=now(), updated_by_user_id=p_user_id WHERE id=p_court_filing_id;
+
+  SELECT jsonb_build_object('criminal_case_numbers', COALESCE((SELECT jsonb_agg(jsonb_build_object('id',id,'criminal_case_no',criminal_case_no,'sort_order',sort_order) ORDER BY sort_order,id) FROM public.case_court_filing_criminal_cases WHERE court_filing_id=p_court_filing_id AND is_voided=false), '[]'::jsonb), 'court_statuses', COALESCE((SELECT jsonb_agg(jsonb_build_object('id',id,'court_status',court_status,'status_date',status_date,'sort_order',sort_order) ORDER BY sort_order,id) FROM public.case_court_filing_statuses WHERE court_filing_id=p_court_filing_id AND is_voided=false), '[]'::jsonb)) INTO v_new;
+
+  UPDATE public.case_events SET details_jsonb = COALESCE(details_jsonb,'{}'::jsonb) || jsonb_build_object('court_filing_id', p_court_filing_id, 'approved_filing_decision', v_event.details_jsonb->'approved_filing_decision', 'court', v_filing.court_name, 'court_branch', v_filing.court_branch, 'charge_filed', v_filing.charge_filed, 'date_filed', v_filing.date_filed, 'time_filed', v_filing.time_filed, 'criminal_case_numbers', v_new->'criminal_case_numbers', 'court_statuses', v_new->'court_statuses', 'information_count', p_information_count, 'additional_details', v_details, 'court_status_update_remarks', nullif(btrim(coalesce(p_remarks,'')), ''), 'last_court_status_updated_at', now(), 'last_court_status_updated_by_user_id', p_user_id), updated_at=now(), updated_by_user_id=p_user_id WHERE id=v_event.id;
+
+  SELECT jsonb_build_object('court_filing', to_jsonb(cf), 'event_details_jsonb', ce.details_jsonb, 'criminal_case_numbers', v_new->'criminal_case_numbers', 'court_statuses', v_new->'court_statuses') INTO v_new FROM public.case_court_filings cf JOIN public.case_events ce ON ce.id=cf.case_event_id WHERE cf.id=p_court_filing_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata) VALUES(p_user_id,'case_court_filings',p_court_filing_id,'UPDATE_COURT_FILING_STATUS_DETAILS',v_old,v_new,p_case_id,'Court filing status details updated.',jsonb_build_object('case_event_id',v_event.id,'remarks',p_remarks));
+  RETURN p_court_filing_id;
+END;
+$$;
+
+
+--
+-- Name: update_petition_event_details(bigint, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.update_petition_event_details(p_petition_id bigint, p_user_id bigint DEFAULT NULL::bigint) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE p public.case_petitions_for_review%ROWTYPE; v_name text;
+BEGIN
+ SELECT * INTO p FROM public.case_petitions_for_review WHERE id=p_petition_id;
+ IF p.id IS NULL OR p.case_event_id IS NULL THEN RETURN; END IF;
+ SELECT coalesce(short_name,full_name) INTO v_name FROM public.prosecutors WHERE id=p.assigned_prosecutor_id;
+ UPDATE public.case_events SET details_jsonb=coalesce(details_jsonb,'{}'::jsonb)||jsonb_build_object('petition_for_review_id',p.id,'filed_by_code',p.filed_by_code,'filed_by_label',p.filed_by,'date_filed',p.date_filed,'time_filed',p.time_filed,'petition_status',p.petition_status,'status_date',p.status_date,'additional_details',p.additional_details_jsonb,'assigned_prosecutor_id',p.assigned_prosecutor_id,'assigned_prosecutor_name',coalesce(v_name,p.handling_prosecutor_text),'remarks',p.remarks), updated_at=now(), updated_by_user_id=p_user_id WHERE id=p.case_event_id;
+END; $$;
+
+
+--
 -- Name: upsert_clearance_phonetic_tokens_for_organization(bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8863,6 +9494,11 @@ DECLARE
   v_old jsonb; v_new jsonb; v_case_id bigint; v_event_type_code text; v_source_table text; v_source_id bigint;
   v_filing_id bigint; v_filing_old jsonb; v_filing_new jsonb; v_approval_id bigint; v_resolution_id bigint;
   v_assignment_id bigint; v_assignment_old jsonb; v_assignment_new jsonb;
+  v_motion_id bigint; v_motion_old jsonb; v_motion_new jsonb;
+  v_petition_id bigint; v_petition_old jsonb; v_petition_new jsonb;
+  v_manual_update_id bigint; v_manual_update_old jsonb; v_manual_update_new jsonb;
+  v_motion_resolution_id bigint; v_motion_resolution_old jsonb; v_motion_resolution_new jsonb; v_motion_approval_count integer;
+  v_motion_decision_approval_id bigint; v_motion_decision_approval_old jsonb; v_motion_decision_approval_new jsonb;
   v_previous_assignment_id bigint; v_previous_assignment_old jsonb; v_previous_assignment_new jsonb; v_latest_assignment_id bigint;
   v_status_code text; v_status_label text; v_status_id bigint; v_prev_status_id bigint; v_status_history_id bigint; v_old_details jsonb; v_new_details jsonb;
 BEGIN
@@ -8888,6 +9524,169 @@ BEGIN
   UPDATE public.case_events SET is_voided = true, void_reason = p_void_reason, voided_at = now(), voided_by_user_id = p_voided_by_user_id, updated_by_user_id = p_voided_by_user_id, updated_at = now() WHERE id = p_case_event_id;
   SELECT to_jsonb(ce) INTO v_new FROM public.case_events ce WHERE ce.id = p_case_event_id;
   INSERT INTO public.audit_logs(actor_user_id, entity_name, entity_id, action, old_data, new_data, case_id, summary, metadata) VALUES (p_voided_by_user_id, 'case_events', p_case_event_id, 'VOID_CASE_EVENT', v_old, v_new, v_case_id, 'Voided case timeline activity', jsonb_build_object('reason', p_void_reason));
+
+  IF v_event_type_code = 'CUSTOM_EVENT' THEN
+    IF lower(coalesce(v_old#>>'{details_jsonb,updates_case_status}', 'false')) = 'true' THEN
+      PERFORM public.apply_case_state_recompute(v_case_id, CURRENT_DATE, NULL, p_case_event_id, p_voided_by_user_id);
+
+      SELECT to_jsonb(cpd) INTO v_new_details
+      FROM public.case_private_details cpd
+      WHERE cpd.case_id = v_case_id;
+
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (
+        p_voided_by_user_id,
+        'case_events',
+        p_case_event_id,
+        'VOID_CUSTOM_EVENT_STATUS_STAGE_RECOMPUTED',
+        v_old_details,
+        v_new_details,
+        v_case_id,
+        'Custom Event voided; case status and case stage recomputed from active workflow records.',
+        jsonb_build_object(
+          'case_event_id',p_case_event_id,
+          'reason',p_void_reason,
+          'updates_case_status',true,
+          'previous_case_status_id',COALESCE(v_old_details->>'current_case_status_id', v_old_details->>'current_status_id'),
+          'previous_case_status_label',(SELECT display_label FROM public.case_statuses WHERE id = NULLIF(COALESCE(v_old_details->>'current_case_status_id', v_old_details->>'current_status_id'), '')::bigint),
+          'previous_case_stage_id',v_old_details->>'current_case_stage_id',
+          'previous_case_stage_label',(SELECT display_label FROM public.case_stages WHERE id = NULLIF(v_old_details->>'current_case_stage_id', '')::bigint),
+          'recomputed_case_status_id',COALESCE(v_new_details->>'current_case_status_id', v_new_details->>'current_status_id'),
+          'recomputed_case_status_label',(SELECT display_label FROM public.case_statuses WHERE id = NULLIF(COALESCE(v_new_details->>'current_case_status_id', v_new_details->>'current_status_id'), '')::bigint),
+          'recomputed_case_stage_id',v_new_details->>'current_case_stage_id',
+          'recomputed_case_stage_label',(SELECT display_label FROM public.case_stages WHERE id = NULLIF(v_new_details->>'current_case_stage_id', '')::bigint)
+        )
+      );
+    END IF;
+    RETURN;
+  END IF;
+
+  IF lower(coalesce(v_source_table,'')) = 'case_petitions_for_review' OR v_event_type_code = 'PETITION_FOR_REVIEW' THEN
+    SELECT p.id, to_jsonb(p) INTO v_petition_id, v_petition_old
+    FROM public.case_petitions_for_review p
+    WHERE p.id = v_source_id OR p.case_event_id = p_case_event_id
+    ORDER BY CASE WHEN p.id = v_source_id THEN 0 ELSE 1 END
+    LIMIT 1;
+    IF v_petition_id IS NOT NULL THEN
+      UPDATE public.case_petitions_for_review
+      SET is_voided = true, voided_at = now(), voided_by_user_id = p_voided_by_user_id, void_reason = p_void_reason, updated_by_user_id = p_voided_by_user_id, updated_at = now()
+      WHERE id = v_petition_id;
+      SELECT to_jsonb(p) INTO v_petition_new FROM public.case_petitions_for_review p WHERE p.id = v_petition_id;
+      PERFORM public.apply_case_state_recompute(v_case_id, CURRENT_DATE, NULL, p_case_event_id, p_voided_by_user_id);
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (p_voided_by_user_id,'case_petitions_for_review',v_petition_id,'VOID_PETITION_FOR_REVIEW_FROM_EVENT',v_petition_old,v_petition_new,v_case_id,'Petition for Review voided and case status/stage recomputed.',jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason));
+    END IF;
+  END IF;
+
+  IF lower(coalesce(v_source_table,'')) = 'case_manual_status_updates' OR v_event_type_code = 'CASE_STATUS_UPDATED' THEN
+    SELECT msu.id, to_jsonb(msu) INTO v_manual_update_id, v_manual_update_old
+    FROM public.case_manual_status_updates msu
+    WHERE msu.id = v_source_id OR msu.case_event_id = p_case_event_id
+    ORDER BY CASE WHEN msu.id = v_source_id THEN 0 ELSE 1 END
+    LIMIT 1;
+    IF v_manual_update_id IS NOT NULL THEN
+      UPDATE public.case_manual_status_updates
+      SET is_voided = true,
+          voided_at = now(),
+          voided_by_user_id = p_voided_by_user_id,
+          void_reason = p_void_reason,
+          updated_at = now()
+      WHERE id = v_manual_update_id;
+      SELECT to_jsonb(msu) INTO v_manual_update_new FROM public.case_manual_status_updates msu WHERE msu.id = v_manual_update_id;
+      PERFORM public.apply_case_state_recompute(v_case_id, CURRENT_DATE, NULL, p_case_event_id, p_voided_by_user_id);
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (p_voided_by_user_id,'case_manual_status_updates',v_manual_update_id,'VOID_CASE_STATUS_UPDATED_FROM_EVENT',v_manual_update_old,v_manual_update_new,v_case_id,'Manual Case Status Updated event voided and case status/stage recomputed.',jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason));
+    END IF;
+  END IF;
+
+  IF lower(coalesce(v_source_table,'')) = 'case_motions' OR v_event_type_code = 'MOTION_RECEIVED' THEN
+    SELECT cm.id, to_jsonb(cm) INTO v_motion_id, v_motion_old FROM public.case_motions cm WHERE cm.id = v_source_id OR cm.case_event_id = p_case_event_id ORDER BY CASE WHEN cm.id = v_source_id THEN 0 ELSE 1 END LIMIT 1;
+    IF v_motion_id IS NOT NULL THEN
+      IF EXISTS (SELECT 1 FROM public.case_motion_resolutions cmr WHERE cmr.case_motion_id = v_motion_id AND cmr.is_voided = false) THEN
+        RAISE EXCEPTION 'This motion already has a resolution. Void the motion resolution first.';
+      END IF;
+      UPDATE public.case_motions SET is_voided = true, voided_at = now(), voided_by_user_id = p_voided_by_user_id, void_reason = p_void_reason, updated_by_user_id = p_voided_by_user_id, updated_at = now() WHERE id = v_motion_id;
+      SELECT to_jsonb(cm) INTO v_motion_new FROM public.case_motions cm WHERE cm.id = v_motion_id;
+
+      PERFORM public.apply_case_state_recompute(v_case_id, CURRENT_DATE, NULL, p_case_event_id, p_voided_by_user_id);
+
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (p_voided_by_user_id,'case_motions',v_motion_id,'VOID_MOTION_RECEIVED_FROM_EVENT',v_motion_old,v_motion_new,v_case_id,'Motion Received voided and case status/stage recomputed.',jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason));
+    END IF;
+  END IF;
+
+  IF lower(coalesce(v_source_table,'')) = 'case_motion_resolution_approvals' OR v_event_type_code = 'MOTION_DECISION_APPROVED' THEN
+    SELECT cmra.id, to_jsonb(cmra) INTO v_motion_decision_approval_id, v_motion_decision_approval_old
+    FROM public.case_motion_resolution_approvals cmra
+    WHERE cmra.id = v_source_id OR cmra.case_event_id = p_case_event_id
+    ORDER BY CASE WHEN cmra.id = v_source_id THEN 0 ELSE 1 END
+    LIMIT 1;
+
+    IF v_motion_decision_approval_id IS NOT NULL THEN
+      UPDATE public.case_motion_resolution_approvals
+      SET is_voided = true,
+          voided_at = now(),
+          voided_by_user_id = p_voided_by_user_id,
+          void_reason = p_void_reason,
+          updated_by_user_id = p_voided_by_user_id,
+          updated_at = now()
+      WHERE id = v_motion_decision_approval_id;
+
+      SELECT to_jsonb(cmra) INTO v_motion_decision_approval_new
+      FROM public.case_motion_resolution_approvals cmra
+      WHERE cmra.id = v_motion_decision_approval_id;
+
+      PERFORM public.apply_case_state_recompute(v_case_id, CURRENT_DATE, NULL, p_case_event_id, p_voided_by_user_id);
+
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (p_voided_by_user_id,'case_motion_resolution_approvals',v_motion_decision_approval_id,'VOID_MOTION_DECISION_APPROVED_FROM_EVENT',v_motion_decision_approval_old,v_motion_decision_approval_new,v_case_id,'Motion Decision Approved voided and case status/stage recomputed.',jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason));
+    END IF;
+  END IF;
+
+  IF lower(coalesce(v_source_table,'')) = 'case_motion_resolutions' OR v_event_type_code = 'MOTION_RESOLVED' THEN
+    SELECT cmr.id, to_jsonb(cmr) INTO v_motion_resolution_id, v_motion_resolution_old
+    FROM public.case_motion_resolutions cmr
+    WHERE cmr.id = v_source_id OR cmr.case_event_id = p_case_event_id
+    ORDER BY CASE WHEN cmr.id = v_source_id THEN 0 ELSE 1 END
+    LIMIT 1;
+
+    IF v_motion_resolution_id IS NOT NULL THEN
+      SELECT count(*) INTO v_motion_approval_count
+      FROM public.case_motion_resolution_approvals cmra
+      WHERE cmra.case_motion_resolution_id = v_motion_resolution_id
+        AND cmra.is_voided = false;
+      IF COALESCE(v_motion_approval_count, 0) > 0 THEN
+        RAISE EXCEPTION 'This motion resolution already has an approved decision. Void the approval event first.';
+      END IF;
+
+      UPDATE public.case_motion_resolutions
+      SET is_voided = true,
+          voided_at = now(),
+          voided_by_user_id = p_voided_by_user_id,
+          void_reason = p_void_reason,
+          updated_by_user_id = p_voided_by_user_id,
+          updated_at = now()
+      WHERE id = v_motion_resolution_id;
+
+      SELECT to_jsonb(cmr) INTO v_motion_resolution_new
+      FROM public.case_motion_resolutions cmr
+      WHERE cmr.id = v_motion_resolution_id;
+
+      UPDATE public.case_motions cm
+      SET motion_status = 'PENDING',
+          updated_by_user_id = p_voided_by_user_id,
+          updated_at = now()
+      FROM public.case_motion_resolutions cmr
+      WHERE cm.id = cmr.case_motion_id
+        AND cmr.id = v_motion_resolution_id
+        AND cm.is_voided = false;
+
+      PERFORM public.apply_case_state_recompute(v_case_id, CURRENT_DATE, NULL, p_case_event_id, p_voided_by_user_id);
+
+      INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,case_id,summary,metadata)
+      VALUES (p_voided_by_user_id,'case_motion_resolutions',v_motion_resolution_id,'VOID_MOTION_RESOLVED_FROM_EVENT',v_motion_resolution_old,v_motion_resolution_new,v_case_id,'Motion Resolved voided and case status/stage recomputed.',jsonb_build_object('case_event_id',p_case_event_id,'reason',p_void_reason));
+    END IF;
+  END IF;
 
   IF lower(coalesce(v_source_table,'')) = 'case_court_filings' OR v_event_type_code = 'COURT_FILING' THEN
     SELECT cf.id, to_jsonb(cf) INTO v_filing_id, v_filing_old FROM public.case_court_filings cf WHERE cf.id = v_source_id OR cf.case_event_id = p_case_event_id ORDER BY CASE WHEN cf.id = v_source_id THEN 0 ELSE 1 END LIMIT 1;
@@ -9073,6 +9872,13 @@ BEGIN
 
 END;
 $$;
+
+
+--
+-- Name: FUNCTION void_case_event(p_case_event_id bigint, p_void_reason text, p_voided_by_user_id bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.void_case_event(p_case_event_id bigint, p_void_reason text, p_voided_by_user_id bigint) IS 'Adds CUSTOM_EVENT void recomputation exactly once when details_jsonb.updates_case_status is true, preserving the visible voided event and avoiding source-table side effects.';
 
 
 --
@@ -11868,6 +12674,78 @@ ALTER SEQUENCE public.case_classifications_id_seq OWNED BY public.case_classific
 
 
 --
+-- Name: case_court_filing_criminal_cases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_court_filing_criminal_cases (
+    id bigint NOT NULL,
+    case_id bigint NOT NULL,
+    court_filing_id bigint NOT NULL,
+    criminal_case_no text NOT NULL,
+    sort_order integer,
+    created_by_user_id bigint,
+    updated_by_user_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    is_voided boolean DEFAULT false NOT NULL,
+    voided_at timestamp with time zone,
+    voided_by_user_id bigint,
+    void_reason text
+);
+
+
+--
+-- Name: case_court_filing_criminal_cases_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.case_court_filing_criminal_cases ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.case_court_filing_criminal_cases_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: case_court_filing_statuses; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_court_filing_statuses (
+    id bigint NOT NULL,
+    case_id bigint NOT NULL,
+    court_filing_id bigint NOT NULL,
+    court_status text NOT NULL,
+    status_date date NOT NULL,
+    sort_order integer,
+    remarks text,
+    created_by_user_id bigint,
+    updated_by_user_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    is_voided boolean DEFAULT false NOT NULL,
+    voided_at timestamp with time zone,
+    voided_by_user_id bigint,
+    void_reason text
+);
+
+
+--
+-- Name: case_court_filing_statuses_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.case_court_filing_statuses ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.case_court_filing_statuses_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: case_court_filings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11894,7 +12772,9 @@ CREATE TABLE public.case_court_filings (
     is_voided boolean DEFAULT false NOT NULL,
     voided_at timestamp with time zone,
     voided_by_user_id bigint,
-    void_reason text
+    void_reason text,
+    additional_details_jsonb jsonb DEFAULT '[]'::jsonb NOT NULL,
+    court_status_update_remarks text
 );
 
 
@@ -12135,6 +13015,134 @@ ALTER TABLE public.case_legacy_attributes ALTER COLUMN id ADD GENERATED BY DEFAU
 
 
 --
+-- Name: case_manual_status_updates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_manual_status_updates (
+    id bigint NOT NULL,
+    case_id bigint NOT NULL,
+    case_event_id bigint,
+    selected_case_status_id bigint NOT NULL,
+    selected_case_stage_id bigint NOT NULL,
+    status_date date NOT NULL,
+    remarks text,
+    reason text NOT NULL,
+    created_by_user_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    is_voided boolean DEFAULT false NOT NULL,
+    voided_at timestamp with time zone,
+    voided_by_user_id bigint,
+    void_reason text
+);
+
+
+--
+-- Name: case_manual_status_updates_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.case_manual_status_updates ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.case_manual_status_updates_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: case_motion_resolution_approvals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_motion_resolution_approvals (
+    id bigint NOT NULL,
+    case_id bigint NOT NULL,
+    case_motion_id bigint NOT NULL,
+    case_motion_resolution_id bigint NOT NULL,
+    case_event_id bigint,
+    approved_decision_recommendation_id bigint NOT NULL,
+    approved_by_prosecutor_id bigint NOT NULL,
+    date_approved date NOT NULL,
+    time_approved time without time zone,
+    updates_case_status boolean DEFAULT false NOT NULL,
+    selected_case_status_id bigint,
+    selected_case_stage_id bigint,
+    remarks text,
+    created_by_user_id bigint,
+    updated_by_user_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    is_voided boolean DEFAULT false NOT NULL,
+    voided_at timestamp with time zone,
+    voided_by_user_id bigint,
+    void_reason text
+);
+
+
+--
+-- Name: case_motion_resolution_approvals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.case_motion_resolution_approvals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: case_motion_resolution_approvals_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.case_motion_resolution_approvals_id_seq OWNED BY public.case_motion_resolution_approvals.id;
+
+
+--
+-- Name: case_motion_resolutions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_motion_resolutions (
+    id bigint NOT NULL,
+    case_id bigint NOT NULL,
+    case_motion_id bigint NOT NULL,
+    case_event_id bigint,
+    recommendation_id bigint NOT NULL,
+    date_resolved date NOT NULL,
+    time_resolved time without time zone,
+    remarks text,
+    created_by_user_id bigint,
+    updated_by_user_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    is_voided boolean DEFAULT false NOT NULL,
+    voided_at timestamp with time zone,
+    voided_by_user_id bigint,
+    void_reason text
+);
+
+
+--
+-- Name: case_motion_resolutions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.case_motion_resolutions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: case_motion_resolutions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.case_motion_resolutions_id_seq OWNED BY public.case_motion_resolutions.id;
+
+
+--
 -- Name: case_motions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12165,7 +13173,18 @@ CREATE TABLE public.case_motions (
     date_resolved_raw text,
     date_approved date,
     date_approved_raw text,
-    remarks_raw text
+    remarks_raw text,
+    motion_title text,
+    filed_by_code text,
+    date_filed date,
+    time_filed time without time zone,
+    details_jsonb jsonb DEFAULT '[]'::jsonb NOT NULL,
+    is_voided boolean DEFAULT false NOT NULL,
+    voided_at timestamp with time zone,
+    voided_by_user_id bigint,
+    void_reason text,
+    assigned_prosecutor_id bigint,
+    CONSTRAINT case_motions_filed_by_code_check CHECK (((filed_by_code IS NULL) OR (filed_by_code = ANY (ARRAY['COMPLAINANT'::text, 'RESPONDENT'::text]))))
 );
 
 
@@ -12510,6 +13529,45 @@ ALTER SEQUENCE public.case_participants_id_seq OWNED BY public.case_participants
 
 
 --
+-- Name: case_petition_for_review_updates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_petition_for_review_updates (
+    id bigint NOT NULL,
+    case_id bigint NOT NULL,
+    petition_for_review_id bigint NOT NULL,
+    petition_status text NOT NULL,
+    status_date date NOT NULL,
+    remarks text,
+    additional_details_jsonb jsonb DEFAULT '[]'::jsonb NOT NULL,
+    updates_case_status boolean DEFAULT false NOT NULL,
+    selected_case_status_id bigint,
+    selected_case_stage_id bigint,
+    created_by_user_id bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    is_voided boolean DEFAULT false NOT NULL,
+    voided_at timestamp with time zone,
+    voided_by_user_id bigint,
+    void_reason text
+);
+
+
+--
+-- Name: case_petition_for_review_updates_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.case_petition_for_review_updates ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.case_petition_for_review_updates_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: case_petitions_for_review; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12538,7 +13596,18 @@ CREATE TABLE public.case_petitions_for_review (
     created_by_user_id bigint,
     updated_by_user_id bigint,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    filed_by_code text,
+    date_filed date,
+    time_filed time without time zone,
+    status_date date,
+    additional_details_jsonb jsonb DEFAULT '[]'::jsonb NOT NULL,
+    assigned_prosecutor_id bigint,
+    is_voided boolean DEFAULT false NOT NULL,
+    voided_at timestamp with time zone,
+    voided_by_user_id bigint,
+    void_reason text,
+    CONSTRAINT case_petitions_for_review_filed_by_code_chk CHECK (((filed_by_code IS NULL) OR (filed_by_code = ANY (ARRAY['COMPLAINANT'::text, 'RESPONDENT'::text]))))
 );
 
 
@@ -13438,6 +14507,42 @@ ALTER TABLE public.migration_review_items ALTER COLUMN id ADD GENERATED BY DEFAU
     NO MAXVALUE
     CACHE 1
 );
+
+
+--
+-- Name: motion_resolution_recommendations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.motion_resolution_recommendations (
+    id bigint NOT NULL,
+    code text NOT NULL,
+    display_label text NOT NULL,
+    sort_order integer DEFAULT 100 NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT motion_resolution_recommendations_code_nonempty CHECK ((btrim(code) <> ''::text)),
+    CONSTRAINT motion_resolution_recommendations_label_nonempty CHECK ((btrim(display_label) <> ''::text))
+);
+
+
+--
+-- Name: motion_resolution_recommendations_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.motion_resolution_recommendations_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: motion_resolution_recommendations_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.motion_resolution_recommendations_id_seq OWNED BY public.motion_resolution_recommendations.id;
 
 
 --
@@ -15154,36 +16259,90 @@ COMMENT ON VIEW public.v_case_details_page IS 'Case details page read model with
 
 
 --
+-- Name: v_case_motion_resolutions_detail; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_case_motion_resolutions_detail AS
+ SELECT cmr.id,
+    cmr.case_id,
+    cmr.case_motion_id,
+    cmr.case_event_id,
+    cmr.recommendation_id,
+    rr.code AS recommendation_code,
+    rr.display_label AS recommendation_label,
+    cmr.date_resolved,
+    cmr.time_resolved,
+    cmr.remarks,
+    cmr.is_voided,
+    cm.motion_title,
+    cm.filed_by,
+    cm.filed_by_code,
+    cm.date_filed,
+    cm.assigned_prosecutor_id,
+    COALESCE(ap.short_name, ap.full_name) AS assigned_prosecutor_name,
+    NULL::bigint AS active_motion_decision_approval_id
+   FROM (((((public.case_motion_resolutions cmr
+     JOIN public.case_events resolved_event ON (((resolved_event.id = cmr.case_event_id) AND (resolved_event.is_voided = false))))
+     JOIN public.case_motions cm ON (((cm.id = cmr.case_motion_id) AND (cm.is_voided = false))))
+     JOIN public.case_events received_event ON (((received_event.id = cm.case_event_id) AND (received_event.is_voided = false))))
+     LEFT JOIN public.prosecutors ap ON ((ap.id = cm.assigned_prosecutor_id)))
+     LEFT JOIN public.motion_resolution_recommendations rr ON ((rr.id = cmr.recommendation_id)))
+  WHERE ((cmr.is_voided = false) AND (NOT (EXISTS ( SELECT 1
+           FROM (public.case_motion_resolution_approvals cmra
+             JOIN public.case_events approval_event ON (((approval_event.id = cmra.case_event_id) AND (approval_event.is_voided = false))))
+          WHERE ((cmra.case_motion_resolution_id = cmr.id) AND (cmra.is_voided = false))))));
+
+
+--
+-- Name: VIEW v_case_motion_resolutions_detail; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_case_motion_resolutions_detail IS 'Eligible Motion Resolution approval candidates only. Uses exact active linked records and ignores voided historical approvals; does not use case_motions legacy date/status fields for eligibility.';
+
+
+--
 -- Name: v_case_motions_detail; Type: VIEW; Schema: public; Owner: -
 --
 
 CREATE VIEW public.v_case_motions_detail AS
- SELECT id,
-    case_id,
-    motion_order,
-    motion_name,
-    filed_by,
-    filed_by_raw,
-    date_received,
-    date_received_raw,
-    date_resolved,
-    date_resolved_raw,
-    date_approved,
-    date_approved_raw,
-    motion_status,
-    motion_status_raw,
-    remarks,
-    remarks_raw,
-    created_at,
-    updated_at
-   FROM public.case_motions;
-
-
---
--- Name: VIEW v_case_motions_detail; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON VIEW public.v_case_motions_detail IS 'Case details motion read view. Intentionally policy-free for development debugging.';
+ SELECT cm.id,
+    cm.case_id,
+    cm.motion_order,
+    cm.motion_name,
+    cm.filed_by,
+    cm.filed_by_raw,
+    cm.date_received,
+    cm.date_received_raw,
+    cm.date_resolved,
+    cm.date_resolved_raw,
+    cm.date_approved,
+    cm.date_approved_raw,
+    cm.motion_status,
+    cm.motion_status_raw,
+    cm.remarks,
+    cm.remarks_raw,
+    cm.created_at,
+    cm.updated_at,
+    cm.case_event_id,
+    cm.motion_title,
+    cm.filed_by_code,
+    cm.date_filed,
+    cm.time_filed,
+    cm.details_jsonb,
+    cm.is_voided,
+    cm.voided_at,
+    cm.voided_by_user_id,
+    cm.void_reason,
+    cm.assigned_prosecutor_id,
+    COALESCE(p.short_name, p.full_name) AS assigned_prosecutor_name,
+    cmr.id AS active_motion_resolution_id,
+    cmr.recommendation_id AS active_motion_resolution_recommendation_id,
+    mrr.code AS active_motion_resolution_recommendation_code,
+    mrr.display_label AS active_motion_resolution_recommendation_label
+   FROM (((public.case_motions cm
+     LEFT JOIN public.prosecutors p ON ((p.id = cm.assigned_prosecutor_id)))
+     LEFT JOIN public.case_motion_resolutions cmr ON (((cmr.case_motion_id = cm.id) AND (cmr.is_voided = false))))
+     LEFT JOIN public.motion_resolution_recommendations mrr ON ((mrr.id = cmr.recommendation_id)));
 
 
 --
@@ -15313,27 +16472,30 @@ CREATE VIEW public.v_case_participant_details AS
 --
 
 CREATE VIEW public.v_case_petitions_for_review_detail AS
- SELECT id,
-    case_id,
-    petition_title,
-    handling_prosecutor_text,
-    date_received,
-    date_received_raw,
-    filed_by,
-    petition_status,
-    date_resolved,
-    date_resolved_raw,
-    date_approved,
-    date_approved_raw,
-    remarks
-   FROM public.case_petitions_for_review;
-
-
---
--- Name: VIEW v_case_petitions_for_review_detail; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON VIEW public.v_case_petitions_for_review_detail IS 'Case details petition-for-review read view. Intentionally policy-free for development debugging.';
+ SELECT p.id,
+    p.case_id,
+    p.case_event_id,
+    p.petition_title,
+    p.handling_prosecutor_text,
+    p.date_received,
+    p.date_received_raw,
+    p.filed_by,
+    p.filed_by_code,
+    p.date_filed,
+    p.time_filed,
+    p.petition_status,
+    p.status_date,
+    p.date_resolved,
+    p.date_resolved_raw,
+    p.date_approved,
+    p.date_approved_raw,
+    p.remarks,
+    p.additional_details_jsonb,
+    p.assigned_prosecutor_id,
+    COALESCE(pr.short_name, pr.full_name, p.handling_prosecutor_text) AS assigned_prosecutor_name,
+    p.is_voided
+   FROM (public.case_petitions_for_review p
+     LEFT JOIN public.prosecutors pr ON ((pr.id = p.assigned_prosecutor_id)));
 
 
 --
@@ -16347,6 +17509,20 @@ ALTER TABLE ONLY public.case_classifications ALTER COLUMN id SET DEFAULT nextval
 
 
 --
+-- Name: case_motion_resolution_approvals id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals ALTER COLUMN id SET DEFAULT nextval('public.case_motion_resolution_approvals_id_seq'::regclass);
+
+
+--
+-- Name: case_motion_resolutions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolutions ALTER COLUMN id SET DEFAULT nextval('public.case_motion_resolutions_id_seq'::regclass);
+
+
+--
 -- Name: case_motions id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -16435,6 +17611,13 @@ ALTER TABLE ONLY public.docket_sequence_counters ALTER COLUMN id SET DEFAULT nex
 --
 
 ALTER TABLE ONLY public.docket_types ALTER COLUMN id SET DEFAULT nextval('public.docket_types_id_seq'::regclass);
+
+
+--
+-- Name: motion_resolution_recommendations id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.motion_resolution_recommendations ALTER COLUMN id SET DEFAULT nextval('public.motion_resolution_recommendations_id_seq'::regclass);
 
 
 --
@@ -16890,6 +18073,22 @@ ALTER TABLE ONLY public.case_classifications
 
 
 --
+-- Name: case_court_filing_criminal_cases case_court_filing_criminal_cases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_court_filing_criminal_cases
+    ADD CONSTRAINT case_court_filing_criminal_cases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: case_court_filing_statuses case_court_filing_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_court_filing_statuses
+    ADD CONSTRAINT case_court_filing_statuses_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: case_court_filings case_court_filings_case_event_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16962,6 +18161,46 @@ ALTER TABLE ONLY public.case_legacy_attributes
 
 
 --
+-- Name: case_manual_status_updates case_manual_status_updates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_manual_status_updates
+    ADD CONSTRAINT case_manual_status_updates_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approvals_case_event_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approvals_case_event_id_key UNIQUE (case_event_id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approvals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: case_motion_resolutions case_motion_resolutions_case_event_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolutions
+    ADD CONSTRAINT case_motion_resolutions_case_event_id_key UNIQUE (case_event_id);
+
+
+--
+-- Name: case_motion_resolutions case_motion_resolutions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolutions
+    ADD CONSTRAINT case_motion_resolutions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: case_motions case_motions_legacy_motion_order_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17031,6 +18270,14 @@ ALTER TABLE ONLY public.case_participants
 
 ALTER TABLE ONLY public.case_participants
     ADD CONSTRAINT case_participants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: case_petition_for_review_updates case_petition_for_review_updates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_petition_for_review_updates
+    ADD CONSTRAINT case_petition_for_review_updates_pkey PRIMARY KEY (id);
 
 
 --
@@ -17335,6 +18582,14 @@ ALTER TABLE ONLY public.docket_types
 
 ALTER TABLE ONLY public.migration_review_items
     ADD CONSTRAINT migration_review_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: motion_resolution_recommendations motion_resolution_recommendations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.motion_resolution_recommendations
+    ADD CONSTRAINT motion_resolution_recommendations_pkey PRIMARY KEY (id);
 
 
 --
@@ -18150,6 +19405,20 @@ CREATE INDEX webauthn_credentials_user_id_idx ON auth.webauthn_credentials USING
 
 
 --
+-- Name: case_motion_resolution_approvals_one_active_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX case_motion_resolution_approvals_one_active_uidx ON public.case_motion_resolution_approvals USING btree (case_motion_resolution_id) WHERE (is_voided = false);
+
+
+--
+-- Name: case_motion_resolutions_one_active_per_motion_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX case_motion_resolutions_one_active_per_motion_uidx ON public.case_motion_resolutions USING btree (case_motion_id) WHERE (is_voided = false);
+
+
+--
 -- Name: contact_informations_contact_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18304,6 +19573,20 @@ CREATE INDEX idx_case_attachment_index_scan_time ON public.case_attachment_index
 
 
 --
+-- Name: idx_case_court_filing_criminal_cases_filing; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_court_filing_criminal_cases_filing ON public.case_court_filing_criminal_cases USING btree (court_filing_id) WHERE (is_voided = false);
+
+
+--
+-- Name: idx_case_court_filing_statuses_filing; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_court_filing_statuses_filing ON public.case_court_filing_statuses USING btree (court_filing_id) WHERE (is_voided = false);
+
+
+--
 -- Name: idx_case_court_filings_approval_action_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18406,6 +19689,69 @@ CREATE INDEX idx_case_legacy_attributes_case_id ON public.case_legacy_attributes
 --
 
 CREATE INDEX idx_case_legacy_attributes_legacy_row ON public.case_legacy_attributes USING btree (legacy_source_sheet, legacy_row_number);
+
+
+--
+-- Name: idx_case_manual_status_updates_case_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_manual_status_updates_case_active ON public.case_manual_status_updates USING btree (case_id, is_voided, status_date DESC, id DESC);
+
+
+--
+-- Name: idx_case_manual_status_updates_event; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_manual_status_updates_event ON public.case_manual_status_updates USING btree (case_event_id);
+
+
+--
+-- Name: idx_case_motion_resolution_approvals_case_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_motion_resolution_approvals_case_active ON public.case_motion_resolution_approvals USING btree (case_id, is_voided, date_approved DESC, id DESC);
+
+
+--
+-- Name: idx_case_motion_resolution_approvals_event; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_motion_resolution_approvals_event ON public.case_motion_resolution_approvals USING btree (case_event_id);
+
+
+--
+-- Name: idx_case_motion_resolution_approvals_motion; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_motion_resolution_approvals_motion ON public.case_motion_resolution_approvals USING btree (case_motion_id);
+
+
+--
+-- Name: idx_case_motion_resolutions_case_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_motion_resolutions_case_active ON public.case_motion_resolutions USING btree (case_id, is_voided, date_resolved DESC, id DESC);
+
+
+--
+-- Name: idx_case_motion_resolutions_event; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_motion_resolutions_event ON public.case_motion_resolutions USING btree (case_event_id);
+
+
+--
+-- Name: idx_case_motion_resolutions_motion; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_motion_resolutions_motion ON public.case_motion_resolutions USING btree (case_motion_id);
+
+
+--
+-- Name: idx_case_motions_active_received; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_motions_active_received ON public.case_motions USING btree (case_id, is_voided, date_filed DESC, id DESC) WHERE (case_event_id IS NOT NULL);
 
 
 --
@@ -18619,6 +19965,13 @@ CREATE INDEX idx_case_petitions_review_case ON public.case_petitions_for_review 
 
 
 --
+-- Name: idx_case_petitions_review_case_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_petitions_review_case_active ON public.case_petitions_for_review USING btree (case_id, is_voided, date_filed DESC, id DESC);
+
+
+--
 -- Name: idx_case_petitions_review_date_received; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18644,6 +19997,13 @@ CREATE INDEX idx_case_petitions_review_status_trgm ON public.case_petitions_for_
 --
 
 CREATE INDEX idx_case_petitions_review_title_trgm ON public.case_petitions_for_review USING gin (lower(petition_title) public.gin_trgm_ops);
+
+
+--
+-- Name: idx_case_petrev_updates_petition_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_case_petrev_updates_petition_active ON public.case_petition_for_review_updates USING btree (petition_for_review_id, is_voided, status_date DESC, id DESC);
 
 
 --
@@ -19249,6 +20609,20 @@ CREATE INDEX idx_violations_inv2022_canonical_norm ON public.violations USING bt
 
 
 --
+-- Name: motion_resolution_recommendations_active_label_ci_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX motion_resolution_recommendations_active_label_ci_uidx ON public.motion_resolution_recommendations USING btree (lower(display_label)) WHERE is_active;
+
+
+--
+-- Name: motion_resolution_recommendations_code_ci_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX motion_resolution_recommendations_code_ci_uidx ON public.motion_resolution_recommendations USING btree (lower(code));
+
+
+--
 -- Name: one_active_assignment_per_case; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19288,6 +20662,20 @@ CREATE INDEX participant_contact_informations_case_participant_id_idx ON public.
 --
 
 CREATE INDEX participant_contact_informations_contact_information_id_idx ON public.participant_contact_informations USING btree (contact_information_id);
+
+
+--
+-- Name: uq_case_court_filing_criminal_cases_active_no; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_case_court_filing_criminal_cases_active_no ON public.case_court_filing_criminal_cases USING btree (court_filing_id, lower(criminal_case_no)) WHERE (is_voided = false);
+
+
+--
+-- Name: uq_case_court_filing_statuses_active_status_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_case_court_filing_statuses_active_status_date ON public.case_court_filing_statuses USING btree (court_filing_id, lower(court_status), status_date) WHERE (is_voided = false);
 
 
 --
@@ -19780,6 +21168,86 @@ ALTER TABLE ONLY public.case_attachment_index
 
 
 --
+-- Name: case_court_filing_criminal_cases case_court_filing_criminal_cases_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_court_filing_criminal_cases
+    ADD CONSTRAINT case_court_filing_criminal_cases_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id);
+
+
+--
+-- Name: case_court_filing_criminal_cases case_court_filing_criminal_cases_court_filing_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_court_filing_criminal_cases
+    ADD CONSTRAINT case_court_filing_criminal_cases_court_filing_id_fkey FOREIGN KEY (court_filing_id) REFERENCES public.case_court_filings(id);
+
+
+--
+-- Name: case_court_filing_criminal_cases case_court_filing_criminal_cases_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_court_filing_criminal_cases
+    ADD CONSTRAINT case_court_filing_criminal_cases_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_court_filing_criminal_cases case_court_filing_criminal_cases_updated_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_court_filing_criminal_cases
+    ADD CONSTRAINT case_court_filing_criminal_cases_updated_by_user_id_fkey FOREIGN KEY (updated_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_court_filing_criminal_cases case_court_filing_criminal_cases_voided_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_court_filing_criminal_cases
+    ADD CONSTRAINT case_court_filing_criminal_cases_voided_by_user_id_fkey FOREIGN KEY (voided_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_court_filing_statuses case_court_filing_statuses_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_court_filing_statuses
+    ADD CONSTRAINT case_court_filing_statuses_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id);
+
+
+--
+-- Name: case_court_filing_statuses case_court_filing_statuses_court_filing_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_court_filing_statuses
+    ADD CONSTRAINT case_court_filing_statuses_court_filing_id_fkey FOREIGN KEY (court_filing_id) REFERENCES public.case_court_filings(id);
+
+
+--
+-- Name: case_court_filing_statuses case_court_filing_statuses_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_court_filing_statuses
+    ADD CONSTRAINT case_court_filing_statuses_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_court_filing_statuses case_court_filing_statuses_updated_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_court_filing_statuses
+    ADD CONSTRAINT case_court_filing_statuses_updated_by_user_id_fkey FOREIGN KEY (updated_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_court_filing_statuses case_court_filing_statuses_voided_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_court_filing_statuses
+    ADD CONSTRAINT case_court_filing_statuses_voided_by_user_id_fkey FOREIGN KEY (voided_by_user_id) REFERENCES public.users(id);
+
+
+--
 -- Name: case_court_filings case_court_filings_case_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19980,6 +21448,206 @@ ALTER TABLE ONLY public.case_legacy_attributes
 
 
 --
+-- Name: case_manual_status_updates case_manual_status_updates_case_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_manual_status_updates
+    ADD CONSTRAINT case_manual_status_updates_case_event_id_fkey FOREIGN KEY (case_event_id) REFERENCES public.case_events(id) ON DELETE SET NULL;
+
+
+--
+-- Name: case_manual_status_updates case_manual_status_updates_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_manual_status_updates
+    ADD CONSTRAINT case_manual_status_updates_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: case_manual_status_updates case_manual_status_updates_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_manual_status_updates
+    ADD CONSTRAINT case_manual_status_updates_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_manual_status_updates case_manual_status_updates_selected_case_stage_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_manual_status_updates
+    ADD CONSTRAINT case_manual_status_updates_selected_case_stage_id_fkey FOREIGN KEY (selected_case_stage_id) REFERENCES public.case_stages(id);
+
+
+--
+-- Name: case_manual_status_updates case_manual_status_updates_selected_case_status_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_manual_status_updates
+    ADD CONSTRAINT case_manual_status_updates_selected_case_status_id_fkey FOREIGN KEY (selected_case_status_id) REFERENCES public.case_statuses(id);
+
+
+--
+-- Name: case_manual_status_updates case_manual_status_updates_voided_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_manual_status_updates
+    ADD CONSTRAINT case_manual_status_updates_voided_by_user_id_fkey FOREIGN KEY (voided_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approv_approved_decision_recommenda_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approv_approved_decision_recommenda_fkey FOREIGN KEY (approved_decision_recommendation_id) REFERENCES public.motion_resolution_recommendations(id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approvals_approved_by_prosecutor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approvals_approved_by_prosecutor_id_fkey FOREIGN KEY (approved_by_prosecutor_id) REFERENCES public.prosecutors(id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approvals_case_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approvals_case_event_id_fkey FOREIGN KEY (case_event_id) REFERENCES public.case_events(id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approvals_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approvals_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approvals_case_motion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approvals_case_motion_id_fkey FOREIGN KEY (case_motion_id) REFERENCES public.case_motions(id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approvals_case_motion_resolution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approvals_case_motion_resolution_id_fkey FOREIGN KEY (case_motion_resolution_id) REFERENCES public.case_motion_resolutions(id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approvals_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approvals_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approvals_selected_case_stage_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approvals_selected_case_stage_id_fkey FOREIGN KEY (selected_case_stage_id) REFERENCES public.case_stages(id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approvals_selected_case_status_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approvals_selected_case_status_id_fkey FOREIGN KEY (selected_case_status_id) REFERENCES public.case_statuses(id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approvals_updated_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approvals_updated_by_user_id_fkey FOREIGN KEY (updated_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_motion_resolution_approvals case_motion_resolution_approvals_voided_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolution_approvals
+    ADD CONSTRAINT case_motion_resolution_approvals_voided_by_user_id_fkey FOREIGN KEY (voided_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_motion_resolutions case_motion_resolutions_case_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolutions
+    ADD CONSTRAINT case_motion_resolutions_case_event_id_fkey FOREIGN KEY (case_event_id) REFERENCES public.case_events(id);
+
+
+--
+-- Name: case_motion_resolutions case_motion_resolutions_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolutions
+    ADD CONSTRAINT case_motion_resolutions_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id);
+
+
+--
+-- Name: case_motion_resolutions case_motion_resolutions_case_motion_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolutions
+    ADD CONSTRAINT case_motion_resolutions_case_motion_id_fkey FOREIGN KEY (case_motion_id) REFERENCES public.case_motions(id);
+
+
+--
+-- Name: case_motion_resolutions case_motion_resolutions_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolutions
+    ADD CONSTRAINT case_motion_resolutions_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_motion_resolutions case_motion_resolutions_recommendation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolutions
+    ADD CONSTRAINT case_motion_resolutions_recommendation_id_fkey FOREIGN KEY (recommendation_id) REFERENCES public.motion_resolution_recommendations(id);
+
+
+--
+-- Name: case_motion_resolutions case_motion_resolutions_updated_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolutions
+    ADD CONSTRAINT case_motion_resolutions_updated_by_user_id_fkey FOREIGN KEY (updated_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_motion_resolutions case_motion_resolutions_voided_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motion_resolutions
+    ADD CONSTRAINT case_motion_resolutions_voided_by_user_id_fkey FOREIGN KEY (voided_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_motions case_motions_assigned_prosecutor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motions
+    ADD CONSTRAINT case_motions_assigned_prosecutor_id_fkey FOREIGN KEY (assigned_prosecutor_id) REFERENCES public.prosecutors(id);
+
+
+--
 -- Name: case_motions case_motions_case_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20009,6 +21677,14 @@ ALTER TABLE ONLY public.case_motions
 
 ALTER TABLE ONLY public.case_motions
     ADD CONSTRAINT case_motions_updated_by_user_id_fkey FOREIGN KEY (updated_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_motions case_motions_voided_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_motions
+    ADD CONSTRAINT case_motions_voided_by_user_id_fkey FOREIGN KEY (voided_by_user_id) REFERENCES public.users(id);
 
 
 --
@@ -20180,6 +21856,62 @@ ALTER TABLE ONLY public.case_participants
 
 
 --
+-- Name: case_petition_for_review_updates case_petition_for_review_updates_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_petition_for_review_updates
+    ADD CONSTRAINT case_petition_for_review_updates_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: case_petition_for_review_updates case_petition_for_review_updates_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_petition_for_review_updates
+    ADD CONSTRAINT case_petition_for_review_updates_created_by_user_id_fkey FOREIGN KEY (created_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_petition_for_review_updates case_petition_for_review_updates_petition_for_review_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_petition_for_review_updates
+    ADD CONSTRAINT case_petition_for_review_updates_petition_for_review_id_fkey FOREIGN KEY (petition_for_review_id) REFERENCES public.case_petitions_for_review(id) ON DELETE CASCADE;
+
+
+--
+-- Name: case_petition_for_review_updates case_petition_for_review_updates_selected_case_stage_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_petition_for_review_updates
+    ADD CONSTRAINT case_petition_for_review_updates_selected_case_stage_id_fkey FOREIGN KEY (selected_case_stage_id) REFERENCES public.case_stages(id);
+
+
+--
+-- Name: case_petition_for_review_updates case_petition_for_review_updates_selected_case_status_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_petition_for_review_updates
+    ADD CONSTRAINT case_petition_for_review_updates_selected_case_status_id_fkey FOREIGN KEY (selected_case_status_id) REFERENCES public.case_statuses(id);
+
+
+--
+-- Name: case_petition_for_review_updates case_petition_for_review_updates_voided_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_petition_for_review_updates
+    ADD CONSTRAINT case_petition_for_review_updates_voided_by_user_id_fkey FOREIGN KEY (voided_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_petitions_for_review case_petitions_for_review_assigned_prosecutor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_petitions_for_review
+    ADD CONSTRAINT case_petitions_for_review_assigned_prosecutor_id_fkey FOREIGN KEY (assigned_prosecutor_id) REFERENCES public.prosecutors(id);
+
+
+--
 -- Name: case_petitions_for_review case_petitions_for_review_case_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20209,6 +21941,14 @@ ALTER TABLE ONLY public.case_petitions_for_review
 
 ALTER TABLE ONLY public.case_petitions_for_review
     ADD CONSTRAINT case_petitions_for_review_updated_by_user_id_fkey FOREIGN KEY (updated_by_user_id) REFERENCES public.users(id);
+
+
+--
+-- Name: case_petitions_for_review case_petitions_for_review_voided_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_petitions_for_review
+    ADD CONSTRAINT case_petitions_for_review_voided_by_user_id_fkey FOREIGN KEY (voided_by_user_id) REFERENCES public.users(id);
 
 
 --
@@ -21707,6 +23447,24 @@ GRANT ALL ON FUNCTION pgbouncer.get_auth(p_usename text) TO pgbouncer;
 
 
 --
+-- Name: FUNCTION add_case_stage(p_display_label text, p_code text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.add_case_stage(p_display_label text, p_code text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.add_case_stage(p_display_label text, p_code text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.add_case_stage(p_display_label text, p_code text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION add_motion_resolution_recommendation(p_display_label text, p_code text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.add_motion_resolution_recommendation(p_display_label text, p_code text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.add_motion_resolution_recommendation(p_display_label text, p_code text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.add_motion_resolution_recommendation(p_display_label text, p_code text, p_user_id bigint) TO service_role;
+
+
+--
 -- Name: FUNCTION apply_case_state_recompute(p_case_id bigint, p_status_date date, p_remarks text, p_case_event_id bigint, p_user_id bigint); Type: ACL; Schema: public; Owner: -
 --
 
@@ -22257,6 +24015,15 @@ GRANT ALL ON FUNCTION public.dmetaphone_alt(text) TO service_role;
 GRANT ALL ON FUNCTION public.edit_case_event(p_case_event_id bigint, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_edit_reason text, p_user_id bigint) TO anon;
 GRANT ALL ON FUNCTION public.edit_case_event(p_case_event_id bigint, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_edit_reason text, p_user_id bigint) TO authenticated;
 GRANT ALL ON FUNCTION public.edit_case_event(p_case_event_id bigint, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_edit_reason text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION edit_case_event_specific(p_case_event_id bigint, p_expected_event_type_code text, p_values jsonb, p_edit_reason text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.edit_case_event_specific(p_case_event_id bigint, p_expected_event_type_code text, p_values jsonb, p_edit_reason text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.edit_case_event_specific(p_case_event_id bigint, p_expected_event_type_code text, p_values jsonb, p_edit_reason text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.edit_case_event_specific(p_case_event_id bigint, p_expected_event_type_code text, p_values jsonb, p_edit_reason text, p_user_id bigint) TO service_role;
 
 
 --
@@ -24348,6 +26115,15 @@ GRANT ALL ON FUNCTION public.metaphone(text, integer) TO service_role;
 
 
 --
+-- Name: FUNCTION normalize_petition_details(p_details jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.normalize_petition_details(p_details jsonb) TO anon;
+GRANT ALL ON FUNCTION public.normalize_petition_details(p_details jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.normalize_petition_details(p_details jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION pe2024_bool(p_text text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -24555,12 +26331,75 @@ GRANT ALL ON FUNCTION public.record_case_resolved_event(p_case_id bigint, p_reco
 
 
 --
+-- Name: FUNCTION record_case_status_updated_event(p_case_id bigint, p_case_status_id bigint, p_case_stage_id bigint, p_status_date date, p_remarks text, p_reason text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.record_case_status_updated_event(p_case_id bigint, p_case_status_id bigint, p_case_stage_id bigint, p_status_date date, p_remarks text, p_reason text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.record_case_status_updated_event(p_case_id bigint, p_case_status_id bigint, p_case_stage_id bigint, p_status_date date, p_remarks text, p_reason text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.record_case_status_updated_event(p_case_id bigint, p_case_status_id bigint, p_case_stage_id bigint, p_status_date date, p_remarks text, p_reason text, p_user_id bigint) TO service_role;
+
+
+--
 -- Name: FUNCTION record_court_filing_event(p_case_id bigint, p_case_resolution_approval_action_id bigint, p_court_id bigint, p_court_name text, p_court_branch text, p_charge_filed text, p_date_filed date, p_time_filed time without time zone, p_information_count integer, p_criminal_case_no text, p_remarks text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
 --
 
 GRANT ALL ON FUNCTION public.record_court_filing_event(p_case_id bigint, p_case_resolution_approval_action_id bigint, p_court_id bigint, p_court_name text, p_court_branch text, p_charge_filed text, p_date_filed date, p_time_filed time without time zone, p_information_count integer, p_criminal_case_no text, p_remarks text, p_user_id bigint) TO anon;
 GRANT ALL ON FUNCTION public.record_court_filing_event(p_case_id bigint, p_case_resolution_approval_action_id bigint, p_court_id bigint, p_court_name text, p_court_branch text, p_charge_filed text, p_date_filed date, p_time_filed time without time zone, p_information_count integer, p_criminal_case_no text, p_remarks text, p_user_id bigint) TO authenticated;
 GRANT ALL ON FUNCTION public.record_court_filing_event(p_case_id bigint, p_case_resolution_approval_action_id bigint, p_court_id bigint, p_court_name text, p_court_branch text, p_charge_filed text, p_date_filed date, p_time_filed time without time zone, p_information_count integer, p_criminal_case_no text, p_remarks text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION record_custom_case_event(p_case_id bigint, p_title text, p_event_date date, p_event_time time without time zone, p_remarks text, p_additional_details jsonb, p_update_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.record_custom_case_event(p_case_id bigint, p_title text, p_event_date date, p_event_time time without time zone, p_remarks text, p_additional_details jsonb, p_update_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.record_custom_case_event(p_case_id bigint, p_title text, p_event_date date, p_event_time time without time zone, p_remarks text, p_additional_details jsonb, p_update_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.record_custom_case_event(p_case_id bigint, p_title text, p_event_date date, p_event_time time without time zone, p_remarks text, p_additional_details jsonb, p_update_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION record_motion_decision_approved_event(p_case_id bigint, p_case_motion_resolution_id bigint, p_approved_decision_recommendation_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone, p_update_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_remarks text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.record_motion_decision_approved_event(p_case_id bigint, p_case_motion_resolution_id bigint, p_approved_decision_recommendation_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone, p_update_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_remarks text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.record_motion_decision_approved_event(p_case_id bigint, p_case_motion_resolution_id bigint, p_approved_decision_recommendation_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone, p_update_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_remarks text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.record_motion_decision_approved_event(p_case_id bigint, p_case_motion_resolution_id bigint, p_approved_decision_recommendation_id bigint, p_approved_by_prosecutor_id bigint, p_date_approved date, p_time_approved time without time zone, p_update_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_remarks text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION record_motion_received_event(p_case_id bigint, p_motion_title text, p_filed_by_code text, p_date_filed date, p_time_filed time without time zone, p_details_jsonb jsonb, p_remarks text, p_assigned_prosecutor_id bigint, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.record_motion_received_event(p_case_id bigint, p_motion_title text, p_filed_by_code text, p_date_filed date, p_time_filed time without time zone, p_details_jsonb jsonb, p_remarks text, p_assigned_prosecutor_id bigint, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.record_motion_received_event(p_case_id bigint, p_motion_title text, p_filed_by_code text, p_date_filed date, p_time_filed time without time zone, p_details_jsonb jsonb, p_remarks text, p_assigned_prosecutor_id bigint, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.record_motion_received_event(p_case_id bigint, p_motion_title text, p_filed_by_code text, p_date_filed date, p_time_filed time without time zone, p_details_jsonb jsonb, p_remarks text, p_assigned_prosecutor_id bigint, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION record_motion_resolved_event(p_case_id bigint, p_case_motion_id bigint, p_recommendation_id bigint, p_date_resolved date, p_time_resolved time without time zone, p_remarks text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.record_motion_resolved_event(p_case_id bigint, p_case_motion_id bigint, p_recommendation_id bigint, p_date_resolved date, p_time_resolved time without time zone, p_remarks text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.record_motion_resolved_event(p_case_id bigint, p_case_motion_id bigint, p_recommendation_id bigint, p_date_resolved date, p_time_resolved time without time zone, p_remarks text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.record_motion_resolved_event(p_case_id bigint, p_case_motion_id bigint, p_recommendation_id bigint, p_date_resolved date, p_time_resolved time without time zone, p_remarks text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION record_petition_for_review_event(p_case_id bigint, p_filed_by_code text, p_date_filed date, p_time_filed time without time zone, p_petition_status text, p_additional_details_jsonb jsonb, p_assigned_prosecutor_id bigint, p_remarks text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.record_petition_for_review_event(p_case_id bigint, p_filed_by_code text, p_date_filed date, p_time_filed time without time zone, p_petition_status text, p_additional_details_jsonb jsonb, p_assigned_prosecutor_id bigint, p_remarks text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.record_petition_for_review_event(p_case_id bigint, p_filed_by_code text, p_date_filed date, p_time_filed time without time zone, p_petition_status text, p_additional_details_jsonb jsonb, p_assigned_prosecutor_id bigint, p_remarks text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.record_petition_for_review_event(p_case_id bigint, p_filed_by_code text, p_date_filed date, p_time_filed time without time zone, p_petition_status text, p_additional_details_jsonb jsonb, p_assigned_prosecutor_id bigint, p_remarks text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION record_petition_for_review_update(p_case_id bigint, p_petition_for_review_id bigint, p_petition_status text, p_status_date date, p_remarks text, p_additional_details_jsonb jsonb, p_updates_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.record_petition_for_review_update(p_case_id bigint, p_petition_for_review_id bigint, p_petition_status text, p_status_date date, p_remarks text, p_additional_details_jsonb jsonb, p_updates_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.record_petition_for_review_update(p_case_id bigint, p_petition_for_review_id bigint, p_petition_status text, p_status_date date, p_remarks text, p_additional_details_jsonb jsonb, p_updates_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.record_petition_for_review_update(p_case_id bigint, p_petition_for_review_id bigint, p_petition_status text, p_status_date date, p_remarks text, p_additional_details_jsonb jsonb, p_updates_case_status boolean, p_selected_case_status_id bigint, p_selected_case_stage_id bigint, p_user_id bigint) TO service_role;
 
 
 --
@@ -24781,6 +26620,24 @@ GRANT ALL ON FUNCTION public.text_soundex(text) TO service_role;
 GRANT ALL ON FUNCTION public.trg_case_participant_relationships_same_case() TO anon;
 GRANT ALL ON FUNCTION public.trg_case_participant_relationships_same_case() TO authenticated;
 GRANT ALL ON FUNCTION public.trg_case_participant_relationships_same_case() TO service_role;
+
+
+--
+-- Name: FUNCTION update_court_filing_status_details(p_case_id bigint, p_court_filing_id bigint, p_criminal_case_numbers jsonb, p_court_statuses jsonb, p_information_count integer, p_additional_details_jsonb jsonb, p_remarks text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.update_court_filing_status_details(p_case_id bigint, p_court_filing_id bigint, p_criminal_case_numbers jsonb, p_court_statuses jsonb, p_information_count integer, p_additional_details_jsonb jsonb, p_remarks text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.update_court_filing_status_details(p_case_id bigint, p_court_filing_id bigint, p_criminal_case_numbers jsonb, p_court_statuses jsonb, p_information_count integer, p_additional_details_jsonb jsonb, p_remarks text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.update_court_filing_status_details(p_case_id bigint, p_court_filing_id bigint, p_criminal_case_numbers jsonb, p_court_statuses jsonb, p_information_count integer, p_additional_details_jsonb jsonb, p_remarks text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION update_petition_event_details(p_petition_id bigint, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.update_petition_event_details(p_petition_id bigint, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.update_petition_event_details(p_petition_id bigint, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.update_petition_event_details(p_petition_id bigint, p_user_id bigint) TO service_role;
 
 
 --
@@ -25498,6 +27355,42 @@ GRANT ALL ON SEQUENCE public.case_classifications_id_seq TO service_role;
 
 
 --
+-- Name: TABLE case_court_filing_criminal_cases; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_court_filing_criminal_cases TO anon;
+GRANT ALL ON TABLE public.case_court_filing_criminal_cases TO authenticated;
+GRANT ALL ON TABLE public.case_court_filing_criminal_cases TO service_role;
+
+
+--
+-- Name: SEQUENCE case_court_filing_criminal_cases_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_court_filing_criminal_cases_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_court_filing_criminal_cases_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_court_filing_criminal_cases_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_court_filing_statuses; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_court_filing_statuses TO anon;
+GRANT ALL ON TABLE public.case_court_filing_statuses TO authenticated;
+GRANT ALL ON TABLE public.case_court_filing_statuses TO service_role;
+
+
+--
+-- Name: SEQUENCE case_court_filing_statuses_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_court_filing_statuses_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_court_filing_statuses_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_court_filing_statuses_id_seq TO service_role;
+
+
+--
 -- Name: TABLE case_court_filings; Type: ACL; Schema: public; Owner: -
 --
 
@@ -25585,6 +27478,60 @@ GRANT ALL ON TABLE public.case_legacy_attributes TO service_role;
 GRANT ALL ON SEQUENCE public.case_legacy_attributes_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_legacy_attributes_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_legacy_attributes_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_manual_status_updates; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_manual_status_updates TO anon;
+GRANT ALL ON TABLE public.case_manual_status_updates TO authenticated;
+GRANT ALL ON TABLE public.case_manual_status_updates TO service_role;
+
+
+--
+-- Name: SEQUENCE case_manual_status_updates_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_manual_status_updates_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_manual_status_updates_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_manual_status_updates_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_motion_resolution_approvals; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_motion_resolution_approvals TO anon;
+GRANT ALL ON TABLE public.case_motion_resolution_approvals TO authenticated;
+GRANT ALL ON TABLE public.case_motion_resolution_approvals TO service_role;
+
+
+--
+-- Name: SEQUENCE case_motion_resolution_approvals_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_motion_resolution_approvals_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_motion_resolution_approvals_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_motion_resolution_approvals_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_motion_resolutions; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_motion_resolutions TO anon;
+GRANT ALL ON TABLE public.case_motion_resolutions TO authenticated;
+GRANT ALL ON TABLE public.case_motion_resolutions TO service_role;
+
+
+--
+-- Name: SEQUENCE case_motion_resolutions_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_motion_resolutions_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_motion_resolutions_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_motion_resolutions_id_seq TO service_role;
 
 
 --
@@ -25684,6 +27631,24 @@ GRANT ALL ON TABLE public.case_participants TO service_role;
 GRANT ALL ON SEQUENCE public.case_participants_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.case_participants_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.case_participants_id_seq TO service_role;
+
+
+--
+-- Name: TABLE case_petition_for_review_updates; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_petition_for_review_updates TO anon;
+GRANT ALL ON TABLE public.case_petition_for_review_updates TO authenticated;
+GRANT ALL ON TABLE public.case_petition_for_review_updates TO service_role;
+
+
+--
+-- Name: SEQUENCE case_petition_for_review_updates_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_petition_for_review_updates_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_petition_for_review_updates_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_petition_for_review_updates_id_seq TO service_role;
 
 
 --
@@ -26089,6 +28054,24 @@ GRANT ALL ON TABLE public.migration_review_items TO service_role;
 GRANT ALL ON SEQUENCE public.migration_review_items_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.migration_review_items_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.migration_review_items_id_seq TO service_role;
+
+
+--
+-- Name: TABLE motion_resolution_recommendations; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.motion_resolution_recommendations TO anon;
+GRANT ALL ON TABLE public.motion_resolution_recommendations TO authenticated;
+GRANT ALL ON TABLE public.motion_resolution_recommendations TO service_role;
+
+
+--
+-- Name: SEQUENCE motion_resolution_recommendations_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.motion_resolution_recommendations_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.motion_resolution_recommendations_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.motion_resolution_recommendations_id_seq TO service_role;
 
 
 --
@@ -26602,6 +28585,15 @@ GRANT ALL ON TABLE public.violations TO service_role;
 GRANT ALL ON TABLE public.v_case_details_page TO anon;
 GRANT ALL ON TABLE public.v_case_details_page TO authenticated;
 GRANT ALL ON TABLE public.v_case_details_page TO service_role;
+
+
+--
+-- Name: TABLE v_case_motion_resolutions_detail; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.v_case_motion_resolutions_detail TO anon;
+GRANT ALL ON TABLE public.v_case_motion_resolutions_detail TO authenticated;
+GRANT ALL ON TABLE public.v_case_motion_resolutions_detail TO service_role;
 
 
 --
@@ -27319,5 +29311,5 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 9uiXo0JQ3fNdY2egtNMvaRzBRlxluqnK7Au4lIptrCHnEecQbMLGKf8C2c6RfHW
+\unrestrict ZZxgz8VkUNe2ETXfwo9Pf64nL1Wu9sXk1BVibtF4Zdw8kc0kJDEbS70DC9MKg5o
 
