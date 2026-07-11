@@ -3618,3 +3618,67 @@ export async function recordPetitionForReviewUpdate(input: RecordPetitionForRevi
     return fail(toQueryError(error, "recordPetitionForReviewUpdate", "case_petition_for_review_updates" as RelationName));
   }
 }
+
+export type UserManagementUserRecord = {
+  id: number;
+  auth_user_id: string | null;
+  email: string;
+  is_active: boolean;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
+  prosecutor_id: number | null;
+  prosecutor_full_name: string | null;
+  prosecutor_short_name: string | null;
+  staff_id: number | null;
+  staff_full_name: string | null;
+  staff_short_name: string | null;
+  role_id: number | null;
+  role_code: string | null;
+  role_label: string | null;
+  role_is_active: boolean | null;
+};
+
+export type UserManagementRoleRecord = Pick<TableRow<"roles">, "id" | "code" | "display_label" | "is_active">;
+
+export async function getUserManagementUsers(): Promise<SupabaseQueryResult<UserManagementUserRecord[]>> {
+  return runSupabaseQuery("getUserManagementUsers", "v_user_management_users" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    return (await supabase
+      .from("v_user_management_users" as never)
+      .select("*" as never)
+      .order("email" as never, { ascending: true })) as unknown as { data: UserManagementUserRecord[] | null; error: unknown };
+  }, []);
+}
+
+export async function getUserManagementRoles(): Promise<SupabaseQueryResult<UserManagementRoleRecord[]>> {
+  return runSupabaseQuery("getUserManagementRoles", "roles", async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("get_user_management_roles" as never);
+    return { data: data as UserManagementRoleRecord[] | null, error };
+  }, []);
+}
+
+export async function assignUserManagementRole(userId: number, roleId: number): Promise<SupabaseQueryResult<null>> {
+  return runSupabaseQuery("assignUserManagementRole", "user_roles", async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const { error } = await supabase.rpc("assign_user_management_role" as never, { p_user_id: userId, p_role_id: roleId } as never);
+    return { data: null, error };
+  }, null);
+}
+
+export async function setUserManagementBlocked(userId: number, isBlocked: boolean): Promise<SupabaseQueryResult<null>> {
+  return runSupabaseQuery("setUserManagementBlocked", "users", async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const { error } = await supabase.rpc("set_user_management_blocked" as never, { p_user_id: userId, p_is_blocked: isBlocked } as never);
+    return { data: null, error };
+  }, null);
+}
+
+export async function removeUserManagementUser(userId: number): Promise<SupabaseQueryResult<null>> {
+  return runSupabaseQuery("removeUserManagementUser", "users", async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const { error } = await supabase.rpc("remove_user_management_user" as never, { p_user_id: userId } as never);
+    return { data: null, error };
+  }, null);
+}

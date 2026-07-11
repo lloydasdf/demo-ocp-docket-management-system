@@ -11,6 +11,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   LogOut,
+  Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -36,6 +37,12 @@ const navigation = [
     href: '/clearance-search',
     icon: Search,
     description: 'Search clearance records',
+  },
+  {
+    name: 'User Management',
+    href: '/user-management',
+    icon: Users,
+    description: 'Manage application users and roles',
   },
 ];
 
