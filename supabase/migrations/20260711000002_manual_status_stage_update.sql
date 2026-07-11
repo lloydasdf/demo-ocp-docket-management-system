@@ -63,8 +63,20 @@ DECLARE
   v_active_petition_count integer; v_petition_status_code text; v_petition_stage_code text;
   v_motion_resolution_for_approval_count integer; v_pending_motion_count integer; v_unapproved_resolution_count integer; v_unfiled_for_filing_count integer; v_filed_for_filing_count integer; v_dismissal_count integer; v_active_assignment_count integer; v_explicit_status_code text; v_explicit_stage_code text;
 BEGIN
-  SELECT count(*) INTO v_active_petition_count FROM public.case_petitions_for_review p JOIN public.case_events ce ON ce.id=p.case_event_id AND ce.is_voided=false WHERE p.case_id=p_case_id AND p.is_voided=false;
-  IF COALESCE(v_active_petition_count,0) > 0 THEN RETURN QUERY SELECT 'PENDING'::text, 'PENDING_PETREV'::text; RETURN; END IF;
+  SELECT count(*) INTO v_active_petition_count
+  FROM public.case_petitions_for_review p
+  JOIN public.case_events ce ON ce.id=p.case_event_id AND ce.is_voided=false
+  WHERE p.case_id=p_case_id AND p.is_voided=false;
+
+  SELECT cs.code, cst.code INTO v_petition_status_code, v_petition_stage_code
+  FROM public.case_petition_for_review_updates u
+  JOIN public.case_petitions_for_review p ON p.id=u.petition_for_review_id AND p.is_voided=false
+  JOIN public.case_events pe ON pe.id=p.case_event_id AND pe.is_voided=false
+  JOIN public.case_statuses cs ON cs.id=u.selected_case_status_id AND cs.is_active IS TRUE
+  JOIN public.case_stages cst ON cst.id=u.selected_case_stage_id AND cst.is_active IS TRUE
+  WHERE u.case_id=p_case_id AND u.is_voided=false AND u.updates_case_status=true
+  ORDER BY u.status_date DESC, NULL::time without time zone DESC NULLS LAST, pe.id DESC, u.id DESC
+  LIMIT 1;
 
   SELECT count(*) INTO v_motion_resolution_for_approval_count FROM public.case_motion_resolutions cmr JOIN public.case_motions cm ON cm.id=cmr.case_motion_id AND cm.is_voided=false JOIN public.case_events re ON re.id=cmr.case_event_id AND re.is_voided=false JOIN public.case_events me ON me.id=cm.case_event_id AND me.is_voided=false WHERE cmr.case_id=p_case_id AND cmr.is_voided=false AND NOT EXISTS (SELECT 1 FROM public.case_motion_resolution_approvals a JOIN public.case_events ae ON ae.id=a.case_event_id AND ae.is_voided=false WHERE a.case_motion_resolution_id=cmr.id AND a.is_voided=false);
   SELECT count(*) INTO v_pending_motion_count FROM public.case_motions cm JOIN public.case_events ce ON ce.id=cm.case_event_id AND ce.is_voided=false WHERE cm.case_id=p_case_id AND cm.is_voided=false AND cm.case_event_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.case_motion_resolutions cmr WHERE cmr.case_motion_id=cm.id AND cmr.is_voided=false);
@@ -74,6 +86,8 @@ BEGIN
   SELECT count(*) FILTER (WHERE aa.decision_code='FOR_FILING' AND EXISTS (SELECT 1 FROM public.case_court_filings cf WHERE cf.case_resolution_approval_action_id=aa.id AND cf.is_voided=false)), count(*) FILTER (WHERE aa.decision_code='FOR_FILING' AND NOT EXISTS (SELECT 1 FROM public.case_court_filings cf WHERE cf.case_resolution_approval_action_id=aa.id AND cf.is_voided=false)), count(*) FILTER (WHERE aa.decision_code='DISMISSAL') INTO v_filed_for_filing_count, v_unfiled_for_filing_count, v_dismissal_count FROM public.case_resolution_approval_actions aa JOIN public.case_resolution_approvals a ON a.id=aa.approval_id AND a.is_voided=false JOIN public.case_resolutions cr ON cr.id=a.case_resolution_id AND cr.is_voided=false WHERE aa.case_id=p_case_id;
   IF COALESCE(v_unapproved_resolution_count,0)>0 THEN IF COALESCE(v_filed_for_filing_count,0)>0 THEN RETURN QUERY SELECT 'PENDING'::text,'FILED_OTHER_RESO_FOR_APPROVAL'::text; ELSE RETURN QUERY SELECT 'PENDING'::text,'RESO_FOR_APPROVAL'::text; END IF; RETURN; ELSIF COALESCE(v_unfiled_for_filing_count,0)>0 THEN IF COALESCE(v_filed_for_filing_count,0)>0 THEN RETURN QUERY SELECT 'PENDING'::text,'FILED_OTHER_INFO_FOR_FILING'::text; ELSE RETURN QUERY SELECT 'PENDING'::text,'FOR_FILING'::text; END IF; RETURN; END IF;
 
+  IF COALESCE(v_active_petition_count,0) > 0 AND v_petition_status_code IS NULL THEN RETURN QUERY SELECT 'PENDING'::text, 'PENDING_PETREV'::text; RETURN; END IF;
+
   SELECT explicit_state.status_code, explicit_state.stage_code INTO v_explicit_status_code, v_explicit_stage_code
   FROM (
     SELECT cs.code AS status_code, cst.code AS stage_code, ce.event_date, ce.event_time, ce.id AS case_event_id, msu.id AS source_id
@@ -82,7 +96,7 @@ BEGIN
     JOIN public.case_event_types cet ON cet.id=ce.event_type_id AND cet.code='CASE_STATUS_UPDATED'
     JOIN public.case_statuses cs ON cs.id=msu.selected_case_status_id AND cs.is_active IS TRUE
     JOIN public.case_stages cst ON cst.id=msu.selected_case_stage_id AND cst.is_active IS TRUE
-    WHERE msu.case_id=p_case_id AND msu.is_voided=false
+    WHERE msu.case_id=p_case_id AND msu.is_voided=false AND (COALESCE(v_active_petition_count,0)=0 OR v_petition_status_code IS NOT NULL)
     UNION ALL
     SELECT cs.code, cst.code, ce.event_date, ce.event_time, ce.id, a.id
     FROM public.case_motion_resolution_approvals a
@@ -558,12 +572,13 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.void_case_event(bigint, text, bigint) TO authenticated;
 
-COMMENT ON FUNCTION public.compute_current_case_state(bigint) IS 'Manual Case Status Updated participates in explicit-state recompute after unfinished Petition/Motion/Resolution/Filing checks. Latest explicit state uses event_date DESC, event_time DESC NULLS LAST, case_event_id DESC, source id DESC across manual updates, Motion Decision Approved, and Petition Updates.';
+COMMENT ON FUNCTION public.compute_current_case_state(bigint) IS 'Manual Case Status Updated and Petition Update explicit statuses share deterministic explicit-state recompute after genuinely unfinished Motion/Resolution/Filing checks; an active Petition with no explicit update remains PENDING/PENDING_PETREV. Latest explicit state uses effective date DESC, effective time DESC NULLS LAST, case_event_id DESC, source id DESC.';
 COMMENT ON FUNCTION public.record_case_status_updated_event(bigint,bigint,bigint,date,text,text,bigint) IS 'Records a voidable CASE_STATUS_UPDATED timeline event and synchronized Case Status / Case Stage current state with conditional history linked to the event.';
 COMMENT ON FUNCTION public.void_case_event(bigint,text,bigint) IS 'Includes CASE_STATUS_UPDATED void branch, marks manual status update rows voided, preserves voided timeline events, and invokes shared recompute once while preserving unrelated branches.';
 
 -- Verification notes:
--- 1. record_case_status_updated_event creates exactly one CASE_STATUS_UPDATED case_events row.
+-- 1. Active Petition without an applicable explicit update recomputes to PENDING / PENDING_PETREV.
+-- 1a. record_case_status_updated_event creates exactly one CASE_STATUS_UPDATED case_events row.
 -- 2. Selected Case Status and Case Stage are stored on case_events and case_private_details.
 -- 3. case_status_history and case_stage_history rows link to the CASE_STATUS_UPDATED event when values change.
 -- 4. CASE_STATUS_UPDATED events are normal timeline rows and use public.void_case_event.
@@ -572,8 +587,10 @@ COMMENT ON FUNCTION public.void_case_event(bigint,text,bigint) IS 'Includes CASE
 -- 7. Multiple manual updates act as an explicit-state stack ordered by event_date, event_time, event id, and source id.
 -- 8. Active pending Motion / Motion Resolution awaiting approval temporarily overrides manual updates.
 -- 9. Voiding the Motion path reveals the latest active manual update again.
--- 10. Active Petition for Review temporarily overrides manual updates.
--- 11. Voiding the Petition reveals the latest active manual update again.
+-- 10. Active Petition for Review without an explicit update temporarily overrides manual updates.
+-- 10a. Petition Update with Update Case Status = Yes remains eligible in the same explicit-state ordering as manual updates.
+-- 10b. A later CASE_STATUS_UPDATED supersedes an earlier Petition Update; a later Petition Update supersedes an earlier CASE_STATUS_UPDATED.
+-- 11. Voiding the Petition removes its Petition Updates from recomputation and recomputes from remaining active records.
 -- 12. Voided case_manual_status_updates and voided CASE_STATUS_UPDATED events never influence recompute.
 -- 13. The CASE_STATUS_UPDATED void branch calls public.apply_case_state_recompute exactly once.
 -- 14. Add Case Stage behavior is preserved unchanged from PR 106.

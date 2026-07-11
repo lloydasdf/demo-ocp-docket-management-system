@@ -583,7 +583,7 @@ const overviewEditorCopy: Record<
   },
   status: {
     title: "Status",
-    description: "Manually update Case Status and Case Stage. Creates audit logs and conditional history rows only.",
+    description: "Manually update Case Status and Case Stage. Creates a voidable timeline activity, conditional history rows, and audit logs.",
   },
   places: {
     title: "Places of Commission",
