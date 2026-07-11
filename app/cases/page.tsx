@@ -16,7 +16,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ChevronDown, RefreshCw, X } from 'lucide-react';
+import { ChevronDown, Printer, RefreshCw, X } from 'lucide-react';
 import {
   getDocketCaseLabelsForCases,
   getDocketParticipantsForCases,
@@ -28,6 +28,8 @@ import {
   type DocketQuickDetailsRecord,
   type DocketShellRecord,
 } from '@/lib/supabase/queries';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import type { CasesReportFilters, CasesReportRow } from '@/lib/pdf/cases-report';
 
 type CompactCase = CasesDisplayRecord;
 type DocketTypeFilter = string;
@@ -418,6 +420,7 @@ export default function CasesPage() {
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(640);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -1009,6 +1012,110 @@ export default function CasesPage() {
     document.addEventListener('pointerup', handlePointerUp);
   }
 
+  function multilineViolation(value: string | null | undefined) {
+    const violations = value
+      ?.split(/\s*(?:\||\r?\n)\s*/u)
+      .map((violation) => violation.trim())
+      .filter(Boolean);
+
+    return violations && violations.length > 0 ? violations.join('\n') : '—';
+  }
+
+  function buildActiveColumnFilters() {
+    if (!showColumnFilters) {
+      return [];
+    }
+
+    return CASE_TABLE_COLUMNS.flatMap((column) => {
+      const selectedValues = selectedColumnFilters[column.key];
+      const availableValues = columnFilterOptions[column.key];
+      const isActive =
+        selectedValues.length !== availableValues.length ||
+        selectedValues.some((value) => !availableValues.includes(value));
+
+      return isActive
+        ? [{ column: column.label, values: selectedValues }]
+        : [];
+    });
+  }
+
+  async function getAuthenticatedEmail() {
+    try {
+      const supabase = await getSupabaseBrowserClient();
+      const { data } = await supabase.auth.getUser();
+      return data.user?.email ?? 'Authenticated user';
+    } catch {
+      return 'Authenticated user';
+    }
+  }
+
+  function openPdfBlob(blob: Blob, previewWindow: Window | null, filename: string) {
+    const pdfUrl = URL.createObjectURL(blob);
+
+    if (previewWindow) {
+      previewWindow.location.href = pdfUrl;
+      setTimeout(() => URL.revokeObjectURL(pdfUrl), 60_000);
+      return;
+    }
+
+    const downloadLink = document.createElement('a');
+    downloadLink.href = pdfUrl;
+    downloadLink.download = filename;
+    document.body.appendChild(downloadLink);
+    downloadLink.click();
+    downloadLink.remove();
+    setTimeout(() => URL.revokeObjectURL(pdfUrl), 1_000);
+  }
+
+  async function handlePrintPdf() {
+    const previewWindow = window.open('', '_blank');
+    const today = new Date().toISOString().slice(0, 10);
+    const filename = `case-list-${today}.pdf`;
+
+    setIsGeneratingPdf(true);
+
+    try {
+      const reportRows: CasesReportRow[] = sortedCases.map((caseDetail) => {
+        const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
+
+        return {
+          docketNumber: formatDisplayDocketNumber(caseDetail),
+          complainant: expandedPartyNames(casePartyNames?.complainants ?? []),
+          respondent: expandedPartyNames(casePartyNames?.respondents ?? []),
+          violation: multilineViolation(caseViolations(caseDetail)),
+          assignedProsecutor: assignedProsecutor(caseDetail) ?? '—',
+          currentStatus: currentStatusLabel(caseDetail) ?? '—',
+          currentStage: currentStageLabel(caseDetail) ?? '—',
+          dateReceived: formatDate(caseDetail.date_received),
+        };
+      });
+      const reportFilters: CasesReportFilters = {
+        searchTerm: searchTerm.trim(),
+        searchColumns: selectedSearchColumns.map(searchColumnLabel),
+        docketTypes: selectedDocketTypes,
+        docketYears: selectedDocketYears,
+        activeColumnFilters: buildActiveColumnFilters(),
+        sortOrder: 'Docket Number ascending',
+      };
+      const [{ generateCasesReportPdf }, generatedBy] = await Promise.all([
+        import('@/lib/pdf/cases-report'),
+        getAuthenticatedEmail(),
+      ]);
+      const pdfBlob = await generateCasesReportPdf({
+        rows: reportRows,
+        filters: reportFilters,
+        generatedBy,
+      });
+
+      openPdfBlob(pdfBlob, previewWindow, filename);
+    } catch (error) {
+      previewWindow?.close();
+      alert(error instanceof Error ? `Unable to generate PDF: ${error.message}` : 'Unable to generate PDF.');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
@@ -1020,10 +1127,21 @@ export default function CasesPage() {
                 <h1 className="text-3xl font-bold text-foreground">All Cases</h1>
                 <p className="text-muted-foreground mt-1">Browse all cases in the system</p>
               </div>
-              <Button type="button" variant="outline" onClick={refreshCases} disabled={isLoading || isLoadingAllCases}>
-                <RefreshCw className={`mr-2 size-4 ${(isLoading || isLoadingAllCases) ? 'animate-spin' : ''}`} />
-                Refresh
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handlePrintPdf}
+                  disabled={isLoading || isLoadingAllCases || isGeneratingPdf || sortedCases.length === 0}
+                >
+                  <Printer className="mr-2 size-4" />
+                  {isGeneratingPdf ? 'Generating PDF…' : 'Print PDF'}
+                </Button>
+                <Button type="button" variant="outline" onClick={refreshCases} disabled={isLoading || isLoadingAllCases}>
+                  <RefreshCw className={`mr-2 size-4 ${(isLoading || isLoadingAllCases) ? 'animate-spin' : ''}`} />
+                  Refresh
+                </Button>
+              </div>
             </div>
           </div>
 
