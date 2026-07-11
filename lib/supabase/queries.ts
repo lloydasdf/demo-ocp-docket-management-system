@@ -3060,6 +3060,26 @@ export async function searchClearancePhoneticMatches(
   );
 }
 
+
+async function addLookupViaRpc(operation: string, table: RelationName, rpcName: string, displayLabel: string, extra: Record<string, unknown> = {}): Promise<SupabaseQueryResult<number>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table, operation });
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), operation, "users"));
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc(rpcName as never, {
+      p_display_label: displayLabel.trim(),
+      p_user_id: currentUserQuery.data.id,
+      ...extra,
+    } as never);
+    if (error) return fail(toQueryError(error, operation, table));
+    return ok(Number(data ?? 0));
+  } catch (error) {
+    return fail(toQueryError(error, operation, table));
+  }
+}
+
 export async function getCaseClassifications(): Promise<SupabaseQueryResult<TableRow<"case_classifications">[]>> {
   return runSupabaseQuery("getCaseClassifications", "v_ref_case_classifications" as RelationName, async () => {
     const supabase = await getSupabaseBrowserClient();
@@ -3101,6 +3121,19 @@ export async function getAddressTypes(): Promise<SupabaseQueryResult<TableRow<"a
     const supabase = await getSupabaseBrowserClient();
     return (await supabase.from("v_ref_address_types" as never).select("*").order("display_label" as never, { ascending: true })) as unknown as { data: TableRow<"address_types">[] | null; error: unknown };
   }, []);
+}
+
+
+export async function addCaseClassification(input: { displayLabel: string; description?: string | null }): Promise<SupabaseQueryResult<number>> {
+  return addLookupViaRpc("addCaseClassification", "case_classifications", "add_case_classification", input.displayLabel, { p_description: input.description?.trim() || null });
+}
+
+export async function addParticipantRole(input: { displayLabel: string; code?: string | null }): Promise<SupabaseQueryResult<number>> {
+  return addLookupViaRpc("addParticipantRole", "participant_roles", "add_participant_role", input.displayLabel, { p_code: input.code?.trim() || null });
+}
+
+export async function addAddressType(input: { displayLabel: string; code?: string | null }): Promise<SupabaseQueryResult<number>> {
+  return addLookupViaRpc("addAddressType", "address_types", "add_address_type", input.displayLabel, { p_code: input.code?.trim() || null });
 }
 
 export type DatabaseUserSummary = Pick<TableRow<"users">, "email" | "id">;

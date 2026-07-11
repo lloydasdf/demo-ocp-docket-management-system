@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-  import { AlertCircle, CheckCircle2, Loader2, MapPin, Plus, Search, Settings2, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, MapPin, Plus, Search, Settings2, X } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -12,11 +12,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { CreatableLookupSelect } from '@/components/lookups/creatable-lookup-select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { formatManilaClock, getManilaDateTimeInputValues } from '@/lib/philippine-time';
 import {
+  addAddressType,
+  addCaseClassification,
+  addParticipantRole,
   createNewDocketEntry,
   getAddressTypes,
   getCaseStatuses,
@@ -1140,6 +1144,45 @@ export default function NewDocket() {
     setAddOnDialog(null);
   };
 
+  const refreshParticipantRoles = async () => {
+    const result = await getParticipantRoles();
+    if (!result.error) setLookups((current) => ({ ...current, participantRoles: result.data }));
+    return result;
+  };
+
+  const refreshAddressTypes = async () => {
+    const result = await getAddressTypes();
+    if (!result.error) setLookups((current) => ({ ...current, addressTypes: result.data }));
+    return result;
+  };
+
+  const refreshCaseClassifications = async () => {
+    const result = await getCaseClassifications();
+    if (!result.error) setLookups((current) => ({ ...current, caseClassifications: result.data }));
+    return result;
+  };
+
+  const createParticipantRoleOption = async (displayLabel: string) => {
+    const result = await addParticipantRole({ displayLabel });
+    if (result.error) return { id: 0, error: result.error.message };
+    await refreshParticipantRoles();
+    return { id: result.data };
+  };
+
+  const createAddressTypeOption = async (displayLabel: string) => {
+    const result = await addAddressType({ displayLabel });
+    if (result.error) return { id: 0, error: result.error.message };
+    await refreshAddressTypes();
+    return { id: result.data };
+  };
+
+  const createCaseClassificationOption = async (displayLabel: string) => {
+    const result = await addCaseClassification({ displayLabel });
+    if (result.error) return { id: 0, error: result.error.message };
+    await refreshCaseClassifications();
+    return { id: result.data };
+  };
+
   const renderParticipantDraftField = () => {
     if (!participantDialog) return null;
     const entry = participantDialog.entry;
@@ -1149,7 +1192,7 @@ export default function NewDocket() {
     if (stepName === 'Middle Name') return <div className="space-y-3"><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.noMiddleName === true} onCheckedChange={(checked) => updateParticipantDraft({ noMiddleName: checked === true, middleName: checked === true ? 'NMN' : '' })} /> NMN (No Middle Name)</label><Input value={entry.noMiddleName ? 'NMN' : (entry.middleName ?? '')} disabled={entry.noMiddleName === true} onChange={(event) => updateParticipantDraft({ middleName: event.target.value, noMiddleName: false })} placeholder="Middle name or skip" /></div>;
     if (stepName === 'Surname') return <Input value={entry.lastName ?? ''} onChange={(event) => updateParticipantDraft({ lastName: event.target.value })} placeholder="Surname or skip" />;
     if (stepName === 'Suffix') return <div className="space-y-3"><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.suffix === ''} onCheckedChange={(checked) => updateParticipantDraft({ suffix: checked === true ? '' : entry.suffix })} /> No Suffix</label><Input value={entry.suffix ?? ''} onChange={(event) => updateParticipantDraft({ suffix: event.target.value })} placeholder="Suffix or skip" /></div>;
-    if (stepName === 'Role') return <Select value={entry.roleId ? entry.roleId.toString() : ''} onValueChange={(value) => updateParticipantDraft({ roleId: toNumber(value) })}><SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger><SelectContent>{lookups.participantRoles.map((role) => <SelectItem key={role.id} value={role.id.toString()}>{role.display_label}</SelectItem>)}</SelectContent></Select>;
+    if (stepName === 'Role') return <CreatableLookupSelect value={entry.roleId ? entry.roleId.toString() : ''} onValueChange={(value) => updateParticipantDraft({ roleId: toNumber(value) })} options={lookups.participantRoles} placeholder="Select role" addLabel="Add Role" dialogTitle="Add Participant Role" labelField="Role Label" onCreate={createParticipantRoleOption} />;
     if (stepName === 'Gender') return <div className="flex flex-wrap gap-2">{genderOptions.map((gender) => <Button key={gender} type="button" variant={entry.gender === gender ? 'default' : 'outline'} onClick={() => updateParticipantDraft({ gender })}>{gender}</Button>)}</div>;
     if (stepName === 'Birthdate') return <Input type="date" value={entry.birthDate ?? ''} onChange={(event) => updateParticipantDraft({ birthDate: event.target.value })} />;
     if (stepName === 'Age') return <Input value={entry.age ?? ''} onChange={(event) => updateParticipantDraft({ age: event.target.value })} placeholder="Age or skip" />;
@@ -1174,7 +1217,7 @@ export default function NewDocket() {
       const key = stepName === 'Contact Value' ? 'contactValue' : 'remarks';
       return <Input value={(addOnDialog.contact as any)[key] ?? ''} onChange={(event) => updateAddOn({ contact: { ...addOnDialog.contact, [key]: event.target.value } })} placeholder={`${stepName} or skip`} />;
     }
-    if (stepName === 'Address Type') return <Select value={addOnDialog.address.addressTypeId ? addOnDialog.address.addressTypeId.toString() : ''} onValueChange={(value) => updateAddOn({ address: { ...addOnDialog.address, addressTypeId: toNumber(value) } })}><SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger><SelectContent>{lookups.addressTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.display_label}</SelectItem>)}</SelectContent></Select>;
+    if (stepName === 'Address Type') return <CreatableLookupSelect value={addOnDialog.address.addressTypeId ? addOnDialog.address.addressTypeId.toString() : ''} onValueChange={(value) => updateAddOn({ address: { ...addOnDialog.address, addressTypeId: toNumber(value) } })} options={lookups.addressTypes} placeholder="Select type" addLabel="Add Address Type" dialogTitle="Add Address Type" labelField="Address Type Label" onCreate={createAddressTypeOption} />;
     return <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><div><Label className="text-xs">Line 1</Label><Input value={addOnDialog.address.line1 ?? ''} onChange={(event) => { const line1 = event.target.value; updateAddOn({ address: { ...addOnDialog.address, line1, suggestionQuery: [line1, addOnDialog.address.line2].filter(Boolean).join(' '), existingAddressId: null } }); loadAddressSuggestions(addOnDialog.address.id, [line1, addOnDialog.address.line2].filter(Boolean).join(' ')); }} className="mt-1" /></div><div><Label className="text-xs">Line 2</Label><Input value={addOnDialog.address.line2 ?? ''} onChange={(event) => { const line2 = event.target.value; updateAddOn({ address: { ...addOnDialog.address, line2, suggestionQuery: [addOnDialog.address.line1, line2].filter(Boolean).join(' '), existingAddressId: null } }); loadAddressSuggestions(addOnDialog.address.id, [addOnDialog.address.line1, line2].filter(Boolean).join(' ')); }} className="mt-1" /></div>{addressSuggestions[addOnDialog.address.id]?.length ? <div className="rounded-md border bg-background p-2 text-sm shadow-sm md:col-span-2"><p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing address suggestions</p><div className="flex flex-wrap gap-2">{addressSuggestions[addOnDialog.address.id].map((suggestion) => <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => { const formatted = formatAddress(suggestion); updateAddOn({ address: { ...addOnDialog.address, barangay: suggestion.barangay ?? '', city: suggestion.city ?? '', country: suggestion.country ?? 'Philippines', line1: suggestion.line1 ?? '', line2: suggestion.line2 ?? '', province: suggestion.province ?? '', region: suggestion.region ?? defaultAddressRegionCode, suggestionQuery: formatted, zipCode: suggestion.zip_code ?? '', existingAddressId: suggestion.id, selectedExistingLabel: formatted } }); setAddressSuggestions((current) => ({ ...current, [addOnDialog.address.id]: [] })); }}>{formatAddress(suggestion) || `Address #${suggestion.id}`}</Button>)}</div></div> : null}<div><Label className="text-xs">Barangay</Label><Input value={addOnDialog.address.barangay ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, barangay: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">City</Label><Input value={addOnDialog.address.city ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, city: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">Province</Label><Input value={addOnDialog.address.province ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, province: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">Region</Label><Input value={addOnDialog.address.region ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, region: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">ZIP Code</Label><Input value={addOnDialog.address.zipCode ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, zipCode: event.target.value, existingAddressId: null } })} className="mt-1" /></div><div><Label className="text-xs">Country</Label><Input value={addOnDialog.address.country ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, country: event.target.value, existingAddressId: null } })} className="mt-1" /></div><label className="flex items-center gap-2 text-xs"><Checkbox checked={addOnDialog.address.isPrimary === true} onCheckedChange={(checked) => updateAddOn({ address: { ...addOnDialog.address, isPrimary: checked === true } })} /> Primary</label><div><Label className="text-xs">Remarks</Label><Input value={addOnDialog.address.remarks ?? ''} onChange={(event) => updateAddOn({ address: { ...addOnDialog.address, remarks: event.target.value } })} className="mt-1" /></div></div>;
   };
 
@@ -1261,7 +1304,7 @@ export default function NewDocket() {
       return <div className="space-y-4"><Select value={docketTypeId} onValueChange={setDocketTypeId} disabled={isLoadingLookups}><SelectTrigger><SelectValue placeholder="Select docket type" /></SelectTrigger><SelectContent>{lookups.docketTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.prefix} — {type.name}</SelectItem>)}</SelectContent></Select>{docketTypeId ? <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><div><Label className="text-xs">Date Received</Label><Input type="date" value={dateReceived} onChange={(event) => { setIsReceivedDateTimeDirty(true); setDateReceived(event.target.value); }} className="mt-1" /></div><div><Label className="text-xs">Time Received</Label><Input type="time" step="1" value={timeReceived} onChange={(event) => { setIsReceivedDateTimeDirty(true); setTimeReceived(event.target.value); }} className="mt-1" /></div><div><Label className="text-xs">Docket Year</Label><Input type="number" value={docketYear} onChange={(event) => setDocketYear(event.target.value)} className="mt-1" /></div></div> : null}</div>;
     }
     if (caseModal.kind === 'procedure') {
-      return <div className="space-y-4"><label className="flex items-center gap-2 text-sm"><Checkbox checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} /> Falls under Summary Procedure</label><div><Label className="text-xs">Case Classification</Label><Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}><SelectTrigger className="mt-1"><SelectValue placeholder="Select classification" /></SelectTrigger><SelectContent><div className="p-2"><Input value={caseClassificationSearch} onChange={(event) => setCaseClassificationSearch(event.target.value)} onKeyDown={(event) => event.stopPropagation()} placeholder="Search classifications" /></div><SelectItem value="none">No classification</SelectItem>{filteredCaseClassifications.map((classification) => <SelectItem key={classification.id} value={classification.id.toString()}>{classification.display_label}</SelectItem>)}</SelectContent></Select></div>{isSummaryProcedure ? <div><Label className="text-xs">Remarks</Label><Textarea value={remarks} onChange={(event) => setRemarks(event.target.value)} placeholder="Optional summary procedure remarks" className="mt-1" /></div> : null}</div>;
+      return <div className="space-y-4"><label className="flex items-center gap-2 text-sm"><Checkbox checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} /> Falls under Summary Procedure</label><div><Label className="text-xs">Case Classification</Label><CreatableLookupSelect value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups} className="mt-1" options={filteredCaseClassifications} placeholder="Select classification" addLabel="Add Case Classification" dialogTitle="Add Case Classification" labelField="Classification Label" noneOption={{ value: 'none', label: 'No classification' }} onCreate={createCaseClassificationOption} /></div>{isSummaryProcedure ? <div><Label className="text-xs">Remarks</Label><Textarea value={remarks} onChange={(event) => setRemarks(event.target.value)} placeholder="Optional summary procedure remarks" className="mt-1" /></div> : null}</div>;
     }
     if (caseModal.kind === 'assignment') {
       return <div className="grid grid-cols-1 gap-3 md:grid-cols-2"><div className="space-y-3"><div><Label className="text-xs">Prosecutor</Label><Select value={assignedProsecutorId || 'none'} onValueChange={(value) => { const nextValue = value === 'none' ? '' : value; setAssignedProsecutorId(nextValue); setCaseAlsoRaffled(Boolean(nextValue)); }} disabled={isLoadingLookups}><SelectTrigger className="mt-1"><SelectValue placeholder="Select prosecutor" /></SelectTrigger><SelectContent><div className="p-2"><Input value={prosecutorSearch} onChange={(event) => setProsecutorSearch(event.target.value)} onKeyDown={(event) => event.stopPropagation()} placeholder="Search prosecutors" /></div><SelectItem value="none">No prosecutor selected</SelectItem>{filteredProsecutors.map((prosecutor) => <SelectItem key={prosecutor.id} value={prosecutor.id.toString()}>{prosecutor.short_name ?? prosecutor.full_name}</SelectItem>)}</SelectContent></Select></div>{assignedProsecutorId ? <><div><Label className="text-xs">Assignment date</Label><Input type="date" value={assignmentDate} onChange={(event) => { setIsAssignmentDateTimeDirty(true); setAssignmentDate(event.target.value); }} className="mt-1" /></div><div><Label className="text-xs">Assignment time</Label><Input type="time" step="1" value={assignmentTime} onChange={(event) => { setIsAssignmentDateTimeDirty(true); setAssignmentTime(event.target.value); }} className="mt-1" /></div></> : null}</div>{assignedProsecutorId ? <div className="flex flex-col"><Label className="text-xs">Remarks</Label><Textarea value={assignmentRemarks} onChange={(event) => setAssignmentRemarks(event.target.value)} placeholder="Optional assignment remarks" className="mt-1 min-h-[7.75rem] flex-1" /></div> : null}</div>;
@@ -1273,7 +1316,7 @@ export default function NewDocket() {
     }
     if (caseModal.kind === 'place' && caseModal.place) {
       const place = caseModal.place;
-      if (stepName === 'Address Type') return <Select value={place.addressTypeId ? place.addressTypeId.toString() : ''} onValueChange={(value) => updatePlaceDraft({ addressTypeId: toNumber(value) })}><SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger><SelectContent>{lookups.addressTypes.map((type) => <SelectItem key={type.id} value={type.id.toString()}>{type.display_label}</SelectItem>)}</SelectContent></Select>;
+      if (stepName === 'Address Type') return <CreatableLookupSelect value={place.addressTypeId ? place.addressTypeId.toString() : ''} onValueChange={(value) => updatePlaceDraft({ addressTypeId: toNumber(value) })} options={lookups.addressTypes} placeholder="Select type" addLabel="Add Address Type" dialogTitle="Add Address Type" labelField="Address Type Label" onCreate={createAddressTypeOption} />;
       return <div className="space-y-3"><div className="grid grid-cols-1 gap-3 md:grid-cols-2"><div><Label className="text-xs">Line 1</Label><Input value={place.line1 ?? ''} onChange={(event) => { const line1 = event.target.value; updatePlaceDraft({ line1, suggestionQuery: [line1, place.line2].filter(Boolean).join(' '), existingAddressId: null }); loadAddressSuggestions(place.id, [line1, place.line2].filter(Boolean).join(' ')); }} className="mt-1" /></div><div><Label className="text-xs">Line 2</Label><Input value={place.line2 ?? ''} onChange={(event) => { const line2 = event.target.value; updatePlaceDraft({ line2, suggestionQuery: [place.line1, line2].filter(Boolean).join(' '), existingAddressId: null }); loadAddressSuggestions(place.id, [place.line1, line2].filter(Boolean).join(' ')); }} className="mt-1" /></div>{addressSuggestions[place.id]?.length ? <div className="rounded-md border bg-background p-2 text-sm shadow-sm md:col-span-2"><p className="mb-1 flex items-center gap-1 text-xs text-muted-foreground"><Search className="h-3 w-3" /> Existing address suggestions</p><div className="flex flex-wrap gap-2">{addressSuggestions[place.id].map((suggestion) => <Button key={suggestion.id} type="button" variant="secondary" size="sm" onClick={() => applyPlaceDraftSuggestion(suggestion)}>{formatAddress(suggestion) || `Address #${suggestion.id}`}</Button>)}</div></div> : null}<div><Label className="text-xs">Barangay</Label><Input value={place.barangay ?? ''} onChange={(event) => updatePlaceDraft({ barangay: event.target.value, existingAddressId: null })} className="mt-1" /></div><div><Label className="text-xs">City</Label><Input value={place.city ?? ''} onChange={(event) => updatePlaceDraft({ city: event.target.value, existingAddressId: null })} className="mt-1" /></div><div><Label className="text-xs">Province</Label><Input value={place.province ?? ''} onChange={(event) => updatePlaceDraft({ province: event.target.value, existingAddressId: null })} className="mt-1" /></div><div><Label className="text-xs">Region</Label><Input value={place.region ?? ''} onChange={(event) => updatePlaceDraft({ region: event.target.value, existingAddressId: null })} className="mt-1" /></div><div><Label className="text-xs">ZIP Code</Label><Input value={place.zipCode ?? ''} onChange={(event) => updatePlaceDraft({ zipCode: event.target.value, existingAddressId: null })} className="mt-1" /></div><div><Label className="text-xs">Country</Label><Input value={place.country ?? ''} onChange={(event) => updatePlaceDraft({ country: event.target.value, existingAddressId: null })} className="mt-1" /></div><div className="md:col-span-2"><Label className="text-xs">Remarks</Label><Input value={place.remarks ?? ''} onChange={(event) => updatePlaceDraft({ remarks: event.target.value })} className="mt-1" /></div></div></div>;
     }
     return null;
@@ -1407,7 +1450,7 @@ export default function NewDocket() {
                             <div className="rounded-lg border p-4 text-sm">
                               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                                 <label className="flex items-center gap-2 text-sm"><Checkbox checked={isSummaryProcedure} onCheckedChange={(checked) => setIsSummaryProcedure(checked === true)} /> Falls under Summary Procedure</label>
-                                <div><Label className="text-xs">Case Classification</Label><Select value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups}><SelectTrigger className="mt-1"><SelectValue placeholder="Select classification" /></SelectTrigger><SelectContent><div className="p-2"><Input value={caseClassificationSearch} onChange={(event) => setCaseClassificationSearch(event.target.value)} onKeyDown={(event) => event.stopPropagation()} placeholder="Search classifications" /></div><SelectItem value="none">No classification</SelectItem>{filteredCaseClassifications.map((classification) => <SelectItem key={classification.id} value={classification.id.toString()}>{classification.display_label}</SelectItem>)}</SelectContent></Select></div>
+                                <div><Label className="text-xs">Case Classification</Label><CreatableLookupSelect value={caseClassificationId || 'none'} onValueChange={(value) => setCaseClassificationId(value === 'none' ? '' : value)} disabled={isLoadingLookups} className="mt-1" options={filteredCaseClassifications} placeholder="Select classification" addLabel="Add Case Classification" dialogTitle="Add Case Classification" labelField="Classification Label" noneOption={{ value: 'none', label: 'No classification' }} onCreate={createCaseClassificationOption} /></div>
                                 {isSummaryProcedure ? <div className="md:col-span-2"><Label className="text-xs">Summary Remarks</Label><Textarea value={remarks} onChange={(event) => setRemarks(event.target.value)} placeholder="Optional summary procedure remarks" className="mt-1" /></div> : null}
                               </div>
                             </div>
