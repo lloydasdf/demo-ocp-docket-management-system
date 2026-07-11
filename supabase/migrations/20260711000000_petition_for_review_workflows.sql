@@ -106,7 +106,6 @@ BEGIN
   IF p_case_id IS NULL OR NOT EXISTS (SELECT 1 FROM public.cases WHERE id=p_case_id) THEN RAISE EXCEPTION 'Unknown case id %', p_case_id; END IF;
   IF p_date_filed IS NULL THEN RAISE EXCEPTION 'Date Filed is required'; END IF;
   IF p_filed_by_code NOT IN ('COMPLAINANT','RESPONDENT') THEN RAISE EXCEPTION 'Filed By must be COMPLAINANT or RESPONDENT'; END IF;
-  IF v_status IS NULL THEN RAISE EXCEPTION 'Status is required'; END IF;
   v_filed_by_label := CASE p_filed_by_code WHEN 'COMPLAINANT' THEN 'Complainant' ELSE 'Respondent' END;
   v_details := public.normalize_petition_details(p_additional_details_jsonb);
   v_time := coalesce(p_time_filed, (now() AT TIME ZONE 'Asia/Manila')::time(0));
