@@ -16,6 +16,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { RefreshCw, ShieldAlert, Trash2 } from 'lucide-react';
@@ -40,10 +41,6 @@ function formatDate(value: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
-}
-
-function getOfficeIdentity(user: UserManagementUserRecord) {
-  return user.prosecutor_full_name ?? user.prosecutor_short_name ?? user.staff_full_name ?? user.staff_short_name ?? 'Not linked';
 }
 
 function getActionText(action: PendingAction | null) {
@@ -75,7 +72,7 @@ function getActionText(action: PendingAction | null) {
 
   return {
     title: 'Confirm user removal',
-    description: `Remove ${action.user.email} from application access? This soft-removes the app user by disabling it and clearing assigned roles.`,
+    description: `Permanently delete ${action.user.email} from the application database. This does not delete the Supabase Auth account.`,
     confirm: 'Remove user',
   };
 }
@@ -87,8 +84,10 @@ export default function UserManagementPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [removeConfirmationText, setRemoveConfirmationText] = useState('');
 
   const actionText = useMemo(() => getActionText(pendingAction), [pendingAction]);
+  const isRemoveConfirmationValid = pendingAction?.type !== 'remove' || removeConfirmationText === 'Remove this User';
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -127,6 +126,7 @@ export default function UserManagementPage() {
     } else {
       setMessage({ type: 'success', text: `${actionText.confirm} completed successfully.` });
       setPendingAction(null);
+      setRemoveConfirmationText('');
       await loadData();
     }
 
@@ -141,7 +141,7 @@ export default function UserManagementPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h1 className="text-3xl font-bold tracking-tight">User Management</h1>
-              <p className="text-muted-foreground">View users, assign roles, block access, and soft-remove application users.</p>
+              <p className="text-muted-foreground">View users, assign roles, block access, and remove application users.</p>
             </div>
             <Button variant="outline" onClick={loadData} disabled={isLoading || isSaving}>
               <RefreshCw className="mr-2 h-4 w-4" />
@@ -168,17 +168,15 @@ export default function UserManagementPage() {
                     <TableHead>Email</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Role</TableHead>
-                    <TableHead>Office identity</TableHead>
-                    <TableHead>Last login</TableHead>
                     <TableHead>Created</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {isLoading ? (
-                    <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">Loading users...</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">Loading users...</TableCell></TableRow>
                   ) : users.length === 0 ? (
-                    <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">No users found.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">No users found.</TableCell></TableRow>
                   ) : users.map((user) => (
                     <TableRow key={user.id}>
                       <TableCell className="font-medium">{user.email}</TableCell>
@@ -201,8 +199,6 @@ export default function UserManagementPage() {
                           </SelectContent>
                         </Select>
                       </TableCell>
-                      <TableCell>{getOfficeIdentity(user)}</TableCell>
-                      <TableCell>{formatDate(user.last_login_at)}</TableCell>
                       <TableCell>{formatDate(user.created_at)}</TableCell>
                       <TableCell className="space-x-2 text-right">
                         <Button size="sm" variant="outline" onClick={() => setPendingAction({ type: user.is_active ? 'block' : 'unblock', user })} disabled={isSaving}>
@@ -223,15 +219,31 @@ export default function UserManagementPage() {
         </div>
       </main>
 
-      <AlertDialog open={pendingAction !== null} onOpenChange={(open) => !open && !isSaving && setPendingAction(null)}>
+      <AlertDialog open={pendingAction !== null} onOpenChange={(open) => {
+        if (!open && !isSaving) {
+          setPendingAction(null);
+          setRemoveConfirmationText('');
+        }
+      }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{actionText.title}</AlertDialogTitle>
             <AlertDialogDescription>{actionText.description}</AlertDialogDescription>
           </AlertDialogHeader>
+          {pendingAction?.type === 'remove' ? (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Type <span className="font-bold">Remove this User</span> to proceed.</p>
+              <Input
+                value={removeConfirmationText}
+                onChange={(event) => setRemoveConfirmationText(event.target.value)}
+                placeholder="Remove this User"
+                disabled={isSaving}
+              />
+            </div>
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isSaving}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmAction} disabled={isSaving}>{isSaving ? 'Saving...' : actionText.confirm}</AlertDialogAction>
+            <AlertDialogAction onClick={confirmAction} disabled={isSaving || !isRemoveConfirmationValid}>{isSaving ? 'Saving...' : actionText.confirm}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
