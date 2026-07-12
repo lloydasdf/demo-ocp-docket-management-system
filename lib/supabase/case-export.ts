@@ -129,6 +129,7 @@ export async function getCasesExcelExportPage(params: {
 export async function getCasesExcelExport(params: {
   docketYear: number | null;
   docketTypeId: number | null;
+  expectedCaseCount?: number;
   onPageLoaded?: (pageNumber: number, loadedCount: number) => void;
 }): Promise<SupabaseQueryResult<CaseExcelExportRow[]>> {
   const rows: CaseExcelExportRow[] = [];
@@ -149,6 +150,7 @@ export async function getCasesExcelExport(params: {
     rows.push(...pageRows);
     params.onPageLoaded?.(pageNumber, rows.length);
 
+    if (params.expectedCaseCount !== undefined && rows.length >= params.expectedCaseCount) break;
     if (pageRows.length < EXPORT_PAGE_SIZE) break;
     pageNumber += 1;
   }

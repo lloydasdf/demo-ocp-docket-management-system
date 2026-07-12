@@ -77,6 +77,7 @@ export function ExportCasesDialog({ availableYears, disabled }: { availableYears
       const result = await getCasesExcelExport({
         docketYear,
         docketTypeId,
+        expectedCaseCount,
         onPageLoaded: (pageNumber, loadedCount) => {
           setExportProgress(`Loading export page ${pageNumber}… ${loadedCount.toLocaleString()} of ${expectedCaseCount.toLocaleString()} cases loaded`);
         },
