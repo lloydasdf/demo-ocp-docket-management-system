@@ -41,6 +41,12 @@ BEGIN
   END IF;
 END $$;
 
+DROP FUNCTION IF EXISTS public.prepare_auth_account_deletion(bigint);
+DROP FUNCTION IF EXISTS public.finalize_auth_account_deletion(bigint, uuid);
+DROP FUNCTION IF EXISTS public.finalize_auth_account_deletion(bigint, uuid, bigint);
+DROP FUNCTION IF EXISTS public.record_auth_account_deletion_failure(bigint, uuid, text);
+DROP FUNCTION IF EXISTS public.record_auth_account_deletion_failure(bigint, uuid, text, bigint);
+
 CREATE OR REPLACE FUNCTION public.prepare_auth_account_deletion(p_target_user_id bigint)
 RETURNS TABLE(application_user_id bigint, auth_user_id uuid, email text, role_code text, is_active boolean, actor_user_id bigint)
 LANGUAGE plpgsql
@@ -107,9 +113,6 @@ BEGIN
   RETURN NEXT;
 END;
 $$;
-
-DROP FUNCTION IF EXISTS public.finalize_auth_account_deletion(bigint, uuid);
-DROP FUNCTION IF EXISTS public.record_auth_account_deletion_failure(bigint, uuid, text);
 
 CREATE OR REPLACE FUNCTION public.finalize_auth_account_deletion(
   p_target_user_id bigint,
