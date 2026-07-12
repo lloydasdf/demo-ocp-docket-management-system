@@ -2,31 +2,40 @@
 
 DO $$
 DECLARE
-  v_constraint_name text;
-  v_delete_rule text;
+  v_auth_user_id_attnum smallint;
+  v_has_set_null_constraint boolean := false;
+  v_constraint record;
 BEGIN
-  SELECT rc.constraint_name, rc.delete_rule
-  INTO v_constraint_name, v_delete_rule
-  FROM information_schema.referential_constraints rc
-  JOIN information_schema.key_column_usage kcu
-    ON kcu.constraint_schema = rc.constraint_schema
-   AND kcu.constraint_name = rc.constraint_name
-  JOIN information_schema.constraint_column_usage ccu
-    ON ccu.constraint_schema = rc.unique_constraint_schema
-   AND ccu.constraint_name = rc.unique_constraint_name
-  WHERE kcu.table_schema = 'public'
-    AND kcu.table_name = 'users'
-    AND kcu.column_name = 'auth_user_id'
-    AND ccu.table_schema = 'auth'
-    AND ccu.table_name = 'users'
-    AND ccu.column_name = 'id'
-  LIMIT 1;
+  SELECT a.attnum
+  INTO v_auth_user_id_attnum
+  FROM pg_catalog.pg_attribute a
+  WHERE a.attrelid = 'public.users'::regclass
+    AND a.attname = 'auth_user_id'
+    AND NOT a.attisdropped;
 
-  IF v_constraint_name IS NOT NULL AND v_delete_rule <> 'SET NULL' THEN
-    EXECUTE format('ALTER TABLE public.users DROP CONSTRAINT %I', v_constraint_name);
-    ALTER TABLE public.users
-      ADD CONSTRAINT users_auth_user_id_fkey FOREIGN KEY (auth_user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
-  ELSIF v_constraint_name IS NULL THEN
+  SELECT EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_constraint c
+    WHERE c.conrelid = 'public.users'::regclass
+      AND c.contype = 'f'
+      AND c.confrelid = 'auth.users'::regclass
+      AND c.conkey = ARRAY[v_auth_user_id_attnum]
+      AND c.confdeltype = 'n'
+  )
+  INTO v_has_set_null_constraint;
+
+  IF NOT v_has_set_null_constraint THEN
+    FOR v_constraint IN
+      SELECT c.conname
+      FROM pg_catalog.pg_constraint c
+      WHERE c.conrelid = 'public.users'::regclass
+        AND c.contype = 'f'
+        AND c.confrelid = 'auth.users'::regclass
+        AND c.conkey = ARRAY[v_auth_user_id_attnum]
+    LOOP
+      EXECUTE format('ALTER TABLE public.users DROP CONSTRAINT %I', v_constraint.conname);
+    END LOOP;
+
     ALTER TABLE public.users
       ADD CONSTRAINT users_auth_user_id_fkey FOREIGN KEY (auth_user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
   END IF;
