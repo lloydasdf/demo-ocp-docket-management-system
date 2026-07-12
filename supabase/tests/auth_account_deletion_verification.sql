@@ -1,106 +1,216 @@
--- Verification plan for Supabase Auth login deletion.
--- Run against an isolated Supabase test database with fixture users/roles.
--- The protected HTTP route covers Auth Admin API success/failure; these SQL checks focus on database invariants.
+-- Executable verification checks for Supabase Auth login deletion.
+-- Run only against an isolated test database. Do not run destructive tests in production.
+-- Fill the fixture table below before running the fixture-dependent checks.
 
-begin;
+BEGIN;
 
--- Required fixtures/placeholders for an executable run:
---   :developer_auth_jwt              JWT for an active DEVELOPER
---   :chief_auth_jwt                  JWT for an active CHIEF
---   :admin_auth_jwt                  JWT for an active ADMIN
---   :prosecutor_auth_jwt             JWT for an active PROSECUTOR
---   :service_role_jwt                service-role JWT
---   :developer_app_user_id           active DEVELOPER public.users.id
---   :chief_app_user_id               active CHIEF public.users.id
---   :ordinary_app_user_id            active non-DEVELOPER public.users.id with auth_user_id
---   :ordinary_auth_user_id           auth UUID originally linked to :ordinary_app_user_id
---   :different_auth_user_id          UUID not equal to :ordinary_auth_user_id
+CREATE TEMP TABLE auth_account_deletion_test_fixtures (
+  ordinary_target_user_id bigint,
+  ordinary_auth_user_id uuid,
+  different_auth_user_id uuid,
+  developer_actor_user_id bigint,
+  chief_auth_user_id uuid,
+  chief_actor_user_id bigint,
+  developer_target_user_id bigint,
+  self_auth_user_id uuid,
+  self_app_user_id bigint,
+  final_developer_auth_user_id uuid,
+  final_developer_app_user_id bigint
+) ON COMMIT DROP;
 
--- Existing coverage:
--- 1. DEVELOPER can prepare/finalize an ordinary user's Auth login deletion.
--- 2. CHIEF can prepare/finalize an ordinary user's Auth login deletion.
--- 3. CHIEF cannot prepare deletion of a DEVELOPER login.
--- 4. ADMIN cannot prepare deletion.
--- 5. PROSECUTOR cannot prepare deletion.
--- 6. Self-deletion is rejected by prepare_auth_account_deletion.
--- 7. The final active DEVELOPER login is rejected.
--- 8. A target whose auth_user_id is NULL raises a controlled conflict in prepare_auth_account_deletion.
--- 9. record_auth_account_deletion_failure preserves public.users.auth_user_id.
--- 10. finalize_auth_account_deletion leaves public.users in place.
--- 11. finalize_auth_account_deletion sets is_active=false.
--- 12. finalize_auth_account_deletion sets auth_user_id=NULL.
--- 13. finalize_auth_account_deletion leaves public.user_roles intact.
--- 14. Historical rows that reference public.users(id) remain valid because the user row is preserved.
--- 15. finalize_auth_account_deletion and record_auth_account_deletion_failure insert audit_logs rows.
--- 16. Unauthenticated API calls should return 401 (covered by route handler/manual HTTP test).
--- 17. Unauthorized API calls should return 403 (database 42501 mapped by route handler).
+INSERT INTO auth_account_deletion_test_fixtures DEFAULT VALUES;
 
--- Additional security checks added for service-role-only finalize/failure RPCs:
--- 18. Authenticated users cannot call finalize_auth_account_deletion(bigint, uuid, bigint) directly.
---     Expected: permission denied for authenticated role.
---     Example:
---       set local role authenticated;
---       select public.finalize_auth_account_deletion(:ordinary_app_user_id, :ordinary_auth_user_id, :developer_app_user_id);
---
--- 19. Authenticated users cannot call record_auth_account_deletion_failure(bigint, uuid, text, bigint) directly.
---     Expected: permission denied for authenticated role.
---     Example:
---       set local role authenticated;
---       select public.record_auth_account_deletion_failure(:ordinary_app_user_id, :ordinary_auth_user_id, 'simulated failure', :developer_app_user_id);
---
--- 20. service_role can call finalize_auth_account_deletion and record_auth_account_deletion_failure.
---     Expected: both calls succeed when p_actor_user_id is an active DEVELOPER or CHIEF.
---     Example:
---       set local role service_role;
---       select public.record_auth_account_deletion_failure(:ordinary_app_user_id, :ordinary_auth_user_id, 'simulated failure', :developer_app_user_id);
---
--- 21. finalize_auth_account_deletion accepts auth_user_id already NULL from ON DELETE SET NULL.
---     Setup:
---       update public.users set auth_user_id = null, is_active = true where id = :ordinary_app_user_id;
---       select public.finalize_auth_account_deletion(:ordinary_app_user_id, :ordinary_auth_user_id, :developer_app_user_id);
---     Expected: public.users row remains, auth_user_id is NULL, is_active is false.
---
--- 22. finalize_auth_account_deletion rejects a different non-null UUID.
---     Setup:
---       update public.users set auth_user_id = :different_auth_user_id, is_active = true where id = :ordinary_app_user_id;
---       select public.finalize_auth_account_deletion(:ordinary_app_user_id, :ordinary_auth_user_id, :developer_app_user_id);
---     Expected: controlled conflict exception; auth_user_id remains :different_auth_user_id.
---
--- 23. Repeated finalize does not create duplicate success audit entries.
---     Setup:
---       select public.finalize_auth_account_deletion(:ordinary_app_user_id, :ordinary_auth_user_id, :developer_app_user_id);
---       select public.finalize_auth_account_deletion(:ordinary_app_user_id, :ordinary_auth_user_id, :developer_app_user_id);
---     Expected:
---       select count(*) = 1
---       from public.audit_logs
---       where entity_name = 'users'
---         and entity_id = :ordinary_app_user_id
---         and action = 'AUTH_LOGIN_ACCOUNT_DELETED'
---         and metadata->>'auth_user_id' = :ordinary_auth_user_id::text;
---
--- 24. public.users remains preserved and inactive after successful finalize.
---     Expected:
---       select exists (
---         select 1
---         from public.users u
---         where u.id = :ordinary_app_user_id
---           and u.auth_user_id is null
---           and u.is_active is false
---       );
+-- Example fixture setup for an isolated database:
+-- UPDATE auth_account_deletion_test_fixtures SET
+--   ordinary_target_user_id = 1001,
+--   ordinary_auth_user_id = '00000000-0000-0000-0000-000000000101',
+--   different_auth_user_id = '00000000-0000-0000-0000-000000000102',
+--   developer_actor_user_id = 1,
+--   chief_auth_user_id = '00000000-0000-0000-0000-000000000201',
+--   chief_actor_user_id = 2,
+--   developer_target_user_id = 3,
+--   self_auth_user_id = '00000000-0000-0000-0000-000000000301',
+--   self_app_user_id = 4,
+--   final_developer_auth_user_id = '00000000-0000-0000-0000-000000000401',
+--   final_developer_app_user_id = 5;
 
--- Example invariant query after a successful finalize call:
--- select u.id, u.auth_user_id, u.is_active, ur.role_id
--- from public.users u
--- left join public.user_roles ur on ur.user_id = u.id
--- where u.id = :target_application_user_id;
--- Expected: one public.users row exists, auth_user_id is null, is_active is false, role_id is unchanged.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'delete_auth_user_after_app_user_permanent_delete'
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION 'Old automatic auth deletion trigger still exists';
+  END IF;
 
--- Example audit query:
--- select action, entity_name, entity_id, summary
--- from public.audit_logs
--- where entity_name = 'users'
---   and entity_id = :target_application_user_id
---   and action in ('AUTH_LOGIN_ACCOUNT_DELETED', 'AUTH_LOGIN_ACCOUNT_DELETE_FAILED')
--- order by created_at desc;
+  IF to_regprocedure('public.delete_auth_user_after_app_user_permanent_delete()') IS NOT NULL THEN
+    RAISE EXCEPTION 'Old automatic auth deletion trigger function still exists';
+  END IF;
 
-rollback;
+  IF to_regprocedure('public.remove_user_management_user(bigint)') IS NOT NULL
+     AND has_function_privilege('authenticated', 'public.remove_user_management_user(bigint)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'authenticated can still execute remove_user_management_user(bigint)';
+  END IF;
+
+  IF to_regprocedure('public.permanently_delete_user_management_user(bigint)') IS NOT NULL
+     AND has_function_privilege('authenticated', 'public.permanently_delete_user_management_user(bigint)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'authenticated can still execute permanently_delete_user_management_user(bigint)';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    WHERE c.conrelid = 'public.users'::regclass
+      AND c.contype = 'f'
+      AND c.confrelid = 'auth.users'::regclass
+      AND c.conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = 'public.users'::regclass AND attname = 'auth_user_id')]
+      AND c.confdeltype = 'n'
+  ) THEN
+    RAISE EXCEPTION 'public.users.auth_user_id foreign key is not ON DELETE SET NULL';
+  END IF;
+
+  IF has_function_privilege('authenticated', 'public.finalize_auth_account_deletion(bigint, uuid, bigint, jsonb)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'authenticated can directly execute finalize_auth_account_deletion';
+  END IF;
+
+  IF has_function_privilege('authenticated', 'public.record_auth_account_deletion_failure(bigint, uuid, text, bigint)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'authenticated can directly execute record_auth_account_deletion_failure';
+  END IF;
+
+  IF NOT has_function_privilege('service_role', 'public.finalize_auth_account_deletion(bigint, uuid, bigint, jsonb)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'service_role cannot execute finalize_auth_account_deletion';
+  END IF;
+
+  IF NOT has_function_privilege('service_role', 'public.record_auth_account_deletion_failure(bigint, uuid, text, bigint)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'service_role cannot execute record_auth_account_deletion_failure';
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  f auth_account_deletion_test_fixtures%ROWTYPE;
+  v_role_count_before integer;
+  v_success_audit_count integer;
+BEGIN
+  SELECT * INTO f FROM auth_account_deletion_test_fixtures LIMIT 1;
+
+  IF f.ordinary_target_user_id IS NULL THEN
+    RAISE NOTICE 'Skipping fixture-dependent finalization checks; populate auth_account_deletion_test_fixtures to enable them.';
+    RETURN;
+  END IF;
+
+  SELECT count(*) INTO v_role_count_before FROM public.user_roles WHERE user_id = f.ordinary_target_user_id;
+
+  UPDATE public.users
+  SET auth_user_id = NULL,
+      is_active = true
+  WHERE id = f.ordinary_target_user_id;
+
+  PERFORM public.finalize_auth_account_deletion(
+    f.ordinary_target_user_id,
+    f.ordinary_auth_user_id,
+    f.developer_actor_user_id,
+    jsonb_build_object('id', f.ordinary_target_user_id, 'auth_user_id', f.ordinary_auth_user_id)
+  );
+
+  IF NOT EXISTS (SELECT 1 FROM public.users WHERE id = f.ordinary_target_user_id) THEN
+    RAISE EXCEPTION 'public.users row was not preserved after finalization';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM public.users WHERE id = f.ordinary_target_user_id AND auth_user_id IS NOT NULL) THEN
+    RAISE EXCEPTION 'auth_user_id was not cleared after finalization';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.users WHERE id = f.ordinary_target_user_id AND is_active IS FALSE) THEN
+    RAISE EXCEPTION 'is_active was not set false after finalization';
+  END IF;
+
+  IF (SELECT count(*) FROM public.user_roles WHERE user_id = f.ordinary_target_user_id) <> v_role_count_before THEN
+    RAISE EXCEPTION 'public.user_roles rows changed during finalization';
+  END IF;
+
+  PERFORM public.finalize_auth_account_deletion(
+    f.ordinary_target_user_id,
+    f.ordinary_auth_user_id,
+    f.developer_actor_user_id,
+    jsonb_build_object('id', f.ordinary_target_user_id, 'auth_user_id', f.ordinary_auth_user_id)
+  );
+
+  SELECT count(*)
+  INTO v_success_audit_count
+  FROM public.audit_logs
+  WHERE entity_name = 'users'
+    AND entity_id = f.ordinary_target_user_id
+    AND action = 'AUTH_LOGIN_ACCOUNT_DELETED'
+    AND metadata->>'auth_user_id' = f.ordinary_auth_user_id::text;
+
+  IF v_success_audit_count <> 1 THEN
+    RAISE EXCEPTION 'Repeated finalization created duplicate or missing success audit entries: %', v_success_audit_count;
+  END IF;
+
+  IF f.different_auth_user_id IS NOT NULL THEN
+    UPDATE public.users
+    SET auth_user_id = f.different_auth_user_id,
+        is_active = true
+    WHERE id = f.ordinary_target_user_id;
+
+    BEGIN
+      PERFORM public.finalize_auth_account_deletion(
+        f.ordinary_target_user_id,
+        f.ordinary_auth_user_id,
+        f.developer_actor_user_id,
+        jsonb_build_object('id', f.ordinary_target_user_id, 'auth_user_id', f.ordinary_auth_user_id)
+      );
+      RAISE EXCEPTION 'Expected controlled finalization conflict for different non-null auth UUID';
+    EXCEPTION WHEN check_violation THEN
+      NULL;
+    END;
+  END IF;
+END $$;
+
+DO $$
+DECLARE
+  f auth_account_deletion_test_fixtures%ROWTYPE;
+BEGIN
+  SELECT * INTO f FROM auth_account_deletion_test_fixtures LIMIT 1;
+
+  IF f.chief_auth_user_id IS NOT NULL AND f.developer_target_user_id IS NOT NULL THEN
+    PERFORM set_config('request.jwt.claim.sub', f.chief_auth_user_id::text, true);
+    BEGIN
+      PERFORM public.prepare_auth_account_deletion(f.developer_target_user_id);
+      RAISE EXCEPTION 'Expected CHIEF to be unable to prepare deletion for a DEVELOPER target, including multi-role targets';
+    EXCEPTION WHEN insufficient_privilege THEN
+      NULL;
+    END;
+  ELSE
+    RAISE NOTICE 'Skipping CHIEF-versus-DEVELOPER prepare check; provide chief_auth_user_id and developer_target_user_id fixtures.';
+  END IF;
+
+  IF f.self_auth_user_id IS NOT NULL AND f.self_app_user_id IS NOT NULL THEN
+    PERFORM set_config('request.jwt.claim.sub', f.self_auth_user_id::text, true);
+    BEGIN
+      PERFORM public.prepare_auth_account_deletion(f.self_app_user_id);
+      RAISE EXCEPTION 'Expected self-deletion prepare to fail';
+    EXCEPTION WHEN check_violation THEN
+      NULL;
+    END;
+  ELSE
+    RAISE NOTICE 'Skipping self-deletion prepare check; provide self_auth_user_id and self_app_user_id fixtures.';
+  END IF;
+
+  IF f.final_developer_auth_user_id IS NOT NULL AND f.final_developer_app_user_id IS NOT NULL THEN
+    PERFORM set_config('request.jwt.claim.sub', f.final_developer_auth_user_id::text, true);
+    BEGIN
+      PERFORM public.prepare_auth_account_deletion(f.final_developer_app_user_id);
+      RAISE EXCEPTION 'Expected final active Developer deletion prepare to fail';
+    EXCEPTION WHEN check_violation THEN
+      NULL;
+    END;
+  ELSE
+    RAISE NOTICE 'Skipping final active Developer check; provide final Developer fixtures.';
+  END IF;
+END $$;
+
+ROLLBACK;
