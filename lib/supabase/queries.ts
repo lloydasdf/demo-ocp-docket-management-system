@@ -3167,6 +3167,25 @@ export async function addAddressType(input: { displayLabel: string; code?: strin
 }
 
 export type DatabaseUserSummary = Pick<TableRow<"users">, "email" | "id">;
+export type CurrentAppRoleCode = "DEVELOPER" | "CHIEF" | "ADMIN" | "PROSECUTOR" | "STAFF" | string;
+
+export async function getCurrentAppRoleCodes(): Promise<SupabaseQueryResult<CurrentAppRoleCode[]>> {
+  return runSupabaseQuery("getCurrentAppRoleCodes", "v_ref_users" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("current_app_role_codes" as never);
+    return { data: (data ?? []) as CurrentAppRoleCode[], error };
+  }, []);
+}
+
+export async function canCurrentUserViewDocketQuickDetails(): Promise<SupabaseQueryResult<boolean>> {
+  const rolesResult = await getCurrentAppRoleCodes();
+
+  if (rolesResult.error) {
+    return { data: null, error: rolesResult.error };
+  }
+
+  return ok(rolesResult.data.some((roleCode) => ["DEVELOPER", "CHIEF", "ADMIN"].includes(roleCode.toUpperCase())));
+}
 
 async function getCurrentDatabaseUserRecord() {
   const supabase = await getSupabaseBrowserClient();

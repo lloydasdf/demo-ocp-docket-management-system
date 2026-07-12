@@ -21,6 +21,7 @@ import { ExportCasesDialog } from '@/components/cases/export-cases-dialog';
 import {
   getDocketCaseLabelsForCases,
   getDocketParticipantsForCases,
+  canCurrentUserViewDocketQuickDetails,
   getDocketQuickDetailsForCases,
   getDocketShellDisplay,
   type CasesDisplayRecord,
@@ -484,6 +485,18 @@ export default function CasesPage() {
       const labeledCases = mergeLabelsIntoCases(participantCases, labelsResult.data);
       setCases(labeledCases);
       cacheCasesPageState(labeledCases);
+
+      const canViewQuickDetailsResult = await canCurrentUserViewDocketQuickDetails();
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (canViewQuickDetailsResult.error || !canViewQuickDetailsResult.data) {
+        setIsLoadingAllCases(false);
+        cacheCasesPageState(labeledCases, { hasAllCases: true });
+        return;
+      }
 
       const quickDetailsResult = await getDocketQuickDetailsForCases(caseIds);
 
