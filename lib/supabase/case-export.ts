@@ -3,6 +3,13 @@ import type { RelationName, SupabaseQueryError, SupabaseQueryResult } from '@/li
 
 export type CaseExcelExportRow = {
   case_id: number;
+  docket_type_id: number | null;
+  docket_type_prefix: string | null;
+  docket_type_label: string | null;
+  docket_type_sort_order: number | null;
+  docket_year: number | null;
+  docket_month_code: string | null;
+  docket_number: number | null;
   docket_no: string;
   complainants: string | null;
   complainant_attributes: string | null;

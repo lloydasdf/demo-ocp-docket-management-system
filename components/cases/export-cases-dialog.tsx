@@ -68,7 +68,11 @@ export function ExportCasesDialog({ availableYears, disabled }: { availableYears
         return;
       }
 
-      await downloadCasesWorkbook(result.data, { yearLabel, docketTypeLabel });
+      await downloadCasesWorkbook(result.data, {
+        yearLabel,
+        docketTypeLabel,
+        docketTypeId: selectedDocketType === ALL_TYPES ? null : Number(selectedDocketType),
+      });
       toast.success('Excel export downloaded.');
       setOpen(false);
     } catch (error) {
@@ -111,6 +115,7 @@ export function ExportCasesDialog({ availableYears, disabled }: { availableYears
                 {docketTypes.map((type) => <SelectItem key={type.id} value={String(type.id)}>{type.prefix} — {type.displayLabel}</SelectItem>)}
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">Selecting All docket types creates one worksheet for each docket type.</p>
           </div>
           {docketTypesError ? <Alert variant="destructive"><AlertDescription>{docketTypesError}</AlertDescription></Alert> : null}
           {exportError ? <Alert variant="destructive"><AlertDescription>{exportError}</AlertDescription></Alert> : null}

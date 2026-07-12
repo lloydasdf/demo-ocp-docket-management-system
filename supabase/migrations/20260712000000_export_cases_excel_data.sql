@@ -1,9 +1,18 @@
+DROP FUNCTION IF EXISTS public.export_cases_excel_data(integer, bigint);
+
 CREATE OR REPLACE FUNCTION public.export_cases_excel_data(
   p_docket_year integer DEFAULT NULL,
   p_docket_type_id bigint DEFAULT NULL
 )
 RETURNS TABLE (
   case_id bigint,
+  docket_type_id bigint,
+  docket_type_prefix text,
+  docket_type_label text,
+  docket_type_sort_order integer,
+  docket_year integer,
+  docket_month_code text,
+  docket_number integer,
   docket_no text,
   complainants text,
   complainant_attributes text,
@@ -36,6 +45,9 @@ WITH filtered_cases AS (
   SELECT
     c.id,
     c.docket_type_id,
+    dt.prefix AS docket_type_prefix,
+    dt.name AS docket_type_label,
+    dt.sort_order AS docket_type_sort_order,
     c.docket_year,
     c.docket_number,
     c.docket_month_code,
@@ -276,6 +288,13 @@ note_export AS (
 )
 SELECT
   fc.id,
+  fc.docket_type_id,
+  fc.docket_type_prefix,
+  fc.docket_type_label,
+  fc.docket_type_sort_order,
+  fc.docket_year,
+  fc.docket_month_code,
+  fc.docket_number,
   fc.docket_no,
   pe.complainants,
   pe.complainant_attributes,
