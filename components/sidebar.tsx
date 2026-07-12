@@ -12,37 +12,51 @@ import {
   PanelLeftOpen,
   LogOut,
   Users,
+  BarChart3,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { useCurrentUserRole } from '@/hooks/use-current-user-role';
+import { getNavigationForRole } from '@/lib/auth/ui-permissions';
 
 const SIDEBAR_AUTO_COLLAPSE_QUERY = '(max-width: 1024px)';
 const SIDEBAR_HIDE_QUERY = '(max-width: 768px)';
 
 const navigation = [
   {
+    key: 'new-docket' as const,
     name: 'New Docket Entry',
     href: '/new-docket',
     icon: FilePlus,
     description: 'Create a new docket record',
   },
   {
+    key: 'cases' as const,
     name: 'Cases',
     href: '/cases',
     icon: FileText,
     description: 'View case information',
   },
   {
+    key: 'clearance-search' as const,
     name: 'Clearance Search',
     href: '/clearance-search',
     icon: Search,
     description: 'Search clearance records',
   },
   {
+    key: 'user-management' as const,
     name: 'User Management',
     href: '/user-management',
     icon: Users,
     description: 'Manage application users and roles',
+  },
+  {
+    key: 'admin-reports' as const,
+    name: 'Admin Reports',
+    href: '/admin-reports',
+    icon: BarChart3,
+    description: 'View administrative reports',
   },
 ];
 
@@ -76,6 +90,7 @@ export function Sidebar() {
   const [isCompactOpen, setIsCompactOpen] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const { role, isLoading: isRoleLoading, error: roleError } = useCurrentUserRole(Boolean(user));
 
   useEffect(() => {
     let isMounted = true;
@@ -126,6 +141,12 @@ export function Sidebar() {
   }, [pathname, router]);
 
   useEffect(() => {
+    if (roleError) {
+      console.error('Unable to resolve application role for sidebar navigation.', roleError);
+    }
+  }, [roleError]);
+
+  useEffect(() => {
     const collapseQuery = window.matchMedia(SIDEBAR_AUTO_COLLAPSE_QUERY);
     const hideQuery = window.matchMedia(SIDEBAR_HIDE_QUERY);
 
@@ -152,6 +173,7 @@ export function Sidebar() {
   const isIconOnly = !isCompactScreen && isCollapsed;
   const ToggleIcon = isCompactScreen || !isCollapsed ? PanelLeftClose : PanelLeftOpen;
   const toggleLabel = isCompactScreen ? 'Hide sidebar' : isCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  const visibleNavigation = useMemo(() => getNavigationForRole(roleError ? null : role, navigation), [role, roleError]);
 
   function handleToggleSidebar() {
     if (isCompactScreen) {
@@ -233,7 +255,12 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className={cn('flex-1 overflow-y-auto p-4 space-y-1', isIconOnly && 'px-3')}>
-        {navigation.map((item) => {
+        {isRoleLoading ? (
+          <p className={cn('px-4 py-3 text-sm text-sidebar-foreground/70', isIconOnly && 'sr-only')}>Loading navigation…</p>
+        ) : roleError ? (
+          <p className={cn('px-4 py-3 text-xs text-sidebar-foreground/70', isIconOnly && 'sr-only')}>Navigation unavailable</p>
+        ) : null}
+        {!isRoleLoading && !roleError ? visibleNavigation.map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.href || (item.href === '/cases' && pathname.startsWith('/cases/'));
 
@@ -260,7 +287,7 @@ export function Sidebar() {
               {!isIconOnly ? <span>{item.name}</span> : null}
             </Link>
           );
-        })}
+        }) : null}
       </nav>
 
       {/* Footer */}

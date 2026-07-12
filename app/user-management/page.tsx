@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { RoleRouteGuard } from '@/components/auth/role-route-guard';
 import { Sidebar } from '@/components/sidebar';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -176,7 +177,9 @@ export default function UserManagementPage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <RoleRouteGuard route="/user-management">
+      <>
+        <div className="flex min-h-screen bg-background">
       <Sidebar />
       <main className="min-w-0 flex-1 overflow-auto p-6">
         <div className="mx-auto max-w-7xl space-y-6">
@@ -306,6 +309,8 @@ export default function UserManagementPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+        </div>
+      </>
+    </RoleRouteGuard>
   );
 }
