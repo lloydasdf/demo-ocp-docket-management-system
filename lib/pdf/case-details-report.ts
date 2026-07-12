@@ -208,9 +208,12 @@ export async function generateCaseDetailsReportPdf(
     head: [['Name', 'Details']],
     body: partyRows.length ? partyRows : [['Parties', 'No parties recorded.']],
     theme: 'grid', showHead: 'everyPage',
-    styles: { fontSize: 7.5, cellPadding: 4, overflow: 'linebreak', valign: 'top' },
+    styles: { fontSize: 7.5, cellPadding: 4, halign: 'left', overflow: 'linebreak', valign: 'top' },
     headStyles: { fillColor: [31, 41, 55], fontSize: 7.5 },
-    columnStyles: { 0: { cellWidth: 120, fontStyle: 'bold' }, 1: { cellWidth: usableWidth - 120 } },
+    columnStyles: {
+      0: { cellWidth: 120, fontStyle: 'bold', halign: 'left' },
+      1: { cellWidth: usableWidth - 120, halign: 'left', overflow: 'linebreak' },
+    },
     margin: { left: margin, right: margin, bottom: 44 },
     rowPageBreak: 'auto',
   });
