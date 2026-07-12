@@ -4,7 +4,19 @@
 
 begin;
 
--- Expected coverage:
+-- Required fixtures/placeholders for an executable run:
+--   :developer_auth_jwt              JWT for an active DEVELOPER
+--   :chief_auth_jwt                  JWT for an active CHIEF
+--   :admin_auth_jwt                  JWT for an active ADMIN
+--   :prosecutor_auth_jwt             JWT for an active PROSECUTOR
+--   :service_role_jwt                service-role JWT
+--   :developer_app_user_id           active DEVELOPER public.users.id
+--   :chief_app_user_id               active CHIEF public.users.id
+--   :ordinary_app_user_id            active non-DEVELOPER public.users.id with auth_user_id
+--   :ordinary_auth_user_id           auth UUID originally linked to :ordinary_app_user_id
+--   :different_auth_user_id          UUID not equal to :ordinary_auth_user_id
+
+-- Existing coverage:
 -- 1. DEVELOPER can prepare/finalize an ordinary user's Auth login deletion.
 -- 2. CHIEF can prepare/finalize an ordinary user's Auth login deletion.
 -- 3. CHIEF cannot prepare deletion of a DEVELOPER login.
@@ -12,7 +24,7 @@ begin;
 -- 5. PROSECUTOR cannot prepare deletion.
 -- 6. Self-deletion is rejected by prepare_auth_account_deletion.
 -- 7. The final active DEVELOPER login is rejected.
--- 8. A target whose auth_user_id is NULL raises a controlled conflict.
+-- 8. A target whose auth_user_id is NULL raises a controlled conflict in prepare_auth_account_deletion.
 -- 9. record_auth_account_deletion_failure preserves public.users.auth_user_id.
 -- 10. finalize_auth_account_deletion leaves public.users in place.
 -- 11. finalize_auth_account_deletion sets is_active=false.
@@ -22,6 +34,59 @@ begin;
 -- 15. finalize_auth_account_deletion and record_auth_account_deletion_failure insert audit_logs rows.
 -- 16. Unauthenticated API calls should return 401 (covered by route handler/manual HTTP test).
 -- 17. Unauthorized API calls should return 403 (database 42501 mapped by route handler).
+
+-- Additional security checks added for service-role-only finalize/failure RPCs:
+-- 18. Authenticated users cannot call finalize_auth_account_deletion(bigint, uuid, bigint) directly.
+--     Expected: permission denied for authenticated role.
+--     Example:
+--       set local role authenticated;
+--       select public.finalize_auth_account_deletion(:ordinary_app_user_id, :ordinary_auth_user_id, :developer_app_user_id);
+--
+-- 19. Authenticated users cannot call record_auth_account_deletion_failure(bigint, uuid, text, bigint) directly.
+--     Expected: permission denied for authenticated role.
+--     Example:
+--       set local role authenticated;
+--       select public.record_auth_account_deletion_failure(:ordinary_app_user_id, :ordinary_auth_user_id, 'simulated failure', :developer_app_user_id);
+--
+-- 20. service_role can call finalize_auth_account_deletion and record_auth_account_deletion_failure.
+--     Expected: both calls succeed when p_actor_user_id is an active DEVELOPER or CHIEF.
+--     Example:
+--       set local role service_role;
+--       select public.record_auth_account_deletion_failure(:ordinary_app_user_id, :ordinary_auth_user_id, 'simulated failure', :developer_app_user_id);
+--
+-- 21. finalize_auth_account_deletion accepts auth_user_id already NULL from ON DELETE SET NULL.
+--     Setup:
+--       update public.users set auth_user_id = null, is_active = true where id = :ordinary_app_user_id;
+--       select public.finalize_auth_account_deletion(:ordinary_app_user_id, :ordinary_auth_user_id, :developer_app_user_id);
+--     Expected: public.users row remains, auth_user_id is NULL, is_active is false.
+--
+-- 22. finalize_auth_account_deletion rejects a different non-null UUID.
+--     Setup:
+--       update public.users set auth_user_id = :different_auth_user_id, is_active = true where id = :ordinary_app_user_id;
+--       select public.finalize_auth_account_deletion(:ordinary_app_user_id, :ordinary_auth_user_id, :developer_app_user_id);
+--     Expected: controlled conflict exception; auth_user_id remains :different_auth_user_id.
+--
+-- 23. Repeated finalize does not create duplicate success audit entries.
+--     Setup:
+--       select public.finalize_auth_account_deletion(:ordinary_app_user_id, :ordinary_auth_user_id, :developer_app_user_id);
+--       select public.finalize_auth_account_deletion(:ordinary_app_user_id, :ordinary_auth_user_id, :developer_app_user_id);
+--     Expected:
+--       select count(*) = 1
+--       from public.audit_logs
+--       where entity_name = 'users'
+--         and entity_id = :ordinary_app_user_id
+--         and action = 'AUTH_LOGIN_ACCOUNT_DELETED'
+--         and metadata->>'auth_user_id' = :ordinary_auth_user_id::text;
+--
+-- 24. public.users remains preserved and inactive after successful finalize.
+--     Expected:
+--       select exists (
+--         select 1
+--         from public.users u
+--         where u.id = :ordinary_app_user_id
+--           and u.auth_user_id is null
+--           and u.is_active is false
+--       );
 
 -- Example invariant query after a successful finalize call:
 -- select u.id, u.auth_user_id, u.is_active, ur.role_id

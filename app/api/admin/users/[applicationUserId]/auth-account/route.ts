@@ -49,28 +49,53 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
   if (prepareError) return json(statusForPostgrestError(prepareError), prepareError.code ?? 'prepare_failed', prepareError.message ?? 'Unable to prepare auth account deletion.');
 
   const deletion = Array.isArray(prepared) ? prepared[0] : prepared;
-  const authUserId = (deletion as { auth_user_id?: string | null } | null)?.auth_user_id;
+  const preparedDeletion = deletion as { auth_user_id?: string | null; actor_user_id?: number | string | null } | null;
+  const authUserId = preparedDeletion?.auth_user_id;
+  const actorUserId = preparedDeletion?.actor_user_id;
   if (!authUserId) return json(409, 'auth_account_already_deleted', 'The target user does not have an active login account.');
+  if (!actorUserId) return json(500, 'prepare_failed', 'Unable to resolve the authenticated application user.');
 
-  const admin = getSupabaseAdminClient();
+  let admin;
+  try {
+    admin = getSupabaseAdminClient();
+  } catch (error) {
+    console.error('Supabase admin client configuration error', error);
+    return json(500, 'server_config_error', 'Supabase admin client is not configured.');
+  }
+
   const { error: deleteError } = await admin.auth.admin.deleteUser(authUserId);
 
   if (deleteError) {
     const sanitized = sanitizeErrorMessage(deleteError.message || 'Supabase Auth deletion failed.');
-    await supabase.rpc('record_auth_account_deletion_failure' as never, {
+    const { error: auditError } = await admin.rpc('record_auth_account_deletion_failure' as never, {
       p_target_user_id: targetUserId,
       p_expected_auth_user_id: authUserId,
       p_error_message: sanitized,
+      p_actor_user_id: actorUserId,
     } as never);
-    return json(500, 'auth_delete_failed', 'Supabase Auth account deletion failed. The application user was not detached.');
+    if (auditError) {
+      console.error('Failed to audit Supabase Auth account deletion failure', auditError);
+    }
+    return NextResponse.json({ error: { code: 'auth_delete_failed', message: sanitized } }, { status: 500 });
   }
 
-  const { error: finalizeError } = await supabase.rpc('finalize_auth_account_deletion' as never, {
+  const finalizeArgs = {
     p_target_user_id: targetUserId,
     p_expected_auth_user_id: authUserId,
-  } as never);
+    p_actor_user_id: actorUserId,
+  } as never;
 
-  if (finalizeError) return json(statusForPostgrestError(finalizeError), finalizeError.code ?? 'finalize_failed', finalizeError.message ?? 'Auth account was deleted, but application user finalization failed.');
+  const { error: finalizeError } = await admin.rpc('finalize_auth_account_deletion' as never, finalizeArgs);
+
+  if (finalizeError) {
+    console.error('Auth account was deleted but database finalization failed; retrying once', finalizeError);
+    const { error: retryFinalizeError } = await admin.rpc('finalize_auth_account_deletion' as never, finalizeArgs);
+
+    if (retryFinalizeError) {
+      console.error('Auth account was deleted but database finalization still failed after retry', retryFinalizeError);
+      return json(500, 'finalize_repair_required', 'The Auth login was deleted, but database finalization needs repair.');
+    }
+  }
 
   return NextResponse.json({ data: { application_user_id: targetUserId, login_deleted: true } });
 }
