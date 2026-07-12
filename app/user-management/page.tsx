@@ -97,7 +97,7 @@ export default function UserManagementPage() {
     if (userResult.error || roleResult.error) {
       setMessage({ type: 'error', text: userResult.error?.message ?? roleResult.error?.message ?? 'Unable to load user management data.' });
     } else {
-      setUsers(userResult.data ?? []);
+      setUsers((userResult.data ?? []).filter((user) => user.auth_user_id !== null));
       setRoles(roleResult.data ?? []);
     }
 
@@ -183,7 +183,7 @@ export default function UserManagementPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h1 className="text-3xl font-bold tracking-tight">User Management</h1>
-              <p className="text-muted-foreground">View users, assign roles, block access, and delete Supabase login accounts while preserving application identities.</p>
+              <p className="text-muted-foreground">View users with active Supabase Auth accounts, assign roles, block access, and delete login accounts while preserving application identities.</p>
             </div>
             <Button variant="outline" onClick={loadData} disabled={isLoading || isSaving}>
               <RefreshCw className="mr-2 h-4 w-4" />
@@ -201,7 +201,7 @@ export default function UserManagementPage() {
           <Card>
             <CardHeader>
               <CardTitle>Application users</CardTitle>
-              <CardDescription>Application identities stay in place; login deletion is performed through a protected server route.</CardDescription>
+              <CardDescription>Only users backed by Supabase Auth accounts are listed. Login deletion is performed through a protected server route and preserves the application identity.</CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -228,7 +228,6 @@ export default function UserManagementPage() {
                       <TableCell>
                         <div className="flex flex-col gap-1">
                           <Badge variant={user.is_active ? 'secondary' : 'destructive'}>{user.is_active ? 'Active' : 'Blocked'}</Badge>
-                          {user.auth_user_id === null ? <Badge variant="outline">Login deleted</Badge> : null}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -257,14 +256,10 @@ export default function UserManagementPage() {
                               <ShieldAlert className="mr-2 h-4 w-4" />
                               {user.is_active ? 'Block' : 'Unblock'}
                             </Button>
-                            {user.auth_user_id === null ? (
-                              <span className="text-sm text-muted-foreground">Login deleted</span>
-                            ) : (
-                              <Button size="sm" variant="destructive" onClick={() => setPendingAction({ type: 'delete-login', user })} disabled={isSaving}>
-                                <Trash2 className="mr-2 h-4 w-4" />
-                                Delete Login Account
-                              </Button>
-                            )}
+                            <Button size="sm" variant="destructive" onClick={() => setPendingAction({ type: 'delete-login', user })} disabled={isSaving}>
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete Login Account
+                            </Button>
                           </>
                         )}
                       </TableCell>
