@@ -58,6 +58,40 @@ function localDateString() {
   return `${year}-${month}-${day}`;
 }
 
+function normalizedText(value: string | null | undefined) {
+  const normalized = value?.trim();
+  return normalized ? normalized : '';
+}
+
+function normalizedNumber(value: number | null | undefined) {
+  return Number.isFinite(value) ? value : null;
+}
+
+function inferDocketTypePrefix(docketNo: string | null | undefined) {
+  const parts = normalizedText(docketNo).split('-').map((part) => part.trim()).filter(Boolean);
+  const preferredPart = parts.find((part) => PREFERRED_DOCKET_TYPE_ORDER.includes(part.toUpperCase()));
+  if (preferredPart) return preferredPart;
+  const alphaParts = parts.filter((part) => /[A-Za-z]/.test(part));
+  if (alphaParts.length > 1 && /^OCP$/i.test(alphaParts[0])) return alphaParts[1];
+  return alphaParts[0] ?? '';
+}
+
+function normalizeExportRow(row: CaseExcelExportRow): CaseExcelExportRow {
+  const docketTypeId = normalizedNumber(row.docket_type_id);
+  const explicitPrefix = normalizedText(row.docket_type_prefix);
+
+  return {
+    ...row,
+    docket_type_id: docketTypeId,
+    docket_type_prefix: explicitPrefix || null,
+    docket_type_label: normalizedText(row.docket_type_label) || null,
+    docket_type_sort_order: normalizedNumber(row.docket_type_sort_order),
+    docket_year: normalizedNumber(row.docket_year),
+    docket_month_code: normalizedText(row.docket_month_code) || null,
+    docket_number: normalizedNumber(row.docket_number),
+  };
+}
+
 function docketSortValue(row: CaseExcelExportRow) {
   return {
     year: row.docket_year ?? Number.MAX_SAFE_INTEGER,
@@ -97,8 +131,19 @@ export function sanitizeWorksheetName(requestedName: string, existingNames: Set<
 function groupRowsByDocketType(rows: CaseExcelExportRow[]) {
   const groups = new Map<string, DocketTypeGroup>();
 
-  for (const row of rows) {
-    const groupKey = row.docket_type_id === null ? `unknown:${row.docket_type_prefix ?? row.docket_type_label ?? 'other'}` : `id:${row.docket_type_id}`;
+  for (const rawRow of rows) {
+    const row = normalizeExportRow(rawRow);
+    const inferredPrefix = inferDocketTypePrefix(row.docket_no);
+    const displayPrefix = row.docket_type_prefix || inferredPrefix;
+    const groupKey = row.docket_type_id !== null
+      ? `id:${row.docket_type_id}`
+      : row.docket_type_prefix
+        ? `prefix:${row.docket_type_prefix.toLowerCase()}`
+        : row.docket_type_label
+          ? `label:${row.docket_type_label.toLowerCase()}`
+          : inferredPrefix
+            ? `inferred-prefix:${inferredPrefix.toLowerCase()}`
+            : 'other';
     const existingGroup = groups.get(groupKey);
 
     if (existingGroup) {
@@ -108,8 +153,8 @@ function groupRowsByDocketType(rows: CaseExcelExportRow[]) {
 
     groups.set(groupKey, {
       id: row.docket_type_id,
-      prefix: row.docket_type_prefix?.trim() || '',
-      label: row.docket_type_label?.trim() || '',
+      prefix: displayPrefix,
+      label: row.docket_type_label ?? '',
       sortOrder: row.docket_type_sort_order,
       rows: [row],
     });
@@ -138,7 +183,10 @@ function sortDocketTypeGroups(left: DocketTypeGroup, right: DocketTypeGroup) {
 }
 
 function preferredWorksheetName(group: DocketTypeGroup) {
-  return group.prefix || group.label || (group.id === null ? 'Other' : `Docket Type ${group.id}`);
+  if (group.prefix) return group.prefix;
+  if (group.label) return group.label;
+  if (group.id !== null) return `Docket Type ${group.id}`;
+  return 'Other';
 }
 
 function addCasesWorksheet(params: { workbook: Workbook; sheetName: string; rows: CaseExcelExportRow[] }): Worksheet {
