@@ -18,6 +18,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ChevronDown, Printer, RefreshCw, X } from 'lucide-react';
 import { ExportCasesDialog } from '@/components/cases/export-cases-dialog';
+import { useCurrentUserRole } from '@/hooks/use-current-user-role';
+import { canExportCasesToExcel } from '@/lib/auth/ui-permissions';
 import {
   getDocketCaseLabelsForCases,
   getDocketParticipantsForCases,
@@ -424,6 +426,8 @@ export default function CasesPage() {
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const { role: currentRole, isLoading: isRoleLoading, error: roleError } = useCurrentUserRole();
+  const canShowExcelExport = !isRoleLoading && !roleError && canExportCasesToExcel(currentRole);
 
   useEffect(() => {
     let isMounted = true;
@@ -1143,10 +1147,12 @@ export default function CasesPage() {
                 <p className="text-muted-foreground mt-1">Browse all cases in the system</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <ExportCasesDialog
-                  availableYears={docketYearFilters.map((year) => Number(year)).filter((year) => Number.isFinite(year))}
-                  disabled={isLoading}
-                />
+                {canShowExcelExport ? (
+                  <ExportCasesDialog
+                    availableYears={docketYearFilters.map((year) => Number(year)).filter((year) => Number.isFinite(year))}
+                    disabled={isLoading}
+                  />
+                ) : null}
                 <Button
                   type="button"
                   variant="outline"

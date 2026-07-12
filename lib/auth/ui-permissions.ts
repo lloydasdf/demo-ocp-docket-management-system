@@ -53,3 +53,8 @@ export function canShowCaseManagementActions(role: string | null | undefined) {
   const normalizedRole = normalizeRoleCode(role);
   return Boolean(normalizedRole) && normalizedRole !== 'CHIEF';
 }
+
+export function canExportCasesToExcel(role: string | null | undefined) {
+  const normalizedRole = normalizeRoleCode(role);
+  return Boolean(normalizedRole) && normalizedRole !== 'PROSECUTOR';
+}
