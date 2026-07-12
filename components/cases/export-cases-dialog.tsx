@@ -8,9 +8,10 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getCasesExcelExport } from '@/lib/supabase/case-export';
+import { getCasesExcelExport, getCasesExportManifest } from '@/lib/supabase/case-export';
 import { getDocketTypes } from '@/lib/supabase/queries';
 import { downloadCasesWorkbook } from '@/lib/exports/cases-excel';
+import { validateExportCompleteness } from '@/lib/exports/export-validation';
 
 type DocketTypeOption = { id: number; prefix: string; displayLabel: string };
 
@@ -25,6 +26,7 @@ export function ExportCasesDialog({ availableYears, disabled }: { availableYears
   const [selectedDocketType, setSelectedDocketType] = useState(ALL_TYPES);
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exportProgress, setExportProgress] = useState<string | null>(null);
 
   const yearOptions = useMemo(() => [...availableYears].sort((left, right) => right - left), [availableYears]);
   const selectedDocketTypeOption = docketTypes.find((option) => String(option.id) === selectedDocketType);
@@ -52,26 +54,50 @@ export function ExportCasesDialog({ availableYears, disabled }: { availableYears
 
     setIsExporting(true);
     setExportError(null);
+    setExportProgress('Preparing export…');
+
+    const docketYear = selectedYear === ALL_YEARS ? null : Number(selectedYear);
+    const docketTypeId = selectedDocketType === ALL_TYPES ? null : Number(selectedDocketType);
 
     try {
+      setExportProgress('Loading manifest…');
+      const manifestResult = await getCasesExportManifest({ docketYear, docketTypeId });
+
+      if (manifestResult.error) {
+        throw new Error(manifestResult.error.message || 'Unable to load export manifest. Confirm the export migration has been applied.');
+      }
+
+      const expectedCaseCount = manifestResult.data.reduce((total, row) => total + Number(row.expected_case_count ?? 0), 0);
+      if (expectedCaseCount === 0) {
+        setExportError('No cases matched the selected year and docket type.');
+        return;
+      }
+
+      setExportProgress('Loading export page 1…');
       const result = await getCasesExcelExport({
-        docketYear: selectedYear === ALL_YEARS ? null : Number(selectedYear),
-        docketTypeId: selectedDocketType === ALL_TYPES ? null : Number(selectedDocketType),
+        docketYear,
+        docketTypeId,
+        onPageLoaded: (pageNumber, loadedCount) => {
+          setExportProgress(`Loading export page ${pageNumber}… ${loadedCount.toLocaleString()} of ${expectedCaseCount.toLocaleString()} cases loaded`);
+        },
       });
 
       if (result.error) {
         throw new Error(result.error.message || 'Unable to load export data. Confirm the export migration has been applied.');
       }
 
-      if (result.data.length === 0) {
-        setExportError('No cases matched the selected year and docket type.');
+      setExportProgress('Validating export…');
+      const validation = validateExportCompleteness(manifestResult.data, result.data);
+      if (!validation.valid) {
+        setExportError(validation.message);
         return;
       }
 
+      setExportProgress('Generating workbook…');
       await downloadCasesWorkbook(result.data, {
         yearLabel,
         docketTypeLabel,
-        docketTypeId: selectedDocketType === ALL_TYPES ? null : Number(selectedDocketType),
+        docketTypeId,
       });
       toast.success('Excel export downloaded.');
       setOpen(false);
@@ -79,6 +105,7 @@ export function ExportCasesDialog({ availableYears, disabled }: { availableYears
       setExportError(error instanceof Error ? error.message : 'Unable to prepare the Excel export.');
     } finally {
       setIsExporting(false);
+      setExportProgress(null);
     }
   }
 
@@ -118,7 +145,8 @@ export function ExportCasesDialog({ availableYears, disabled }: { availableYears
             <p className="text-xs text-muted-foreground">The workbook creates one worksheet for each docket type and year combination.</p>
           </div>
           {docketTypesError ? <Alert variant="destructive"><AlertDescription>{docketTypesError}</AlertDescription></Alert> : null}
-          {exportError ? <Alert variant="destructive"><AlertDescription>{exportError}</AlertDescription></Alert> : null}
+          {exportProgress ? <p className="text-sm text-muted-foreground">{exportProgress}</p> : null}
+          {exportError ? <Alert variant="destructive"><AlertDescription className="whitespace-pre-line">{exportError}</AlertDescription></Alert> : null}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={isExporting}>Cancel</Button>

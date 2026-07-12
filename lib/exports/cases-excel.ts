@@ -65,7 +65,7 @@ function normalizedText(value: string | null | undefined) {
 }
 
 function normalizedNumber(value: number | null | undefined) {
-  return Number.isFinite(value) ? value : null;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function inferDocketTypePrefix(docketNo: string | null | undefined) {
