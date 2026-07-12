@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ZZxgz8VkUNe2ETXfwo9Pf64nL1Wu9sXk1BVibtF4Zdw8kc0kJDEbS70DC9MKg5o
+\restrict 3PhLiScG4IUMOFGA9UHDNamRYc8ceG5gm8isuTDN9jrY3kXHOKiarCcOgpAkKVb
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 18.1
@@ -762,6 +762,60 @@ CREATE FUNCTION pgbouncer.get_auth(p_usename text) RETURNS TABLE(username text, 
 
 
 --
+-- Name: add_address_type(text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.add_address_type(p_display_label text, p_code text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_label text := NULLIF(btrim(coalesce(p_display_label,'')), '');
+  v_code text;
+  v_id bigint;
+  v_new jsonb;
+BEGIN
+  IF v_label IS NULL THEN RAISE EXCEPTION 'Address Type Label is required'; END IF;
+  v_code := public.generate_lookup_code(coalesce(NULLIF(btrim(p_code), ''), v_label), 'ADDRESS_TYPE');
+  IF EXISTS (SELECT 1 FROM public.address_types WHERE is_active AND (lower(code)=lower(v_code) OR lower(display_label)=lower(v_label))) THEN
+    RAISE EXCEPTION 'An active address type with this code or label already exists.';
+  END IF;
+  INSERT INTO public.address_types(code, display_label, is_active) VALUES (v_code, v_label, true) RETURNING id INTO v_id;
+  SELECT to_jsonb(r) INTO v_new FROM public.address_types r WHERE r.id = v_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,summary,metadata)
+  VALUES (p_user_id,'address_types',v_id,'CREATE_ADDRESS_TYPE',NULL,v_new,'Address type added.',jsonb_build_object('code',v_code,'display_label',v_label));
+  RETURN v_id;
+END;
+$$;
+
+
+--
+-- Name: add_case_classification(text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.add_case_classification(p_display_label text, p_description text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_label text := NULLIF(btrim(coalesce(p_display_label,'')), '');
+  v_id bigint;
+  v_new jsonb;
+BEGIN
+  IF v_label IS NULL THEN RAISE EXCEPTION 'Case Classification Label is required'; END IF;
+  IF EXISTS (SELECT 1 FROM public.case_classifications WHERE is_active AND lower(display_label)=lower(v_label)) THEN
+    RAISE EXCEPTION 'An active case classification with this label already exists.';
+  END IF;
+  INSERT INTO public.case_classifications(display_label, description, is_active) VALUES (v_label, NULLIF(btrim(p_description), ''), true) RETURNING id INTO v_id;
+  SELECT to_jsonb(r) INTO v_new FROM public.case_classifications r WHERE r.id = v_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,summary,metadata)
+  VALUES (p_user_id,'case_classifications',v_id,'CREATE_CASE_CLASSIFICATION',NULL,v_new,'Case classification added.',jsonb_build_object('display_label',v_label));
+  RETURN v_id;
+END;
+$$;
+
+
+--
 -- Name: add_case_stage(text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -794,6 +848,42 @@ $_$;
 
 
 --
+-- Name: add_court(text, text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.add_court(p_display_label text, p_code text DEFAULT NULL::text, p_court_type text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_name text := NULLIF(btrim(coalesce(p_display_label,'')), '');
+  v_code text;
+  v_court_type text := NULLIF(btrim(p_court_type), '');
+  v_id bigint;
+  v_new jsonb;
+BEGIN
+  IF v_name IS NULL THEN RAISE EXCEPTION 'Court Name is required'; END IF;
+  v_code := public.generate_lookup_code(coalesce(NULLIF(btrim(p_code), ''), v_name), 'COURT');
+  IF EXISTS (SELECT 1 FROM public.courts WHERE is_active AND lower(code)=lower(v_code)) THEN
+    RAISE EXCEPTION 'An active court with this code already exists.';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.courts WHERE is_active AND lower(name)=lower(v_name)) THEN
+    RAISE EXCEPTION 'An active court with this name already exists.';
+  END IF;
+
+  INSERT INTO public.courts(code, name, court_type, is_active)
+  VALUES (v_code, v_name, v_court_type, true)
+  RETURNING id INTO v_id;
+
+  SELECT to_jsonb(c) INTO v_new FROM public.courts c WHERE c.id = v_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,summary,metadata)
+  VALUES (p_user_id,'courts',v_id,'CREATE_COURT',NULL,v_new,'Court added.',jsonb_build_object('code',v_code,'name',v_name,'court_type',v_court_type));
+  RETURN v_id;
+END;
+$$;
+
+
+--
 -- Name: add_motion_resolution_recommendation(text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -815,6 +905,34 @@ BEGIN
   SELECT to_jsonb(r) INTO v_new FROM public.motion_resolution_recommendations r WHERE r.id = v_id;
   INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,summary,metadata)
   VALUES (p_user_id,'motion_resolution_recommendations',v_id,'CREATE_MOTION_RESOLUTION_RECOMMENDATION',v_old,v_new,'Motion resolution recommendation added.',jsonb_build_object('code',v_code,'display_label',v_label));
+  RETURN v_id;
+END;
+$$;
+
+
+--
+-- Name: add_participant_role(text, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.add_participant_role(p_display_label text, p_code text DEFAULT NULL::text, p_user_id bigint DEFAULT NULL::bigint) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_label text := NULLIF(btrim(coalesce(p_display_label,'')), '');
+  v_code text;
+  v_id bigint;
+  v_new jsonb;
+BEGIN
+  IF v_label IS NULL THEN RAISE EXCEPTION 'Participant Role Label is required'; END IF;
+  v_code := public.generate_lookup_code(coalesce(NULLIF(btrim(p_code), ''), v_label), 'PARTICIPANT_ROLE');
+  IF EXISTS (SELECT 1 FROM public.participant_roles WHERE is_active AND (lower(code)=lower(v_code) OR lower(display_label)=lower(v_label))) THEN
+    RAISE EXCEPTION 'An active participant role with this code or label already exists.';
+  END IF;
+  INSERT INTO public.participant_roles(code, display_label, is_active) VALUES (v_code, v_label, true) RETURNING id INTO v_id;
+  SELECT to_jsonb(r) INTO v_new FROM public.participant_roles r WHERE r.id = v_id;
+  INSERT INTO public.audit_logs(actor_user_id,entity_name,entity_id,action,old_data,new_data,summary,metadata)
+  VALUES (p_user_id,'participant_roles',v_id,'CREATE_PARTICIPANT_ROLE',NULL,v_new,'Participant role added.',jsonb_build_object('code',v_code,'display_label',v_label));
   RETURN v_id;
 END;
 $$;
@@ -912,6 +1030,58 @@ BEGIN
   CROSS JOIN LATERAL unnest(public.clearance_common_name_variants(base.token)) AS v(variant_token)
   WHERE base.source_column <> 'common_name_variant'
     AND variant_token <> base.token;
+END;
+$$;
+
+
+--
+-- Name: assign_user_management_role(bigint, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assign_user_management_role(p_user_id bigint, p_role_id bigint) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_actor_user_id bigint := public.current_app_user_id();
+  v_old jsonb;
+  v_new jsonb;
+  v_role record;
+BEGIN
+  IF NOT public.can_manage_users() THEN
+    RAISE EXCEPTION 'You are not authorized to manage users';
+  END IF;
+
+  SELECT * INTO v_role FROM public.roles WHERE id = p_role_id AND is_active = true;
+  IF v_role.id IS NULL THEN
+    RAISE EXCEPTION 'Selected role does not exist or is inactive';
+  END IF;
+
+  IF NOT public.can_assign_role(v_role.code) THEN
+    RAISE EXCEPTION 'You are not authorized to assign role %', v_role.code;
+  END IF;
+
+  SELECT to_jsonb(v.*) INTO v_old FROM public.v_user_management_users v WHERE v.id = p_user_id;
+  IF v_old IS NULL THEN
+    RAISE EXCEPTION 'User % does not exist', p_user_id;
+  END IF;
+
+  DELETE FROM public.user_roles WHERE user_id = p_user_id;
+  INSERT INTO public.user_roles(user_id, role_id) VALUES (p_user_id, p_role_id);
+
+  SELECT to_jsonb(v.*) INTO v_new FROM public.v_user_management_users v WHERE v.id = p_user_id;
+
+  INSERT INTO public.audit_logs(actor_user_id, entity_name, entity_id, action, old_data, new_data, summary, metadata)
+  VALUES (
+    v_actor_user_id,
+    'users',
+    p_user_id,
+    'USER_ROLE_CHANGED',
+    v_old,
+    v_new,
+    'User role changed.',
+    jsonb_build_object('role_id', p_role_id, 'role_code', v_role.code)
+  );
 END;
 $$;
 
@@ -1810,11 +1980,11 @@ CREATE FUNCTION public.create_new_docket_entry(p_payload jsonb) RETURNS jsonb
     AS $_$
 DECLARE
   v_auth_uid uuid := auth.uid(); v_user_id bigint; v_case_id bigint; v_item jsonb; v_sub jsonb; v_contact_id bigint; v_audit_metadata jsonb;
-  v_docket_type_id bigint := (p_payload->>'docketTypeId')::bigint; v_docket_year int := (p_payload->>'docketYear')::int; v_date_received date := (p_payload->>'dateReceived')::date; v_initial_status_id bigint := (p_payload->>'initialStatusId')::bigint;
+  v_docket_type_id bigint := (p_payload->>'docketTypeId')::bigint; v_docket_year int := (p_payload->>'docketYear')::int; v_date_received date := (p_payload->>'dateReceived')::date; v_time_received time without time zone := COALESCE(nullif(p_payload->>'timeReceived','')::time, CURRENT_TIME(0)); v_initial_status_id bigint := (p_payload->>'initialStatusId')::bigint;
   v_case_classification_id bigint := nullif(p_payload->>'caseClassificationId','')::bigint; v_region_code text := nullif(btrim(p_payload->>'regionCode'), ''); v_month_code text; v_docket_number int; v_display text; v_dt_prefix text;
   v_person_id bigint; v_org_id bigint; v_name text; v_cp_id bigint; v_address_id bigint; v_violation_id bigint; v_received_event_type_id bigint; v_raffled_event_type_id bigint; v_event_id bigint; v_status_history_id bigint; v_stage_history_id bigint; v_assignment_event_id bigint; v_assignment_id bigint;
   v_pending_status_id bigint; v_for_raffle_stage_id bigint; v_case_raffled_stage_id bigint; v_initial_stage_id bigint; v_status_date date := COALESCE(v_date_received, CURRENT_DATE);
-  v_assigned_prosecutor_id bigint := CASE WHEN COALESCE((p_payload->>'caseAlsoRaffled')::boolean,false) THEN nullif(p_payload->>'assignedProsecutorId','')::bigint ELSE NULL END; v_assignment_date date := v_date_received; v_assignment_remarks text := CASE WHEN p_payload ? 'assignmentRemarks' THEN nullif(btrim(p_payload->>'assignmentRemarks'),'') ELSE 'Assigned during manual docket creation' END;
+  v_assigned_prosecutor_id bigint := CASE WHEN COALESCE((p_payload->>'caseAlsoRaffled')::boolean,false) THEN nullif(p_payload->>'assignedProsecutorId','')::bigint ELSE NULL END; v_assignment_date date := COALESCE(nullif(p_payload->>'assignmentDate','')::date, v_date_received); v_assignment_time time without time zone := COALESCE(nullif(p_payload->>'assignmentTime','')::time, v_time_received); v_assignment_remarks text := CASE WHEN p_payload ? 'assignmentRemarks' THEN nullif(btrim(p_payload->>'assignmentRemarks'),'') ELSE 'Assigned during manual docket creation' END;
   v_case_note_text text := nullif(btrim(p_payload->>'notes'),'');
   v_case_received_description text := COALESCE(nullif(btrim(p_payload->>'caseReceivedDescription'),''), 'Case received on ' || to_char(v_date_received, 'FMMM/FMDD/YYYY'));
   v_seen_violation_ids bigint[] := '{}'; v_created_persons int := 0; v_reused_persons int := 0; v_created_addresses int := 0; v_reused_addresses int := 0; v_created_violations int := 0; v_reused_violations int := 0; v_participant_count int := 0; v_violation_count int := 0;
@@ -1893,11 +2063,11 @@ BEGIN
     INSERT INTO public.case_violations(case_id,violation_id,violation_order,raw_violation_text) VALUES (v_case_id,v_violation_id,COALESCE((v_item->>'violationOrder')::int,v_violation_count+1),nullif(btrim(v_item->>'rawViolationText'),'')); v_violation_count:=v_violation_count+1;
   END LOOP;
 
-  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_order,title,description,status_id,case_status_id,case_stage_id,source,source_table,created_by_user_id,updated_by_user_id) VALUES (v_case_id,v_received_event_type_id,v_status_date,1,'Case received',v_case_received_description,v_pending_status_id,v_pending_status_id,v_initial_stage_id,'MANUAL_ENTRY','case_status_history',v_user_id,v_user_id) RETURNING id INTO v_event_id;
+  INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,event_order,title,description,status_id,case_status_id,case_stage_id,source,source_table,created_by_user_id,updated_by_user_id) VALUES (v_case_id,v_received_event_type_id,v_status_date,v_time_received,1,'Case received',v_case_received_description,v_pending_status_id,v_pending_status_id,v_initial_stage_id,'MANUAL_ENTRY','case_status_history',v_user_id,v_user_id) RETURNING id INTO v_event_id;
   INSERT INTO public.case_status_history(case_id,from_status_id,to_status_id,changed_by_user_id,changed_at,status_date,remarks,case_event_id) VALUES (v_case_id,NULL,v_pending_status_id,v_user_id,now(),v_status_date,v_case_received_description,v_event_id) RETURNING id INTO v_status_history_id;
   INSERT INTO public.case_stage_history(case_id,from_stage_id,to_stage_id,changed_by_user_id,changed_at,stage_date,remarks,case_event_id) VALUES (v_case_id,NULL,v_initial_stage_id,v_user_id,now(),v_status_date,v_case_received_description,v_event_id) RETURNING id INTO v_stage_history_id;
   UPDATE public.case_events SET source_id = v_status_history_id WHERE id = v_event_id;
-  IF v_assigned_prosecutor_id IS NOT NULL THEN INSERT INTO public.case_assignments(case_id,prosecutor_id,assigned_by_user_id,assigned_at,remarks) VALUES (v_case_id,v_assigned_prosecutor_id,v_user_id,v_assignment_date::timestamp with time zone,v_assignment_remarks) RETURNING id INTO v_assignment_id; INSERT INTO public.case_events(case_id,event_type_id,event_date,event_order,title,description,status_id,case_status_id,case_stage_id,prosecutor_id,source,source_table,source_id,created_by_user_id,updated_by_user_id) VALUES (v_case_id,v_raffled_event_type_id,v_status_date,2,'Case raffled',v_assignment_remarks,v_pending_status_id,v_pending_status_id,v_case_raffled_stage_id,v_assigned_prosecutor_id,'MANUAL_ENTRY','case_assignments',v_assignment_id,v_user_id,v_user_id) RETURNING id INTO v_assignment_event_id; UPDATE public.case_assignments SET case_event_id = v_assignment_event_id WHERE id = v_assignment_id; END IF;
+  IF v_assigned_prosecutor_id IS NOT NULL THEN INSERT INTO public.case_assignments(case_id,prosecutor_id,assigned_by_user_id,assigned_at,remarks) VALUES (v_case_id,v_assigned_prosecutor_id,v_user_id,(v_assignment_date + v_assignment_time) AT TIME ZONE 'Asia/Manila',v_assignment_remarks) RETURNING id INTO v_assignment_id; INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,event_order,title,description,status_id,case_status_id,case_stage_id,prosecutor_id,source,source_table,source_id,created_by_user_id,updated_by_user_id) VALUES (v_case_id,v_raffled_event_type_id,v_assignment_date,v_assignment_time,2,'Case raffled',v_assignment_remarks,v_pending_status_id,v_pending_status_id,v_case_raffled_stage_id,v_assigned_prosecutor_id,'MANUAL_ENTRY','case_assignments',v_assignment_id,v_user_id,v_user_id) RETURNING id INTO v_assignment_event_id; UPDATE public.case_assignments SET case_event_id = v_assignment_event_id WHERE id = v_assignment_id; END IF;
 
   v_audit_metadata := jsonb_build_object(
     'payload', p_payload,
@@ -2272,6 +2442,28 @@ $_$;
 
 
 --
+-- Name: delete_auth_user_after_app_user_permanent_delete(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.delete_auth_user_after_app_user_permanent_delete() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'auth'
+    AS $$
+BEGIN
+  -- This trigger is only for permanent application-user deletion.
+  -- Normal User Management removal is a soft remove: it keeps public.users,
+  -- clears roles, sets is_active = false, and therefore does not fire this trigger.
+  IF OLD.auth_user_id IS NOT NULL THEN
+    DELETE FROM auth.users
+    WHERE id = OLD.auth_user_id;
+  END IF;
+
+  RETURN OLD;
+END;
+$$;
+
+
+--
 -- Name: edit_case_event(bigint, date, text, text, jsonb, text, bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2385,15 +2577,20 @@ BEGIN
     SELECT to_jsonb(ca) INTO v_old_source FROM public.case_assignments ca WHERE ca.id=v_source_id AND ca.case_event_id=p_case_event_id AND ca.is_voided=false FOR UPDATE;
     IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active assignment source record cannot be resolved'; END IF;
     SELECT id INTO v_latest_assignment_id FROM public.case_assignments WHERE case_id=v_event.case_id AND is_voided=false AND unassigned_at IS NULL ORDER BY assigned_at DESC NULLS LAST, id DESC LIMIT 1;
-    v_prosecutor := nullif(p_values->>'prosecutor_id','')::bigint;
-    v_staff := nullif(p_values->>'staff_id','')::bigint;
-    IF (v_prosecutor IS DISTINCT FROM (v_old_source->>'prosecutor_id')::bigint OR v_staff IS DISTINCT FROM nullif(v_old_source->>'staff_id','')::bigint) AND v_latest_assignment_id IS DISTINCT FROM v_source_id THEN
-      RAISE EXCEPTION 'Only the latest active assignment/reassignment may have assignment-defining values corrected';
-    END IF;
-    UPDATE public.case_assignments SET prosecutor_id=coalesce(v_prosecutor, prosecutor_id), staff_id=v_staff, assigned_at=(v_date + coalesce(v_time, assigned_at::time, '00:00'::time)) AT TIME ZONE 'Asia/Manila', remarks=v_remarks WHERE id=v_source_id;
+    UPDATE public.case_assignments SET assigned_at=(v_date + coalesce(v_time, assigned_at::time, '00:00'::time)) AT TIME ZONE 'Asia/Manila', remarks=v_remarks WHERE id=v_source_id;
     SELECT to_jsonb(ca) INTO v_new_source FROM public.case_assignments ca WHERE ca.id=v_source_id;
-    v_details := v_details || jsonb_build_object('prosecutor_id', coalesce(v_prosecutor,(v_old_source->>'prosecutor_id')::bigint),'staff_id',v_staff,'remarks',v_remarks);
-    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,prosecutor_id=coalesce(v_prosecutor,prosecutor_id),staff_id=v_staff,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+    v_details := v_details || jsonb_build_object('remarks',v_remarks);
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details,updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
+
+
+  ELSIF v_code = 'CASE_RECEIVED' THEN
+    IF v_source_table IS DISTINCT FROM 'case_status_history' OR v_source_id IS NULL THEN RAISE EXCEPTION 'Case Received source record cannot be resolved'; END IF;
+    SELECT to_jsonb(csh) INTO v_old_source FROM public.case_status_history csh WHERE csh.id=v_source_id AND csh.case_event_id=p_case_event_id FOR UPDATE;
+    IF v_old_source IS NULL THEN RAISE EXCEPTION 'Active Case Received status history source record cannot be resolved'; END IF;
+    UPDATE public.case_status_history SET status_date=v_date, remarks=v_remarks WHERE id=v_source_id;
+    UPDATE public.cases SET date_received=v_date, updated_by_user_id=p_user_id, updated_at=now() WHERE id=v_event.case_id;
+    SELECT to_jsonb(csh) INTO v_new_source FROM public.case_status_history csh WHERE csh.id=v_source_id;
+    UPDATE public.case_events SET event_date=v_date,event_time=v_time,description=v_remarks,details_jsonb=v_details || jsonb_build_object('date_received',v_date,'time_received',v_time,'remarks',v_remarks),updated_by_user_id=p_user_id,updated_at=now() WHERE id=p_case_event_id;
 
   ELSIF v_code = 'MOTION_RECEIVED' THEN
     IF v_source_table IS DISTINCT FROM 'case_motions' OR v_source_id IS NULL THEN RAISE EXCEPTION 'Motion source record cannot be resolved'; END IF;
@@ -2563,6 +2760,308 @@ $$;
 
 
 --
+-- Name: export_cases_excel_data(integer, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.export_cases_excel_data(p_docket_year integer DEFAULT NULL::integer, p_docket_type_id bigint DEFAULT NULL::bigint) RETURNS TABLE(case_id bigint, docket_type_id bigint, docket_type_prefix text, docket_type_label text, docket_type_sort_order integer, docket_year integer, docket_month_code text, docket_number integer, docket_no text, complainants text, complainant_attributes text, respondents text, respondent_attributes text, violations text, case_classification text, date_received date, current_status text, assigned_prosecutor text, court_filings_court text, court_dates_filed text, criminal_case_numbers text, charges_filed text, court_statuses text, motion_titles text, motion_filed_by text, motion_dates_received text, motion_statuses text, petition_dates_filed text, petition_filed_by text, petition_statuses text, case_notes text)
+    LANGUAGE sql
+    SET search_path TO 'public'
+    AS $$
+WITH filtered_cases AS (
+  SELECT
+    c.id,
+    c.docket_type_id,
+    dt.prefix AS docket_type_prefix,
+    dt.name AS docket_type_label,
+    dt.sort_order AS docket_type_sort_order,
+    c.docket_year,
+    c.docket_number,
+    c.docket_month_code,
+    c.date_received,
+    concat_ws(
+      '-',
+      dt.prefix,
+      c.docket_year::text,
+      NULLIF(c.docket_month_code, ''),
+      lpad(c.docket_number::text, 6, '0')
+    ) AS docket_no,
+    NULLIF(cc.display_label, '') AS classification,
+    cpd.current_status_raw,
+    cs.display_label AS current_status_label,
+    cs.code AS current_status_code
+  FROM public.cases c
+  JOIN public.docket_types dt ON dt.id = c.docket_type_id
+  LEFT JOIN public.case_classifications cc ON cc.id = c.case_classification_id
+  LEFT JOIN public.case_private_details cpd ON cpd.case_id = c.id
+  LEFT JOIN public.case_statuses cs ON cs.id = COALESCE(cpd.current_case_status_id, cpd.current_status_id)
+  WHERE (p_docket_year IS NULL OR c.docket_year = p_docket_year)
+    AND (p_docket_type_id IS NULL OR c.docket_type_id = p_docket_type_id)
+    AND COALESCE(c.is_archived, false) IS FALSE
+),
+participant_rows AS (
+  SELECT
+    cp.case_id,
+    lower(pr.code) AS role_code,
+    cp.participant_order,
+    cp.id,
+    COALESCE(
+      NULLIF(p.full_name, ''),
+      NULLIF(o.organization_name, ''),
+      NULLIF(cp.display_name_snapshot, '')
+    ) AS participant_name,
+    array_to_string(
+      ARRAY_REMOVE(
+        ARRAY[
+          CASE WHEN COALESCE(NULLIF(cpa.age_text, ''), cpa.age_years::text) IS NOT NULL THEN 'Age: ' || COALESCE(NULLIF(cpa.age_text, ''), cpa.age_years::text) END,
+          CASE WHEN COALESCE(NULLIF(cpa.gender_text, ''), cpa.gender_normalized) IS NOT NULL THEN 'Gender: ' || COALESCE(NULLIF(cpa.gender_text, ''), cpa.gender_normalized) END,
+          CASE WHEN COALESCE(NULLIF(cpa.minor_text, ''), CASE WHEN cpa.is_minor_at_case IS NULL THEN NULL WHEN cpa.is_minor_at_case THEN 'Yes' ELSE 'No' END) IS NOT NULL THEN 'Minor: ' || COALESCE(NULLIF(cpa.minor_text, ''), CASE WHEN cpa.is_minor_at_case THEN 'Yes' ELSE 'No' END) END,
+          CASE WHEN COALESCE(NULLIF(cpa.senior_text, ''), CASE WHEN cpa.is_senior_at_case IS NULL THEN NULL WHEN cpa.is_senior_at_case THEN 'Yes' ELSE 'No' END) IS NOT NULL THEN 'Senior: ' || COALESCE(NULLIF(cpa.senior_text, ''), CASE WHEN cpa.is_senior_at_case THEN 'Yes' ELSE 'No' END) END,
+          CASE WHEN COALESCE(NULLIF(cpa.pwd_text, ''), CASE WHEN cpa.is_pwd_at_case IS NULL THEN NULL WHEN cpa.is_pwd_at_case THEN 'Yes' ELSE 'No' END) IS NOT NULL THEN 'PWD: ' || COALESCE(NULLIF(cpa.pwd_text, ''), CASE WHEN cpa.is_pwd_at_case THEN 'Yes' ELSE 'No' END) END,
+          CASE WHEN COALESCE(NULLIF(cpa.resident_of_gentri_text, ''), CASE WHEN cpa.is_resident_of_gentri IS NULL THEN NULL WHEN cpa.is_resident_of_gentri THEN 'Yes' ELSE 'No' END) IS NOT NULL THEN 'Resident of GenTri: ' || COALESCE(NULLIF(cpa.resident_of_gentri_text, ''), CASE WHEN cpa.is_resident_of_gentri THEN 'Yes' ELSE 'No' END) END
+        ],
+        NULL
+      ),
+      '; '
+    ) AS attributes
+  FROM public.case_participants cp
+  JOIN filtered_cases fc ON fc.id = cp.case_id
+  JOIN public.participant_roles pr ON pr.id = cp.role_id
+  LEFT JOIN public.persons p ON p.id = cp.person_id
+  LEFT JOIN public.organizations o ON o.id = cp.organization_id
+  LEFT JOIN public.case_participant_attributes cpa ON cpa.case_participant_id = cp.id
+),
+participant_export AS (
+  SELECT
+    case_id,
+    string_agg(COALESCE(participant_name, ''), E'\n' ORDER BY participant_order NULLS LAST, id) FILTER (WHERE role_code IN ('complainant', 'complainants', 'comp')) AS complainants,
+    string_agg(COALESCE(attributes, ''), E'\n' ORDER BY participant_order NULLS LAST, id) FILTER (WHERE role_code IN ('complainant', 'complainants', 'comp')) AS complainant_attributes,
+    string_agg(COALESCE(participant_name, ''), E'\n' ORDER BY participant_order NULLS LAST, id) FILTER (WHERE role_code IN ('respondent', 'respondents', 'resp')) AS respondents,
+    string_agg(COALESCE(attributes, ''), E'\n' ORDER BY participant_order NULLS LAST, id) FILTER (WHERE role_code IN ('respondent', 'respondents', 'resp')) AS respondent_attributes
+  FROM participant_rows
+  GROUP BY case_id
+),
+violation_export AS (
+  SELECT
+    cv.case_id,
+    string_agg(
+      COALESCE(NULLIF(v.title, ''), NULLIF(cv.raw_violation_text, ''), ''),
+      E'\n'
+      ORDER BY cv.violation_order NULLS LAST, cv.id
+    ) AS violations
+  FROM public.case_violations cv
+  JOIN filtered_cases fc ON fc.id = cv.case_id
+  LEFT JOIN public.violations v ON v.id = cv.violation_id
+  WHERE COALESCE(cv.is_deleted, false) IS FALSE
+  GROUP BY cv.case_id
+),
+active_assignment AS (
+  SELECT DISTINCT ON (ca.case_id)
+    ca.case_id,
+    COALESCE(NULLIF(p.short_name, ''), NULLIF(p.full_name, '')) AS assigned_prosecutor
+  FROM public.case_assignments ca
+  JOIN filtered_cases fc ON fc.id = ca.case_id
+  LEFT JOIN public.prosecutors p ON p.id = ca.prosecutor_id
+  WHERE ca.unassigned_at IS NULL
+    AND COALESCE(ca.is_voided, false) IS FALSE
+  ORDER BY ca.case_id, ca.assigned_at DESC NULLS LAST, ca.id DESC
+),
+legacy_court_entries AS (
+  SELECT
+    cc.case_id,
+    0 AS source_order,
+    cc.court_order::bigint AS order_key,
+    cc.id,
+    1 AS child_order,
+    0::bigint AS child_id,
+    COALESCE(NULLIF(concat_ws(' ', NULLIF(c.name, ''), NULLIF(cc.court_branch, '')), ''), NULLIF(cc.raw_court_text, ''), '') AS court_label,
+    COALESCE(to_char(cc.actual_filing_date, 'YYYY-MM-DD'), to_char(cc.date_filed_in_court, 'YYYY-MM-DD'), NULLIF(cc.date_filed_in_court_raw, ''), '') AS date_filed,
+    COALESCE(NULLIF(cc.criminal_case_number, ''), '') AS criminal_case_number,
+    COALESCE(NULLIF(cc.charge_filed, ''), '') AS charge_filed,
+    COALESCE(NULLIF(cc.court_status, ''), '') AS court_status
+  FROM public.case_courts cc
+  JOIN filtered_cases fc ON fc.id = cc.case_id
+  LEFT JOIN public.courts c ON c.id = cc.court_id
+),
+current_court_base AS (
+  SELECT
+    cf.case_id,
+    cf.id,
+    COALESCE(NULLIF(concat_ws(' ', NULLIF(cf.court_name, ''), NULLIF(cf.court_branch, '')), ''), '') AS court_label,
+    to_char(cf.date_filed, 'YYYY-MM-DD') AS date_filed,
+    NULLIF(cf.criminal_case_no, '') AS fallback_criminal_case_number,
+    COALESCE(NULLIF(cf.charge_filed, ''), '') AS charge_filed
+  FROM public.case_court_filings cf
+  JOIN filtered_cases fc ON fc.id = cf.case_id
+  WHERE COALESCE(cf.is_voided, false) IS FALSE
+),
+current_court_status AS (
+  SELECT DISTINCT ON (cs.court_filing_id)
+    cs.court_filing_id,
+    COALESCE(NULLIF(cs.court_status, ''), '') AS court_status
+  FROM public.case_court_filing_statuses cs
+  JOIN current_court_base cb ON cb.id = cs.court_filing_id
+  WHERE COALESCE(cs.is_voided, false) IS FALSE
+  ORDER BY cs.court_filing_id, cs.status_date DESC, cs.sort_order DESC NULLS LAST, cs.id DESC
+),
+current_court_entries AS (
+  SELECT
+    cb.case_id,
+    1 AS source_order,
+    cb.id AS order_key,
+    cb.id,
+    COALESCE(cc.sort_order, 1) AS child_order,
+    COALESCE(cc.id, 0) AS child_id,
+    cb.court_label,
+    cb.date_filed,
+    COALESCE(NULLIF(cc.criminal_case_no, ''), cb.fallback_criminal_case_number, '') AS criminal_case_number,
+    cb.charge_filed,
+    COALESCE(cs.court_status, '') AS court_status
+  FROM current_court_base cb
+  LEFT JOIN current_court_status cs ON cs.court_filing_id = cb.id
+  LEFT JOIN LATERAL (
+    SELECT ccfcc.id, ccfcc.criminal_case_no, ccfcc.sort_order
+    FROM public.case_court_filing_criminal_cases ccfcc
+    WHERE ccfcc.court_filing_id = cb.id
+      AND COALESCE(ccfcc.is_voided, false) IS FALSE
+    ORDER BY ccfcc.sort_order NULLS LAST, ccfcc.id
+  ) cc ON true
+),
+unified_court_entries AS (
+  SELECT * FROM legacy_court_entries
+  UNION ALL
+  SELECT * FROM current_court_entries
+),
+court_export AS (
+  SELECT
+    case_id,
+    string_agg(court_label, E'\n' ORDER BY source_order, order_key NULLS LAST, id, child_order NULLS LAST, child_id) AS court_filings_court,
+    string_agg(date_filed, E'\n' ORDER BY source_order, order_key NULLS LAST, id, child_order NULLS LAST, child_id) AS court_dates_filed,
+    string_agg(criminal_case_number, E'\n' ORDER BY source_order, order_key NULLS LAST, id, child_order NULLS LAST, child_id) AS criminal_case_numbers,
+    string_agg(charge_filed, E'\n' ORDER BY source_order, order_key NULLS LAST, id, child_order NULLS LAST, child_id) AS charges_filed,
+    string_agg(court_status, E'\n' ORDER BY source_order, order_key NULLS LAST, id, child_order NULLS LAST, child_id) AS court_statuses
+  FROM unified_court_entries
+  GROUP BY case_id
+),
+motion_rows AS (
+  SELECT
+    cm.case_id,
+    cm.motion_order,
+    cm.date_received,
+    cm.id,
+    COALESCE(NULLIF(cm.motion_title, ''), NULLIF(cm.motion_name, ''), '') AS motion_title,
+    COALESCE(NULLIF(cm.filed_by, ''), NULLIF(cm.filed_by_raw, ''), '') AS filed_by,
+    COALESCE(to_char(cm.date_received, 'YYYY-MM-DD'), NULLIF(cm.date_received_raw, ''), '') AS date_received_text,
+    COALESCE(NULLIF(cm.motion_status, ''), NULLIF(cm.motion_status_raw, ''), '') AS motion_status
+  FROM public.case_motions cm
+  JOIN filtered_cases fc ON fc.id = cm.case_id
+  WHERE COALESCE(cm.is_voided, false) IS FALSE
+),
+motion_export AS (
+  SELECT
+    case_id,
+    string_agg(motion_title, E'\n' ORDER BY motion_order NULLS LAST, date_received NULLS LAST, id) AS motion_titles,
+    string_agg(filed_by, E'\n' ORDER BY motion_order NULLS LAST, date_received NULLS LAST, id) AS motion_filed_by,
+    string_agg(date_received_text, E'\n' ORDER BY motion_order NULLS LAST, date_received NULLS LAST, id) AS motion_dates_received,
+    string_agg(motion_status, E'\n' ORDER BY motion_order NULLS LAST, date_received NULLS LAST, id) AS motion_statuses
+  FROM motion_rows
+  GROUP BY case_id
+),
+petition_rows AS (
+  SELECT
+    p.case_id,
+    p.petition_order,
+    COALESCE(p.date_filed, p.date_received) AS sort_date,
+    p.id,
+    COALESCE(to_char(p.date_filed, 'YYYY-MM-DD'), to_char(p.date_received, 'YYYY-MM-DD'), NULLIF(p.date_received_raw, ''), '') AS date_filed_text,
+    COALESCE(
+      NULLIF(p.filed_by, ''),
+      CASE p.filed_by_code WHEN 'COMPLAINANT' THEN 'Complainant' WHEN 'RESPONDENT' THEN 'Respondent' END,
+      ''
+    ) AS filed_by,
+    COALESCE(
+      (
+        SELECT NULLIF(u.petition_status, '')
+        FROM public.case_petition_for_review_updates u
+        WHERE u.petition_for_review_id = p.id
+          AND COALESCE(u.is_voided, false) IS FALSE
+        ORDER BY u.status_date DESC, u.id DESC
+        LIMIT 1
+      ),
+      NULLIF(p.petition_status, ''),
+      ''
+    ) AS petition_status
+  FROM public.case_petitions_for_review p
+  JOIN filtered_cases fc ON fc.id = p.case_id
+  WHERE COALESCE(p.is_voided, false) IS FALSE
+),
+petition_export AS (
+  SELECT
+    case_id,
+    string_agg(date_filed_text, E'\n' ORDER BY petition_order NULLS LAST, sort_date NULLS LAST, id) AS petition_dates_filed,
+    string_agg(filed_by, E'\n' ORDER BY petition_order NULLS LAST, sort_date NULLS LAST, id) AS petition_filed_by,
+    string_agg(petition_status, E'\n' ORDER BY petition_order NULLS LAST, sort_date NULLS LAST, id) AS petition_statuses
+  FROM petition_rows
+  GROUP BY case_id
+),
+note_export AS (
+  SELECT
+    n.case_id,
+    string_agg(n.note_text, E'\n' ORDER BY n.created_at DESC, n.id DESC) AS case_notes
+  FROM public.notes n
+  JOIN filtered_cases fc ON fc.id = n.case_id
+  WHERE COALESCE(n.is_deleted, false) IS FALSE
+  GROUP BY n.case_id
+)
+SELECT
+  fc.id,
+  fc.docket_type_id,
+  fc.docket_type_prefix,
+  fc.docket_type_label,
+  fc.docket_type_sort_order,
+  fc.docket_year,
+  fc.docket_month_code,
+  fc.docket_number,
+  fc.docket_no,
+  pe.complainants,
+  pe.complainant_attributes,
+  pe.respondents,
+  pe.respondent_attributes,
+  ve.violations,
+  fc.classification,
+  fc.date_received,
+  COALESCE(NULLIF(fc.current_status_label, ''), NULLIF(fc.current_status_code, ''), NULLIF(fc.current_status_raw, '')),
+  aa.assigned_prosecutor,
+  ce.court_filings_court,
+  ce.court_dates_filed,
+  ce.criminal_case_numbers,
+  ce.charges_filed,
+  ce.court_statuses,
+  me.motion_titles,
+  me.motion_filed_by,
+  me.motion_dates_received,
+  me.motion_statuses,
+  pfe.petition_dates_filed,
+  pfe.petition_filed_by,
+  pfe.petition_statuses,
+  ne.case_notes
+FROM filtered_cases fc
+LEFT JOIN participant_export pe ON pe.case_id = fc.id
+LEFT JOIN violation_export ve ON ve.case_id = fc.id
+LEFT JOIN active_assignment aa ON aa.case_id = fc.id
+LEFT JOIN court_export ce ON ce.case_id = fc.id
+LEFT JOIN motion_export me ON me.case_id = fc.id
+LEFT JOIN petition_export pfe ON pfe.case_id = fc.id
+LEFT JOIN note_export ne ON ne.case_id = fc.id
+ORDER BY
+  fc.docket_year ASC,
+  fc.docket_type_id ASC,
+  fc.docket_month_code ASC NULLS LAST,
+  fc.docket_number ASC,
+  fc.id ASC;
+$$;
+
+
+--
 -- Name: format_clearance_search_results(jsonb, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2621,6 +3120,66 @@ CREATE FUNCTION public.format_clearance_search_results(p_candidates jsonb, p_lim
   select * from deduped
   order by case when result_group = 'active' then 0 else 1 end, confidence_score desc, full_name, case_id
   limit least(greatest(coalesce(p_limit, 50), 1), 100);
+$$;
+
+
+--
+-- Name: generate_lookup_code(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.generate_lookup_code(p_label text, p_fallback text DEFAULT 'LOOKUP'::text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT trim(both '_' FROM coalesce(nullif(upper(regexp_replace(coalesce(nullif(btrim(p_label), ''), p_fallback), '[^a-zA-Z0-9]+', '_', 'g')), ''), p_fallback));
+$$;
+
+
+--
+-- Name: get_cases_export_manifest(integer, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_cases_export_manifest(p_docket_year integer DEFAULT NULL::integer, p_docket_type_id bigint DEFAULT NULL::bigint) RETURNS TABLE(docket_type_id bigint, docket_type_prefix text, docket_type_label text, docket_type_sort_order integer, docket_year integer, expected_case_count bigint)
+    LANGUAGE sql
+    SET search_path TO 'public'
+    AS $$
+  SELECT
+    c.docket_type_id,
+    NULLIF(dt.prefix, '') AS docket_type_prefix,
+    NULLIF(dt.name, '') AS docket_type_label,
+    dt.sort_order AS docket_type_sort_order,
+    c.docket_year,
+    count(*)::bigint AS expected_case_count
+  FROM public.cases c
+  JOIN public.docket_types dt ON dt.id = c.docket_type_id
+  WHERE (p_docket_year IS NULL OR c.docket_year = p_docket_year)
+    AND (p_docket_type_id IS NULL OR c.docket_type_id = p_docket_type_id)
+    AND COALESCE(c.is_archived, false) IS FALSE
+  GROUP BY
+    c.docket_type_id,
+    NULLIF(dt.prefix, ''),
+    NULLIF(dt.name, ''),
+    dt.sort_order,
+    c.docket_year
+  ORDER BY
+    c.docket_year,
+    dt.sort_order NULLS LAST,
+    NULLIF(dt.prefix, ''),
+    NULLIF(dt.name, '');
+$$;
+
+
+--
+-- Name: get_user_management_roles(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_user_management_roles() RETURNS TABLE(id bigint, code text, display_label text, is_active boolean)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT r.id, r.code, r.display_label, r.is_active
+  FROM public.roles r
+  WHERE r.is_active = true
+  ORDER BY r.display_label, r.code;
 $$;
 
 
@@ -7345,6 +7904,56 @@ $_$;
 
 
 --
+-- Name: permanently_delete_user_management_user(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.permanently_delete_user_management_user(p_user_id bigint) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_actor_user_id bigint := public.current_app_user_id();
+  v_old jsonb;
+  v_auth_user_id uuid;
+BEGIN
+  IF NOT public.can_manage_users() THEN
+    RAISE EXCEPTION 'You are not authorized to manage users';
+  END IF;
+
+  IF v_actor_user_id = p_user_id THEN
+    RAISE EXCEPTION 'You cannot permanently delete your own active application user';
+  END IF;
+
+  SELECT to_jsonb(v.*), v.auth_user_id
+  INTO v_old, v_auth_user_id
+  FROM public.v_user_management_users v
+  WHERE v.id = p_user_id;
+
+  IF v_old IS NULL THEN
+    RAISE EXCEPTION 'User % does not exist', p_user_id;
+  END IF;
+
+  INSERT INTO public.audit_logs(actor_user_id, entity_name, entity_id, action, old_data, new_data, summary, metadata)
+  VALUES (
+    v_actor_user_id,
+    'users',
+    p_user_id,
+    'USER_PERMANENTLY_DELETED',
+    v_old,
+    NULL,
+    'User permanently deleted from application database.',
+    jsonb_build_object('hard_delete', true, 'auth_user_id', v_auth_user_id, 'auth_delete_trigger', v_auth_user_id IS NOT NULL)
+  );
+
+  DELETE FROM public.user_roles WHERE user_id = p_user_id;
+  DELETE FROM public.users WHERE id = p_user_id;
+
+  RETURN jsonb_build_object('success', true, 'message', 'User permanently deleted.', 'user_id', p_user_id, 'auth_user_id', v_auth_user_id);
+END;
+$$;
+
+
+--
 -- Name: raise_exception(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8667,6 +9276,54 @@ $$;
 
 
 --
+-- Name: remove_user_management_user(bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.remove_user_management_user(p_user_id bigint) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_actor_user_id bigint := public.current_app_user_id();
+  v_old jsonb;
+  v_auth_user_id uuid;
+BEGIN
+  IF NOT public.can_manage_users() THEN
+    RAISE EXCEPTION 'You are not authorized to manage users';
+  END IF;
+
+  IF v_actor_user_id = p_user_id THEN
+    RAISE EXCEPTION 'You cannot remove your own active application user';
+  END IF;
+
+  SELECT to_jsonb(v.*), v.auth_user_id
+  INTO v_old, v_auth_user_id
+  FROM public.v_user_management_users v
+  WHERE v.id = p_user_id;
+
+  IF v_old IS NULL THEN
+    RAISE EXCEPTION 'User % does not exist', p_user_id;
+  END IF;
+
+  INSERT INTO public.audit_logs(actor_user_id, entity_name, entity_id, action, old_data, new_data, summary, metadata)
+  VALUES (
+    v_actor_user_id,
+    'users',
+    p_user_id,
+    'USER_REMOVED',
+    v_old,
+    NULL,
+    'User removed from users table.',
+    jsonb_build_object('hard_delete', true, 'auth_user_id', v_auth_user_id, 'auth_delete_trigger', v_auth_user_id IS NOT NULL)
+  );
+
+  DELETE FROM public.user_roles WHERE user_id = p_user_id;
+  DELETE FROM public.users WHERE id = p_user_id;
+END;
+$$;
+
+
+--
 -- Name: search_clearance_exact_candidates(text, text, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9263,6 +9920,168 @@ $$;
 
 
 --
+-- Name: set_user_management_blocked(bigint, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_user_management_blocked(p_user_id bigint, p_is_blocked boolean) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_actor_user_id bigint := public.current_app_user_id();
+  v_old jsonb;
+  v_new jsonb;
+BEGIN
+  IF NOT public.can_manage_users() THEN
+    RAISE EXCEPTION 'You are not authorized to manage users';
+  END IF;
+
+  IF v_actor_user_id = p_user_id THEN
+    RAISE EXCEPTION 'You cannot block or unblock your own active application user';
+  END IF;
+
+  SELECT to_jsonb(v.*) INTO v_old FROM public.v_user_management_users v WHERE v.id = p_user_id;
+  IF v_old IS NULL THEN
+    RAISE EXCEPTION 'User % does not exist', p_user_id;
+  END IF;
+
+  UPDATE public.users
+  SET is_active = NOT p_is_blocked,
+      updated_at = now()
+  WHERE id = p_user_id;
+
+  SELECT to_jsonb(v.*) INTO v_new FROM public.v_user_management_users v WHERE v.id = p_user_id;
+
+  INSERT INTO public.audit_logs(actor_user_id, entity_name, entity_id, action, old_data, new_data, summary, metadata)
+  VALUES (
+    v_actor_user_id,
+    'users',
+    p_user_id,
+    CASE WHEN p_is_blocked THEN 'USER_BLOCKED' ELSE 'USER_UNBLOCKED' END,
+    v_old,
+    v_new,
+    CASE WHEN p_is_blocked THEN 'User blocked.' ELSE 'User unblocked.' END,
+    jsonb_build_object('is_blocked', p_is_blocked)
+  );
+END;
+$$;
+
+
+--
+-- Name: sync_auth_user_email_to_app_user(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sync_auth_user_email_to_app_user() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'auth'
+    AS $$
+DECLARE
+  v_existing_linked_user public.users%ROWTYPE;
+  v_email_match_user public.users%ROWTYPE;
+  v_updated_at timestamp with time zone := COALESCE(NEW.updated_at, now());
+BEGIN
+  IF NEW.email IS NULL OR btrim(NEW.email) = '' THEN
+    RAISE NOTICE 'Skipping public.users email synchronization for auth.users % because email is null or empty', NEW.id;
+    RETURN NEW;
+  END IF;
+
+  SELECT *
+  INTO v_existing_linked_user
+  FROM public.users
+  WHERE auth_user_id = NEW.id
+  LIMIT 1;
+
+  SELECT *
+  INTO v_email_match_user
+  FROM public.users
+  WHERE lower(email::text) = lower(NEW.email::text)
+    AND (v_existing_linked_user.id IS NULL OR id <> v_existing_linked_user.id)
+  ORDER BY id
+  LIMIT 1;
+
+  IF v_existing_linked_user.id IS NOT NULL THEN
+    IF v_email_match_user.id IS NOT NULL THEN
+      RAISE EXCEPTION 'Cannot update auth user % email to %. Public user % already uses that email', NEW.id, NEW.email, v_email_match_user.id;
+    END IF;
+
+    UPDATE public.users
+    SET email = NEW.email,
+        updated_at = v_updated_at
+    WHERE id = v_existing_linked_user.id;
+
+    RETURN NEW;
+  END IF;
+
+  IF v_email_match_user.id IS NOT NULL THEN
+    IF v_email_match_user.auth_user_id IS NOT NULL AND v_email_match_user.auth_user_id <> NEW.id THEN
+      RAISE EXCEPTION 'Cannot synchronize auth user %. Public user % with email % is already linked to auth user %', NEW.id, v_email_match_user.id, NEW.email, v_email_match_user.auth_user_id;
+    END IF;
+
+    UPDATE public.users
+    SET auth_user_id = NEW.id,
+        email = NEW.email,
+        updated_at = v_updated_at
+    WHERE id = v_email_match_user.id;
+
+    RETURN NEW;
+  END IF;
+
+  INSERT INTO public.users(auth_user_id, email, password_hash, is_active, created_at, updated_at)
+  VALUES (NEW.id, NEW.email, 'managed-by-supabase-auth', true, COALESCE(NEW.created_at, now()), v_updated_at);
+
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: sync_auth_user_to_app_user(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sync_auth_user_to_app_user() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'auth'
+    AS $$
+DECLARE
+  v_existing_user public.users%ROWTYPE;
+  v_created_at timestamp with time zone := COALESCE(NEW.created_at, now());
+  v_updated_at timestamp with time zone := COALESCE(NEW.updated_at, NEW.created_at, now());
+BEGIN
+  IF NEW.email IS NULL OR btrim(NEW.email) = '' THEN
+    RAISE NOTICE 'Skipping public.users synchronization for auth.users % because email is null or empty', NEW.id;
+    RETURN NEW;
+  END IF;
+
+  SELECT *
+  INTO v_existing_user
+  FROM public.users
+  WHERE lower(email::text) = lower(NEW.email::text)
+  ORDER BY id
+  LIMIT 1;
+
+  IF v_existing_user.id IS NOT NULL THEN
+    IF v_existing_user.auth_user_id IS NOT NULL AND v_existing_user.auth_user_id <> NEW.id THEN
+      RAISE EXCEPTION 'Cannot synchronize auth user %. Public user % with email % is already linked to auth user %', NEW.id, v_existing_user.id, NEW.email, v_existing_user.auth_user_id;
+    END IF;
+
+    UPDATE public.users
+    SET auth_user_id = NEW.id,
+        email = NEW.email,
+        updated_at = v_updated_at
+    WHERE id = v_existing_user.id;
+
+    RETURN NEW;
+  END IF;
+
+  INSERT INTO public.users(auth_user_id, email, password_hash, is_active, created_at, updated_at)
+  VALUES (NEW.id, NEW.email, 'managed-by-supabase-auth', true, v_created_at, v_updated_at);
+
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trg_case_participant_relationships_same_case(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9519,6 +10338,24 @@ BEGIN
       RAISE EXCEPTION 'This resolution has a court filing. Void the court filing first.';
     END IF;
   END IF;
+  IF v_event_type_code = 'CASE_RECEIVED' THEN
+    RAISE EXCEPTION 'Case Received events cannot be voided.';
+  END IF;
+  IF v_event_type_code = 'CASE_RAFFLED' THEN
+    SELECT ca.id INTO v_assignment_id
+    FROM public.case_assignments ca
+    WHERE ca.id = v_source_id OR ca.case_event_id = p_case_event_id
+    ORDER BY CASE WHEN ca.id = v_source_id THEN 0 ELSE 1 END
+    LIMIT 1;
+    SELECT ca.id INTO v_latest_assignment_id
+    FROM public.case_assignments ca
+    WHERE ca.case_id = v_case_id AND ca.is_voided IS FALSE
+    ORDER BY ca.assigned_at DESC NULLS LAST, ca.id DESC
+    LIMIT 1;
+    IF v_assignment_id IS NULL OR v_latest_assignment_id IS DISTINCT FROM v_assignment_id THEN
+      RAISE EXCEPTION 'This assignment has already been superseded by a later assignment. Void the latest assignment first.';
+    END IF;
+  END IF;
 
   SELECT current_status_id, to_jsonb(cpd) INTO v_prev_status_id, v_old_details FROM public.case_private_details cpd WHERE cpd.case_id = v_case_id;
   UPDATE public.case_events SET is_voided = true, void_reason = p_void_reason, voided_at = now(), voided_by_user_id = p_voided_by_user_id, updated_by_user_id = p_voided_by_user_id, updated_at = now() WHERE id = p_case_event_id;
@@ -9705,7 +10542,11 @@ BEGIN
     END IF;
   END IF;
 
-  IF v_event_type_code = 'CASE_ASSIGNMENT' THEN
+  IF v_event_type_code = 'CASE_RECEIVED' THEN
+    RAISE EXCEPTION 'Case Received events cannot be voided.';
+  END IF;
+
+  IF v_event_type_code IN ('CASE_RAFFLED','CASE_ASSIGNMENT') THEN
     SELECT ca.id, to_jsonb(ca) INTO v_assignment_id, v_assignment_old
     FROM public.case_assignments ca
     WHERE ca.id = v_source_id OR ca.case_event_id = p_case_event_id
@@ -9713,6 +10554,16 @@ BEGIN
     LIMIT 1;
 
     IF v_assignment_id IS NOT NULL THEN
+      SELECT ca.id INTO v_latest_assignment_id
+      FROM public.case_assignments ca
+      WHERE ca.case_id = v_case_id AND ca.is_voided IS FALSE
+      ORDER BY ca.assigned_at DESC NULLS LAST, ca.id DESC
+      LIMIT 1;
+
+      IF v_latest_assignment_id IS DISTINCT FROM v_assignment_id THEN
+        RAISE EXCEPTION 'This assignment has already been superseded by a later assignment. Void the latest assignment first.';
+      END IF;
+
       UPDATE public.case_assignments
       SET is_voided = true,
           voided_at = now(),
@@ -9846,7 +10697,7 @@ BEGIN
     END IF;
   END IF;
 
-  IF v_event_type_code IN ('CASE_RESOLVED','CASE_DECISION_APPROVED','CASE_ASSIGNMENT','CASE_REASSIGNMENT')
+  IF v_event_type_code IN ('CASE_RESOLVED','CASE_DECISION_APPROVED','CASE_RAFFLED','CASE_ASSIGNMENT','CASE_REASSIGNMENT')
      OR lower(coalesce(v_source_table,'')) IN ('case_resolutions','case_resolution_approvals','case_assignments') THEN
     PERFORM public.apply_case_state_recompute(v_case_id, CURRENT_DATE, NULL, p_case_event_id, p_voided_by_user_id);
 
@@ -17215,6 +18066,42 @@ COMMENT ON VIEW public.v_ref_violations IS 'Frontend reference view; security po
 
 
 --
+-- Name: v_user_management_users; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_user_management_users AS
+ SELECT u.id,
+    u.auth_user_id,
+    u.email,
+    u.is_active,
+    u.last_login_at,
+    u.created_at,
+    u.updated_at,
+    u.prosecutor_id,
+    p.full_name AS prosecutor_full_name,
+    p.short_name AS prosecutor_short_name,
+    u.staff_id,
+    s.full_name AS staff_full_name,
+    s.short_name AS staff_short_name,
+    r.id AS role_id,
+    r.code AS role_code,
+    r.display_label AS role_label,
+    r.is_active AS role_is_active
+   FROM ((((public.users u
+     LEFT JOIN public.prosecutors p ON ((p.id = u.prosecutor_id)))
+     LEFT JOIN public.staff s ON ((s.id = u.staff_id)))
+     LEFT JOIN public.user_roles ur ON ((ur.user_id = u.id)))
+     LEFT JOIN public.roles r ON ((r.id = ur.role_id)));
+
+
+--
+-- Name: VIEW v_user_management_users; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_user_management_users IS 'User Management read view with application user, role, prosecutor, and staff context. Security policies will be implemented later.';
+
+
+--
 -- Name: violations_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
@@ -19405,6 +20292,27 @@ CREATE INDEX webauthn_credentials_user_id_idx ON auth.webauthn_credentials USING
 
 
 --
+-- Name: address_types_active_label_ci_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX address_types_active_label_ci_uidx ON public.address_types USING btree (lower(display_label)) WHERE is_active;
+
+
+--
+-- Name: address_types_code_ci_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX address_types_code_ci_uidx ON public.address_types USING btree (lower(code));
+
+
+--
+-- Name: case_classifications_active_label_ci_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX case_classifications_active_label_ci_uidx ON public.case_classifications USING btree (lower((display_label)::text)) WHERE is_active;
+
+
+--
 -- Name: case_motion_resolution_approvals_one_active_uidx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19423,6 +20331,20 @@ CREATE UNIQUE INDEX case_motion_resolutions_one_active_per_motion_uidx ON public
 --
 
 CREATE INDEX contact_informations_contact_type_idx ON public.contact_informations USING btree (contact_type);
+
+
+--
+-- Name: courts_active_name_ci_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX courts_active_name_ci_uidx ON public.courts USING btree (lower(name)) WHERE is_active;
+
+
+--
+-- Name: courts_code_ci_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX courts_code_ci_uidx ON public.courts USING btree (lower(code));
 
 
 --
@@ -20665,6 +21587,20 @@ CREATE INDEX participant_contact_informations_contact_information_id_idx ON publ
 
 
 --
+-- Name: participant_roles_active_label_ci_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX participant_roles_active_label_ci_uidx ON public.participant_roles USING btree (lower(display_label)) WHERE is_active;
+
+
+--
+-- Name: participant_roles_code_ci_uidx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX participant_roles_code_ci_uidx ON public.participant_roles USING btree (lower(code));
+
+
+--
 -- Name: uq_case_court_filing_criminal_cases_active_no; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20809,6 +21745,27 @@ CREATE INDEX name_prefix_search ON storage.objects USING btree (name text_patter
 --
 
 CREATE UNIQUE INDEX vector_indexes_name_bucket_id_idx ON storage.vector_indexes USING btree (name, bucket_id);
+
+
+--
+-- Name: users sync_auth_user_email_to_app_user_on_update; Type: TRIGGER; Schema: auth; Owner: -
+--
+
+CREATE TRIGGER sync_auth_user_email_to_app_user_on_update AFTER UPDATE OF email ON auth.users FOR EACH ROW WHEN (((old.email)::text IS DISTINCT FROM (new.email)::text)) EXECUTE FUNCTION public.sync_auth_user_email_to_app_user();
+
+
+--
+-- Name: users sync_auth_user_to_app_user_on_insert; Type: TRIGGER; Schema: auth; Owner: -
+--
+
+CREATE TRIGGER sync_auth_user_to_app_user_on_insert AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.sync_auth_user_to_app_user();
+
+
+--
+-- Name: users delete_auth_user_after_app_user_permanent_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER delete_auth_user_after_app_user_permanent_delete AFTER DELETE ON public.users FOR EACH ROW EXECUTE FUNCTION public.delete_auth_user_after_app_user_permanent_delete();
 
 
 --
@@ -22588,7 +23545,7 @@ ALTER TABLE ONLY public.user_roles
 --
 
 ALTER TABLE ONLY public.users
-    ADD CONSTRAINT users_auth_user_id_fkey FOREIGN KEY (auth_user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+    ADD CONSTRAINT users_auth_user_id_fkey FOREIGN KEY (auth_user_id) REFERENCES auth.users(id);
 
 
 --
@@ -23447,6 +24404,24 @@ GRANT ALL ON FUNCTION pgbouncer.get_auth(p_usename text) TO pgbouncer;
 
 
 --
+-- Name: FUNCTION add_address_type(p_display_label text, p_code text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.add_address_type(p_display_label text, p_code text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.add_address_type(p_display_label text, p_code text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.add_address_type(p_display_label text, p_code text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION add_case_classification(p_display_label text, p_description text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.add_case_classification(p_display_label text, p_description text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.add_case_classification(p_display_label text, p_description text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.add_case_classification(p_display_label text, p_description text, p_user_id bigint) TO service_role;
+
+
+--
 -- Name: FUNCTION add_case_stage(p_display_label text, p_code text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
 --
 
@@ -23456,12 +24431,30 @@ GRANT ALL ON FUNCTION public.add_case_stage(p_display_label text, p_code text, p
 
 
 --
+-- Name: FUNCTION add_court(p_display_label text, p_code text, p_court_type text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.add_court(p_display_label text, p_code text, p_court_type text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.add_court(p_display_label text, p_code text, p_court_type text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.add_court(p_display_label text, p_code text, p_court_type text, p_user_id bigint) TO service_role;
+
+
+--
 -- Name: FUNCTION add_motion_resolution_recommendation(p_display_label text, p_code text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
 --
 
 GRANT ALL ON FUNCTION public.add_motion_resolution_recommendation(p_display_label text, p_code text, p_user_id bigint) TO anon;
 GRANT ALL ON FUNCTION public.add_motion_resolution_recommendation(p_display_label text, p_code text, p_user_id bigint) TO authenticated;
 GRANT ALL ON FUNCTION public.add_motion_resolution_recommendation(p_display_label text, p_code text, p_user_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION add_participant_role(p_display_label text, p_code text, p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.add_participant_role(p_display_label text, p_code text, p_user_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.add_participant_role(p_display_label text, p_code text, p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.add_participant_role(p_display_label text, p_code text, p_user_id bigint) TO service_role;
 
 
 --
@@ -23480,6 +24473,15 @@ GRANT ALL ON FUNCTION public.apply_case_state_recompute(p_case_id bigint, p_stat
 GRANT ALL ON FUNCTION public.apply_clearance_common_name_variants_to_possible_tokens() TO anon;
 GRANT ALL ON FUNCTION public.apply_clearance_common_name_variants_to_possible_tokens() TO authenticated;
 GRANT ALL ON FUNCTION public.apply_clearance_common_name_variants_to_possible_tokens() TO service_role;
+
+
+--
+-- Name: FUNCTION assign_user_management_role(p_user_id bigint, p_role_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.assign_user_management_role(p_user_id bigint, p_role_id bigint) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.assign_user_management_role(p_user_id bigint, p_role_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.assign_user_management_role(p_user_id bigint, p_role_id bigint) TO service_role;
 
 
 --
@@ -23979,6 +24981,13 @@ GRANT ALL ON FUNCTION public.dc2025_try_date(p_text text) TO service_role;
 
 
 --
+-- Name: FUNCTION delete_auth_user_after_app_user_permanent_delete(); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.delete_auth_user_after_app_user_permanent_delete() FROM PUBLIC;
+
+
+--
 -- Name: FUNCTION difference(text, text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -24036,12 +25045,49 @@ GRANT ALL ON FUNCTION public.edit_case_overview_section(p_payload jsonb) TO serv
 
 
 --
+-- Name: FUNCTION export_cases_excel_data(p_docket_year integer, p_docket_type_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.export_cases_excel_data(p_docket_year integer, p_docket_type_id bigint) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.export_cases_excel_data(p_docket_year integer, p_docket_type_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.export_cases_excel_data(p_docket_year integer, p_docket_type_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.export_cases_excel_data(p_docket_year integer, p_docket_type_id bigint) TO service_role;
+
+
+--
 -- Name: FUNCTION format_clearance_search_results(p_candidates jsonb, p_limit integer); Type: ACL; Schema: public; Owner: -
 --
 
 GRANT ALL ON FUNCTION public.format_clearance_search_results(p_candidates jsonb, p_limit integer) TO anon;
 GRANT ALL ON FUNCTION public.format_clearance_search_results(p_candidates jsonb, p_limit integer) TO authenticated;
 GRANT ALL ON FUNCTION public.format_clearance_search_results(p_candidates jsonb, p_limit integer) TO service_role;
+
+
+--
+-- Name: FUNCTION generate_lookup_code(p_label text, p_fallback text); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.generate_lookup_code(p_label text, p_fallback text) TO anon;
+GRANT ALL ON FUNCTION public.generate_lookup_code(p_label text, p_fallback text) TO authenticated;
+GRANT ALL ON FUNCTION public.generate_lookup_code(p_label text, p_fallback text) TO service_role;
+
+
+--
+-- Name: FUNCTION get_cases_export_manifest(p_docket_year integer, p_docket_type_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.get_cases_export_manifest(p_docket_year integer, p_docket_type_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.get_cases_export_manifest(p_docket_year integer, p_docket_type_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.get_cases_export_manifest(p_docket_year integer, p_docket_type_id bigint) TO service_role;
+
+
+--
+-- Name: FUNCTION get_user_management_roles(); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.get_user_management_roles() FROM PUBLIC;
+GRANT ALL ON FUNCTION public.get_user_management_roles() TO authenticated;
+GRANT ALL ON FUNCTION public.get_user_management_roles() TO service_role;
 
 
 --
@@ -26277,6 +27323,15 @@ GRANT ALL ON FUNCTION public.pe2024_try_date(p_text text) TO service_role;
 
 
 --
+-- Name: FUNCTION permanently_delete_user_management_user(p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.permanently_delete_user_management_user(p_user_id bigint) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.permanently_delete_user_management_user(p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.permanently_delete_user_management_user(p_user_id bigint) TO service_role;
+
+
+--
 -- Name: FUNCTION raise_exception(p_message text); Type: ACL; Schema: public; Owner: -
 --
 
@@ -26421,6 +27476,15 @@ GRANT ALL ON FUNCTION public.refresh_clearance_possible_name_tokens() TO service
 
 
 --
+-- Name: FUNCTION remove_user_management_user(p_user_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.remove_user_management_user(p_user_id bigint) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.remove_user_management_user(p_user_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.remove_user_management_user(p_user_id bigint) TO service_role;
+
+
+--
 -- Name: FUNCTION search_clearance_exact_candidates(p_query text, p_search_type text, p_limit integer); Type: ACL; Schema: public; Owner: -
 --
 
@@ -26491,6 +27555,15 @@ GRANT ALL ON FUNCTION public.set_limit(real) TO service_role;
 GRANT ALL ON FUNCTION public.set_updated_at_now() TO anon;
 GRANT ALL ON FUNCTION public.set_updated_at_now() TO authenticated;
 GRANT ALL ON FUNCTION public.set_updated_at_now() TO service_role;
+
+
+--
+-- Name: FUNCTION set_user_management_blocked(p_user_id bigint, p_is_blocked boolean); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.set_user_management_blocked(p_user_id bigint, p_is_blocked boolean) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.set_user_management_blocked(p_user_id bigint, p_is_blocked boolean) TO authenticated;
+GRANT ALL ON FUNCTION public.set_user_management_blocked(p_user_id bigint, p_is_blocked boolean) TO service_role;
 
 
 --
@@ -26601,6 +27674,20 @@ GRANT ALL ON FUNCTION public.strict_word_similarity_op(text, text) TO postgres;
 GRANT ALL ON FUNCTION public.strict_word_similarity_op(text, text) TO anon;
 GRANT ALL ON FUNCTION public.strict_word_similarity_op(text, text) TO authenticated;
 GRANT ALL ON FUNCTION public.strict_word_similarity_op(text, text) TO service_role;
+
+
+--
+-- Name: FUNCTION sync_auth_user_email_to_app_user(); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.sync_auth_user_email_to_app_user() FROM PUBLIC;
+
+
+--
+-- Name: FUNCTION sync_auth_user_to_app_user(); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.sync_auth_user_to_app_user() FROM PUBLIC;
 
 
 --
@@ -28866,6 +29953,14 @@ GRANT ALL ON TABLE public.v_ref_violations TO service_role;
 
 
 --
+-- Name: TABLE v_user_management_users; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT ON TABLE public.v_user_management_users TO authenticated;
+GRANT SELECT ON TABLE public.v_user_management_users TO service_role;
+
+
+--
 -- Name: SEQUENCE violations_id_seq; Type: ACL; Schema: public; Owner: -
 --
 
@@ -29311,5 +30406,5 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ZZxgz8VkUNe2ETXfwo9Pf64nL1Wu9sXk1BVibtF4Zdw8kc0kJDEbS70DC9MKg5o
+\unrestrict 3PhLiScG4IUMOFGA9UHDNamRYc8ceG5gm8isuTDN9jrY3kXHOKiarCcOgpAkKVb
 
