@@ -1,4 +1,22 @@
--- Implement application-role database security for DEVELOPER, CHIEF, ADMIN, and PROSECUTOR.
+-- Approved application-role security design for DEVELOPER, CHIEF, ADMIN, and PROSECUTOR.
+--
+-- Policy audit summary from lib/supabase/dev-clone/dev_schema:
+-- * The schema dump contains no existing public-table CREATE POLICY definitions to preserve.
+-- * Existing migrations contain a targeted organization_addresses policy cleanup; this migration does not touch it by name.
+-- * This migration does not drop all policies. It only replaces policies with the app_role_* names that it owns.
+-- * Existing/specialized policies are preserved and constrained by an app_role_rls_guard RESTRICTIVE policy.
+-- * If a table has no pre-existing permissive policy, a minimal app_role_table_access baseline policy is added.
+--
+-- Public function audit summary:
+-- * Read/reporting RPCs explicitly set to SECURITY INVOKER below: export_cases_excel_data,
+--   get_cases_export_manifest, format_clearance_search_results, and all clearance search RPCs.
+-- * Security-definer helper functions retained: current app-user/app-role helpers and can_* predicates, because they
+--   must read user/role tables while caller table privileges are restricted by RLS.
+-- * Security-definer write/privileged RPCs retained: case creation/edit/event/assignment/motion/petition/court/status
+--   workflows, lookup creation RPCs, participant/violation/place/note management, recompute helpers, and user-management
+--   RPCs. They perform controlled multi-table writes, audit writes, or trigger-side work and already reject callers through
+--   can_* helpers. User-management RPCs are hardened here to Developer/Chief only through can_manage_users().
+-- * Trigger/token maintenance functions are retained with their existing security posture because they are not frontend RPCs.
 
 CREATE OR REPLACE FUNCTION public.current_app_role_codes()
 RETURNS text[]
@@ -40,7 +58,6 @@ AS $$
   );
 $$;
 
-
 CREATE OR REPLACE FUNCTION public.require_any_app_role(p_role_codes text[])
 RETURNS boolean
 LANGUAGE plpgsql
@@ -49,6 +66,10 @@ SECURITY DEFINER
 SET search_path TO 'public'
 AS $$
 BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'authentication required' USING ERRCODE = '42501';
+  END IF;
+
   IF public.has_any_app_role(p_role_codes) THEN
     RETURN true;
   END IF;
@@ -64,7 +85,7 @@ STABLE
 SECURITY DEFINER
 SET search_path TO 'public'
 AS $$
-  SELECT public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF']);
+  SELECT auth.uid() IS NOT NULL AND public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF']);
 $$;
 
 CREATE OR REPLACE FUNCTION public.can_assign_role(p_target_role_code text)
@@ -74,8 +95,11 @@ STABLE
 SECURITY DEFINER
 SET search_path TO 'public'
 AS $$
-  SELECT public.has_app_role('DEVELOPER')
-         OR (upper(p_target_role_code) <> 'DEVELOPER' AND public.has_app_role('CHIEF'));
+  SELECT auth.uid() IS NOT NULL
+     AND (
+       public.has_app_role('DEVELOPER')
+       OR (upper(p_target_role_code) <> 'DEVELOPER' AND public.has_app_role('CHIEF'))
+     );
 $$;
 
 CREATE OR REPLACE FUNCTION public.get_user_management_roles()
@@ -105,17 +129,22 @@ STABLE
 SECURITY DEFINER
 SET search_path TO 'public'
 AS $$
-  SELECT CASE
-    WHEN p_table_name = ANY (ARRAY['users', 'roles', 'user_roles'])
-      THEN public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF'])
-    ELSE public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF', 'ADMIN'])
-  END;
+  SELECT auth.uid() IS NOT NULL
+     AND CASE
+       WHEN p_table_name = ANY (ARRAY[
+         'users',
+         'roles',
+         'user_roles'
+       ])
+         THEN public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF'])
+       ELSE public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF', 'ADMIN'])
+     END;
 $$;
 
 DO $$
 DECLARE
   r record;
-  policy_name text;
+  non_app_policy_count integer;
 BEGIN
   FOR r IN
     SELECT tablename
@@ -127,23 +156,29 @@ BEGIN
     EXECUTE format('REVOKE ALL ON TABLE public.%I FROM anon', r.tablename);
     EXECUTE format('REVOKE ALL ON TABLE public.%I FROM authenticated', r.tablename);
     EXECUTE format('GRANT ALL ON TABLE public.%I TO service_role', r.tablename);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO authenticated', r.tablename);
 
-    IF r.tablename = ANY (ARRAY['users', 'roles', 'user_roles']) THEN
-      EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO authenticated', r.tablename);
-    ELSE
-      EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO authenticated', r.tablename);
-    END IF;
-
-    FOR policy_name IN
-      SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = r.tablename
-    LOOP
-      EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', policy_name, r.tablename);
-    END LOOP;
+    EXECUTE format('DROP POLICY IF EXISTS app_role_rls_guard ON public.%I', r.tablename);
+    EXECUTE format('DROP POLICY IF EXISTS app_role_table_access ON public.%I', r.tablename);
 
     EXECUTE format(
-      'CREATE POLICY %I ON public.%I FOR ALL TO authenticated USING (public._app_role_can_access_table(%L)) WITH CHECK (public._app_role_can_access_table(%L))',
-      'app_role_table_access', r.tablename, r.tablename, r.tablename
+      'CREATE POLICY app_role_rls_guard ON public.%I AS RESTRICTIVE FOR ALL TO authenticated USING (public._app_role_can_access_table(%L)) WITH CHECK (public._app_role_can_access_table(%L))',
+      r.tablename, r.tablename, r.tablename
     );
+
+    SELECT count(*)
+    INTO non_app_policy_count
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = r.tablename
+      AND policyname NOT IN ('app_role_rls_guard', 'app_role_table_access');
+
+    IF non_app_policy_count = 0 THEN
+      EXECUTE format(
+        'CREATE POLICY app_role_table_access ON public.%I FOR ALL TO authenticated USING (public._app_role_can_access_table(%L)) WITH CHECK (public._app_role_can_access_table(%L))',
+        r.tablename, r.tablename, r.tablename
+      );
+    END IF;
   END LOOP;
 END $$;
 
@@ -266,33 +301,30 @@ BEGIN
     EXECUTE format('REVOKE ALL ON TABLE public.%I FROM anon', r.table_name);
     EXECUTE format('REVOKE ALL ON TABLE public.%I FROM authenticated', r.table_name);
     EXECUTE format('GRANT ALL ON TABLE public.%I TO service_role', r.table_name);
+    EXECUTE format('GRANT SELECT ON TABLE public.%I TO authenticated', r.table_name);
   END LOOP;
 END $$;
 
-GRANT SELECT ON public.v_docket_shell TO authenticated;
-GRANT SELECT ON public.v_docket_participants TO authenticated;
-GRANT SELECT ON public.v_docket_case_violation_classification TO authenticated;
-GRANT SELECT ON public.v_docket_quickdetails TO authenticated;
+-- Explicit ordinary read/search/reporting RPC classification. These must not bypass caller RLS.
+ALTER FUNCTION public.export_cases_excel_data(integer, bigint) SECURITY INVOKER;
+ALTER FUNCTION public.get_cases_export_manifest(integer, bigint) SECURITY INVOKER;
+ALTER FUNCTION public.format_clearance_search_results(jsonb, integer) SECURITY INVOKER;
+ALTER FUNCTION public.search_clearance_exact_candidates(text, text, integer) SECURITY INVOKER;
+ALTER FUNCTION public.search_clearance_phonetic_matches(text, text, integer) SECURITY INVOKER;
+ALTER FUNCTION public.search_clearance_possible_matches(text, text, integer) SECURITY INVOKER;
+ALTER FUNCTION public.search_clearance_possible_matches_v3(text, text, integer) SECURITY INVOKER;
+ALTER FUNCTION public.search_clearance_possible_matches_v31(text, text, integer) SECURITY INVOKER;
+ALTER FUNCTION public.search_clearance_records(text, text, integer) SECURITY INVOKER;
 
-DO $$
-DECLARE
-  r record;
-BEGIN
-  FOR r IN
-    SELECT p.oid::regprocedure AS signature, p.proname
-    FROM pg_proc p
-    JOIN pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'public'
-      AND p.prokind = 'f'
-      AND (p.proname LIKE 'get_%' OR p.proname LIKE 'search_%' OR p.proname LIKE 'format_%' OR p.proname LIKE 'export_%')
-      AND p.proname NOT IN ('get_user_management_roles')
-  LOOP
-    EXECUTE format('ALTER FUNCTION %s SECURITY INVOKER', r.signature);
-  END LOOP;
-END $$;
+-- User-management RPCs remain SECURITY DEFINER for controlled writes, but can_manage_users() now permits only Developer/Chief.
+ALTER FUNCTION public.get_user_management_roles() SECURITY DEFINER SET search_path TO 'public';
+ALTER FUNCTION public.assign_user_management_role(bigint, bigint) SECURITY DEFINER SET search_path TO 'public';
+ALTER FUNCTION public.set_user_management_blocked(bigint, boolean) SECURITY DEFINER SET search_path TO 'public';
+ALTER FUNCTION public.remove_user_management_user(bigint) SECURITY DEFINER SET search_path TO 'public';
+ALTER FUNCTION public.permanently_delete_user_management_user(bigint) SECURITY DEFINER SET search_path TO 'public';
 
-REVOKE ALL ON FUNCTION public.assign_user_management_role(bigint, bigint) FROM anon, authenticated;
 REVOKE ALL ON FUNCTION public.get_user_management_roles() FROM anon, authenticated;
+REVOKE ALL ON FUNCTION public.assign_user_management_role(bigint, bigint) FROM anon, authenticated;
 REVOKE ALL ON FUNCTION public.set_user_management_blocked(bigint, boolean) FROM anon, authenticated;
 REVOKE ALL ON FUNCTION public.remove_user_management_user(bigint) FROM anon, authenticated;
 REVOKE ALL ON FUNCTION public.permanently_delete_user_management_user(bigint) FROM anon, authenticated;
