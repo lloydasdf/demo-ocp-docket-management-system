@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sidebar } from '@/components/sidebar';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -76,6 +76,7 @@ type CasesPageCache = {
   partyNamesByCase: Record<number, CasePartyNames>;
   classificationsByCase: CaseClassificationByCase;
   hasAllCases: boolean;
+  hasLoadedCases: boolean;
   searchTerm?: string;
   selectedSearchColumns?: CaseSearchColumnKey[];
   selectedDocketTypes?: DocketTypeFilter[];
@@ -89,7 +90,7 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v16';
+const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v17';
 let casesPageMemoryCache: CasesPageCache | null = null;
 
 function readCasesPageCache() {
@@ -112,6 +113,10 @@ function readCasesPageCache() {
   } catch {
     return null;
   }
+}
+
+function hasUsableCasesCache(cache: CasesPageCache | null) {
+  return Boolean(cache?.hasLoadedCases && Array.isArray(cache.cases));
 }
 
 function writeCasesPageCache(cache: CasesPageCache) {
@@ -414,7 +419,7 @@ export default function CasesPage() {
   const [selectedSearchColumns, setSelectedSearchColumns] = useState<CaseSearchColumnKey[]>(() =>
     cachedInitialState?.selectedSearchColumns ?? [...DEFAULT_SEARCH_COLUMNS],
   );
-  const [isLoading, setIsLoading] = useState(!cachedInitialState);
+  const [isLoading, setIsLoading] = useState(!hasUsableCasesCache(cachedInitialState));
   const [isLoadingAllCases, setIsLoadingAllCases] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedCaseKey, setSelectedCaseKey] = useState<string | null>(null);
@@ -423,158 +428,174 @@ export default function CasesPage() {
   const [classificationsByCase, setClassificationsByCase] = useState<CaseClassificationByCase>(cachedInitialState?.classificationsByCase ?? {});
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(640);
-  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const { roles: currentRoles, isLoading: isRoleLoading, error: roleError } = useCurrentUserRole();
   const canShowExcelExport = !isRoleLoading && !roleError && canExportCasesToExcel(currentRoles);
+  const latestCacheableStateRef = useRef({
+    searchTerm,
+    selectedSearchColumns,
+    selectedDocketTypes,
+    selectedDocketYears,
+    selectedColumnFilters,
+    showColumnFilters,
+  });
 
-  useEffect(() => {
-    let isMounted = true;
-    const isManualRefresh = refreshNonce > 0;
+  latestCacheableStateRef.current = {
+    searchTerm,
+    selectedSearchColumns,
+    selectedDocketTypes,
+    selectedDocketYears,
+    selectedColumnFilters,
+    showColumnFilters,
+  };
 
-    function cacheCasesPageState(
-      nextCases: CompactCase[],
-      options: { hasAllCases?: boolean } = {},
-    ) {
-      const nextPartyNamesByCase = buildPartyNamesByCase(nextCases);
-      const nextClassificationsByCase = buildClassificationsByCase(nextCases);
+  const isMountedRef = useRef(false);
 
-      setPartyNamesByCase(nextPartyNamesByCase);
-      setClassificationsByCase(nextClassificationsByCase);
+  const cacheCasesPageState = useCallback((
+    nextCases: CompactCase[],
+    options: { hasAllCases?: boolean } = {},
+  ) => {
+    const currentCache = readCasesPageCache();
+    const latestCacheableState = latestCacheableStateRef.current;
+    const nextPartyNamesByCase = buildPartyNamesByCase(nextCases);
+    const nextClassificationsByCase = buildClassificationsByCase(nextCases);
 
-      writeCasesPageCache({
-        cases: nextCases,
-        partyNamesByCase: nextPartyNamesByCase,
-        classificationsByCase: nextClassificationsByCase,
-        hasAllCases: options.hasAllCases ?? readCasesPageCache()?.hasAllCases ?? false,
-        searchTerm: readCasesPageCache()?.searchTerm ?? searchTerm,
-        selectedSearchColumns: readCasesPageCache()?.selectedSearchColumns ?? selectedSearchColumns,
-        selectedDocketTypes: readCasesPageCache()?.selectedDocketTypes ?? selectedDocketTypes,
-        selectedDocketYears: readCasesPageCache()?.selectedDocketYears ?? selectedDocketYears,
-        selectedColumnFilters: readCasesPageCache()?.selectedColumnFilters ?? selectedColumnFilters,
-        showColumnFilters: readCasesPageCache()?.showColumnFilters ?? showColumnFilters,
-      });
-    }
+    setPartyNamesByCase(nextPartyNamesByCase);
+    setClassificationsByCase(nextClassificationsByCase);
 
-    async function hydrateParticipantsLabelsAndQuickDetails(shellCases: CompactCase[]) {
-      setIsLoadingAllCases(true);
-      const caseIds = shellCases.map((caseDetail) => caseDetail.id);
-      const participantsResult = await getDocketParticipantsForCases(caseIds);
-
-      if (!isMounted) {
-        return;
-      }
-
-      if (participantsResult.error) {
-        setIsLoadingAllCases(false);
-        return;
-      }
-
-      const participantCases = mergeParticipantsIntoCases(shellCases, participantsResult.data);
-      setCases(participantCases);
-      cacheCasesPageState(participantCases);
-
-      const labelsResult = await getDocketCaseLabelsForCases(caseIds);
-
-      if (!isMounted) {
-        return;
-      }
-
-      if (labelsResult.error) {
-        setIsLoadingAllCases(false);
-        return;
-      }
-
-      const labeledCases = mergeLabelsIntoCases(participantCases, labelsResult.data);
-      setCases(labeledCases);
-      cacheCasesPageState(labeledCases);
-
-      const canViewQuickDetailsResult = await canCurrentUserViewDocketQuickDetails();
-
-      if (!isMounted) {
-        return;
-      }
-
-      if (canViewQuickDetailsResult.error || !canViewQuickDetailsResult.data) {
-        setIsLoadingAllCases(false);
-        cacheCasesPageState(labeledCases, { hasAllCases: true });
-        return;
-      }
-
-      const quickDetailsResult = await getDocketQuickDetailsForCases(caseIds);
-
-      if (!isMounted) {
-        return;
-      }
-
-      setIsLoadingAllCases(false);
-
-      if (quickDetailsResult.error) {
-        return;
-      }
-
-      const hydratedCases = mergeQuickDetailsIntoCases(labeledCases, quickDetailsResult.data);
-      setCases(hydratedCases);
-      cacheCasesPageState(hydratedCases, { hasAllCases: true });
-    }
-
-    async function loadCases() {
-      if (cachedInitialState && !isManualRefresh) {
-        setIsLoading(false);
-      } else {
-        setIsLoading(true);
-      }
-      const shellResult = await getDocketShellDisplay();
-
-      if (!isMounted) {
-        return;
-      }
-
-      if (shellResult.error) {
-        setErrorMessage(shellResult.error.message);
-        setCases([]);
-        setPartyNamesByCase({});
-        setIsLoading(false);
-        return;
-      }
-
-      const shellCases = withEmptyHydratedColumns(shellResult.data);
-      setErrorMessage(null);
-      setCases(shellCases);
-      setSelectedCaseKey(null);
-      cacheCasesPageState(shellCases, { hasAllCases: false });
-      setIsLoading(false);
-
-      void hydrateParticipantsLabelsAndQuickDetails(shellCases);
-    }
-
-    loadCases();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [cachedInitialState, refreshNonce]);
-
-
-  useEffect(() => {
-    function refreshCasesWhenPageBecomesActive() {
-      if (document.visibilityState === 'visible') {
-        setRefreshNonce((currentNonce) => currentNonce + 1);
-      }
-    }
-
-    document.addEventListener('visibilitychange', refreshCasesWhenPageBecomesActive);
-    window.addEventListener('focus', refreshCasesWhenPageBecomesActive);
-
-    return () => {
-      document.removeEventListener('visibilitychange', refreshCasesWhenPageBecomesActive);
-      window.removeEventListener('focus', refreshCasesWhenPageBecomesActive);
-    };
+    writeCasesPageCache({
+      cases: nextCases,
+      partyNamesByCase: nextPartyNamesByCase,
+      classificationsByCase: nextClassificationsByCase,
+      hasAllCases: options.hasAllCases ?? currentCache?.hasAllCases ?? false,
+      hasLoadedCases: true,
+      searchTerm: currentCache?.searchTerm ?? latestCacheableState.searchTerm,
+      selectedSearchColumns: currentCache?.selectedSearchColumns ?? latestCacheableState.selectedSearchColumns,
+      selectedDocketTypes: currentCache?.selectedDocketTypes ?? latestCacheableState.selectedDocketTypes,
+      selectedDocketYears: currentCache?.selectedDocketYears ?? latestCacheableState.selectedDocketYears,
+      selectedColumnFilters: currentCache?.selectedColumnFilters ?? latestCacheableState.selectedColumnFilters,
+      showColumnFilters: currentCache?.showColumnFilters ?? latestCacheableState.showColumnFilters,
+    });
   }, []);
 
+  const hydrateParticipantsLabelsAndQuickDetails = useCallback(async (shellCases: CompactCase[]) => {
+    setIsLoadingAllCases(true);
+    const caseIds = shellCases.map((caseDetail) => caseDetail.id);
+    const participantsResult = await getDocketParticipantsForCases(caseIds);
+
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    if (participantsResult.error) {
+      setIsLoadingAllCases(false);
+      return;
+    }
+
+    const participantCases = mergeParticipantsIntoCases(shellCases, participantsResult.data);
+    setCases(participantCases);
+    cacheCasesPageState(participantCases);
+
+    const labelsResult = await getDocketCaseLabelsForCases(caseIds);
+
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    if (labelsResult.error) {
+      setIsLoadingAllCases(false);
+      return;
+    }
+
+    const labeledCases = mergeLabelsIntoCases(participantCases, labelsResult.data);
+    setCases(labeledCases);
+    cacheCasesPageState(labeledCases);
+
+    const canViewQuickDetailsResult = await canCurrentUserViewDocketQuickDetails();
+
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    if (canViewQuickDetailsResult.error || !canViewQuickDetailsResult.data) {
+      setIsLoadingAllCases(false);
+      cacheCasesPageState(labeledCases, { hasAllCases: true });
+      return;
+    }
+
+    const quickDetailsResult = await getDocketQuickDetailsForCases(caseIds);
+
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    setIsLoadingAllCases(false);
+
+    if (quickDetailsResult.error) {
+      return;
+    }
+
+    const hydratedCases = mergeQuickDetailsIntoCases(labeledCases, quickDetailsResult.data);
+    setCases(hydratedCases);
+    cacheCasesPageState(hydratedCases, { hasAllCases: true });
+  }, [cacheCasesPageState]);
+
+  const loadCases = useCallback(async (options: { preserveExistingRows: boolean }) => {
+    if (options.preserveExistingRows) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
+
+    const shellResult = await getDocketShellDisplay();
+
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    if (shellResult.error) {
+      setErrorMessage(shellResult.error.message);
+
+      if (!options.preserveExistingRows && !hasUsableCasesCache(readCasesPageCache())) {
+        setCases([]);
+        setPartyNamesByCase({});
+        setClassificationsByCase({});
+      }
+
+      setIsLoading(false);
+      setIsRefreshing(false);
+      return;
+    }
+
+    const shellCases = withEmptyHydratedColumns(shellResult.data);
+    setErrorMessage(null);
+    setCases(shellCases);
+    setSelectedCaseKey(null);
+    cacheCasesPageState(shellCases, { hasAllCases: false });
+    setIsLoading(false);
+    setIsRefreshing(false);
+
+    void hydrateParticipantsLabelsAndQuickDetails(shellCases);
+  }, [cacheCasesPageState, hydrateParticipantsLabelsAndQuickDetails]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    if (hasUsableCasesCache(cachedInitialState)) {
+      setIsLoading(false);
+    } else {
+      void loadCases({ preserveExistingRows: false });
+    }
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [cachedInitialState, loadCases]);
+
   function refreshCases() {
-    setRefreshNonce((currentNonce) => currentNonce + 1);
+    void loadCases({ preserveExistingRows: true });
   }
 
   useEffect(() => {
@@ -1162,8 +1183,8 @@ export default function CasesPage() {
                   <Printer className="mr-2 size-4" />
                   {isGeneratingPdf ? 'Generating PDF…' : 'Print PDF'}
                 </Button>
-                <Button type="button" variant="outline" onClick={refreshCases} disabled={isLoading || isLoadingAllCases || isGeneratingPdf}>
-                  <RefreshCw className={`mr-2 size-4 ${(isLoading || isLoadingAllCases) ? 'animate-spin' : ''}`} />
+                <Button type="button" variant="outline" onClick={refreshCases} disabled={isLoading || isLoadingAllCases || isRefreshing || isGeneratingPdf}>
+                  <RefreshCw className={`mr-2 size-4 ${(isLoading || isLoadingAllCases || isRefreshing) ? 'animate-spin' : ''}`} />
                   Refresh
                 </Button>
               </div>
@@ -1184,7 +1205,7 @@ export default function CasesPage() {
             </Alert>
           ) : null}
 
-          <Card aria-busy={isLoading || isLoadingAllCases} className="min-h-0 flex-1 gap-4 overflow-hidden py-4">
+          <Card aria-busy={isLoading || isLoadingAllCases || isRefreshing} className="min-h-0 flex-1 gap-4 overflow-hidden py-4">
             <CardHeader className="shrink-0 px-4 md:px-6">
               <div className="grid gap-4 sm:max-w-xl sm:grid-cols-2">
                 <div className="flex flex-col gap-2 sm:col-span-2">
