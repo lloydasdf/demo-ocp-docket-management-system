@@ -43,7 +43,6 @@ WITH filtered_cases AS (
   LEFT JOIN public.persons p ON p.id = cp.person_id
   LEFT JOIN public.organizations o ON o.id = cp.organization_id
   LEFT JOIN public.case_participant_attributes cpa ON cpa.case_participant_id = cp.id
-  WHERE COALESCE(cp.is_deleted, false) IS FALSE
 ), participant_export AS (
   SELECT case_id,
     string_agg(participant_name, E'\n' ORDER BY participant_order, id) FILTER (WHERE role_code IN ('complainant','complainants','comp')) complainants,
