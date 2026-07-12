@@ -2,11 +2,12 @@ import type { Workbook, Worksheet } from 'exceljs';
 import type { CaseExcelExportRow } from '@/lib/supabase/case-export';
 
 type WorkbookColumn = { header: string; key: keyof CaseExcelExportRow; width: number };
-type DocketTypeGroup = {
-  id: number | null;
+type DocketTypeYearGroup = {
+  docketTypeId: number | null;
   prefix: string;
   label: string;
   sortOrder: number | null;
+  year: number | null;
   rows: CaseExcelExportRow[];
 };
 
@@ -105,7 +106,6 @@ function sortRowsByDocket(left: CaseExcelExportRow, right: CaseExcelExportRow) {
   const leftSort = docketSortValue(left);
   const rightSort = docketSortValue(right);
   return (
-    leftSort.year - rightSort.year ||
     leftSort.monthCode.localeCompare(rightSort.monthCode, undefined, { numeric: true, sensitivity: 'base' }) ||
     leftSort.number - rightSort.number ||
     leftSort.caseId - rightSort.caseId
@@ -128,22 +128,34 @@ export function sanitizeWorksheetName(requestedName: string, existingNames: Set<
   return candidate;
 }
 
-function groupRowsByDocketType(rows: CaseExcelExportRow[]) {
-  const groups = new Map<string, DocketTypeGroup>();
+function formatTwoDigitYear(year: number | null) {
+  if (!Number.isFinite(year)) return '';
+  return String(year).slice(-2).padStart(2, '0');
+}
+
+function groupRowsByDocketTypeAndYear(rows: CaseExcelExportRow[]) {
+  const groups = new Map<string, DocketTypeYearGroup>();
+  const seenCaseIds = new Set<number>();
 
   for (const rawRow of rows) {
     const row = normalizeExportRow(rawRow);
+    if (seenCaseIds.has(row.case_id)) {
+      throw new Error('Export data contains a duplicate case row. Please retry the export or contact support.');
+    }
+
+    seenCaseIds.add(row.case_id);
     const inferredPrefix = inferDocketTypePrefix(row.docket_no);
     const displayPrefix = row.docket_type_prefix || inferredPrefix;
+    const yearKey = row.docket_year ?? 'unknown';
     const groupKey = row.docket_type_id !== null
-      ? `id:${row.docket_type_id}`
+      ? `id:${row.docket_type_id}:year:${yearKey}`
       : row.docket_type_prefix
-        ? `prefix:${row.docket_type_prefix.toLowerCase()}`
+        ? `prefix:${row.docket_type_prefix.toUpperCase()}:year:${yearKey}`
         : row.docket_type_label
-          ? `label:${row.docket_type_label.toLowerCase()}`
+          ? `label:${row.docket_type_label.toUpperCase()}:year:${yearKey}`
           : inferredPrefix
-            ? `inferred-prefix:${inferredPrefix.toLowerCase()}`
-            : 'other';
+            ? `inferred-prefix:${inferredPrefix.toUpperCase()}:year:${yearKey}`
+            : `other:year:${yearKey}`;
     const existingGroup = groups.get(groupKey);
 
     if (existingGroup) {
@@ -152,18 +164,23 @@ function groupRowsByDocketType(rows: CaseExcelExportRow[]) {
     }
 
     groups.set(groupKey, {
-      id: row.docket_type_id,
+      docketTypeId: row.docket_type_id,
       prefix: displayPrefix,
       label: row.docket_type_label ?? '',
       sortOrder: row.docket_type_sort_order,
+      year: row.docket_year,
       rows: [row],
     });
   }
 
-  return Array.from(groups.values()).sort(sortDocketTypeGroups);
+  return Array.from(groups.values()).sort(sortDocketTypeYearGroups);
 }
 
-function sortDocketTypeGroups(left: DocketTypeGroup, right: DocketTypeGroup) {
+function sortDocketTypeYearGroups(left: DocketTypeYearGroup, right: DocketTypeYearGroup) {
+  const leftYear = left.year ?? Number.MAX_SAFE_INTEGER;
+  const rightYear = right.year ?? Number.MAX_SAFE_INTEGER;
+  if (leftYear !== rightYear) return leftYear - rightYear;
+
   if (left.sortOrder !== null && right.sortOrder !== null && left.sortOrder !== right.sortOrder) {
     return left.sortOrder - right.sortOrder;
   }
@@ -176,17 +193,27 @@ function sortDocketTypeGroups(left: DocketTypeGroup, right: DocketTypeGroup) {
   if (leftPreferred !== -1 || rightPreferred !== -1) {
     if (leftPreferred === -1) return 1;
     if (rightPreferred === -1) return -1;
-    return leftPreferred - rightPreferred;
+    if (leftPreferred !== rightPreferred) return leftPreferred - rightPreferred;
   }
 
   return left.prefix.localeCompare(right.prefix, undefined, { numeric: true, sensitivity: 'base' }) || left.label.localeCompare(right.label, undefined, { numeric: true, sensitivity: 'base' });
 }
 
-function preferredWorksheetName(group: DocketTypeGroup) {
-  if (group.prefix) return group.prefix;
-  if (group.label) return group.label;
-  if (group.id !== null) return `Docket Type ${group.id}`;
+function preferredWorksheetName(group: DocketTypeYearGroup) {
+  const twoDigitYear = formatTwoDigitYear(group.year);
+  if (group.prefix) return `${group.prefix}${twoDigitYear}`;
+  if (group.label) return `${group.label}${twoDigitYear}`;
+  if (group.docketTypeId !== null && group.year !== null) return `DocketType${group.docketTypeId}-${group.year}`;
+  if (twoDigitYear) return `Other${twoDigitYear}`;
   return 'Other';
+}
+
+function validateGroups(groups: DocketTypeYearGroup[]) {
+  for (const group of groups) {
+    if (group.rows.length === 0) {
+      throw new Error('Export generated an empty worksheet group. Please retry the export.');
+    }
+  }
 }
 
 function addCasesWorksheet(params: { workbook: Workbook; sheetName: string; rows: CaseExcelExportRow[] }): Worksheet {
@@ -212,33 +239,6 @@ function addCasesWorksheet(params: { workbook: Workbook; sheetName: string; rows
   return worksheet;
 }
 
-function addSummaryWorksheet(workbook: Workbook, groups: DocketTypeGroup[], existingNames: Set<string>) {
-  const worksheet = workbook.addWorksheet(sanitizeWorksheetName('Summary', existingNames));
-  worksheet.views = [{ state: 'frozen', ySplit: 1 }];
-  worksheet.columns = [
-    { header: 'Docket Type', key: 'prefix', width: 18 },
-    { header: 'Description', key: 'label', width: 36 },
-    { header: 'Number of Cases', key: 'count', width: 18 },
-  ];
-  worksheet.autoFilter = 'A1:C1';
-
-  worksheet.getRow(1).eachCell((cell) => {
-    cell.font = { bold: true };
-    cell.alignment = { wrapText: true, vertical: 'middle', horizontal: 'center' };
-  });
-
-  let total = 0;
-  for (const group of groups) {
-    total += group.rows.length;
-    const row = worksheet.addRow({ prefix: group.prefix || 'Other', label: group.label, count: group.rows.length });
-    row.getCell(3).numFmt = '#,##0';
-  }
-
-  const totalRow = worksheet.addRow({ prefix: 'Total', label: '', count: total });
-  totalRow.font = { bold: true };
-  totalRow.getCell(3).numFmt = '#,##0';
-}
-
 export async function downloadCasesWorkbook(
   rows: CaseExcelExportRow[],
   filters: {
@@ -253,13 +253,10 @@ export async function downloadCasesWorkbook(
   workbook.created = new Date();
 
   const existingWorksheetNames = new Set<string>();
-  const docketTypeGroups = groupRowsByDocketType(rows);
+  const docketTypeYearGroups = groupRowsByDocketTypeAndYear(rows);
+  validateGroups(docketTypeYearGroups);
 
-  if (filters.docketTypeId === null) {
-    addSummaryWorksheet(workbook, docketTypeGroups, existingWorksheetNames);
-  }
-
-  for (const group of docketTypeGroups) {
+  for (const group of docketTypeYearGroups) {
     addCasesWorksheet({
       workbook,
       sheetName: sanitizeWorksheetName(preferredWorksheetName(group), existingWorksheetNames),

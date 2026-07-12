@@ -115,7 +115,7 @@ export function ExportCasesDialog({ availableYears, disabled }: { availableYears
                 {docketTypes.map((type) => <SelectItem key={type.id} value={String(type.id)}>{type.prefix} — {type.displayLabel}</SelectItem>)}
               </SelectContent>
             </Select>
-            <p className="text-xs text-muted-foreground">Selecting All docket types creates one worksheet for each docket type.</p>
+            <p className="text-xs text-muted-foreground">The workbook creates one worksheet for each docket type and year combination.</p>
           </div>
           {docketTypesError ? <Alert variant="destructive"><AlertDescription>{docketTypesError}</AlertDescription></Alert> : null}
           {exportError ? <Alert variant="destructive"><AlertDescription>{exportError}</AlertDescription></Alert> : null}
