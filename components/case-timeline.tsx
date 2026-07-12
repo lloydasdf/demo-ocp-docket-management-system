@@ -89,6 +89,7 @@ export type CaseTimelineProps = {
   petitionsForReview?: CasePetitionForReviewRecord[];
   onChanged?: () => void | Promise<void>;
   onUpdateStatus?: () => void;
+  canShowCaseManagementActions?: boolean;
 };
 
 function toDateInputValue(value: string | null | undefined) {
@@ -1167,6 +1168,7 @@ export function CaseTimeline({
   onChanged,
   onUpdateStatus,
   petitionsForReview = [],
+  canShowCaseManagementActions = true,
 }: CaseTimelineProps) {
   const [showVoided, setShowVoided] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CaseTimelineEventRecord | null>(null);
@@ -1888,7 +1890,7 @@ export function CaseTimeline({
                             {petitionDetails ? (
                               <PetitionForReviewEventDetails petition={petitionDetails} />
                             ) : null}
-                            {!event.is_voided ? (
+                            {canShowCaseManagementActions && !event.is_voided ? (
                               <div className="flex gap-2 border-t pt-3">
                                 {(!EDIT_WORKFLOW_TEMPORARILY_DISABLED || event.event_type_code === "CASE_RECEIVED") ? <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button> : null}
                                 {event.event_type_code !== "CASE_RECEIVED" ? <Button type="button" variant="destructive" size="sm" onClick={() => openVoidDialog(event)}>Void</Button> : null}
@@ -1904,10 +1906,12 @@ export function CaseTimeline({
             ))}
           </div>
         )}
-        <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
-          <Button type="button" variant="outline" onClick={onUpdateStatus}>Update Status</Button>
-          <Button type="button" onClick={openAddDialog}>Add Event</Button>
-        </div>
+        {canShowCaseManagementActions ? (
+          <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+            {onUpdateStatus ? <Button type="button" variant="outline" onClick={onUpdateStatus}>Update Status</Button> : null}
+            <Button type="button" onClick={openAddDialog}>Add Event</Button>
+          </div>
+        ) : null}
       </CardContent>
 
       <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>

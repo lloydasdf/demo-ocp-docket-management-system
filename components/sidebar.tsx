@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
-import type { User } from '@supabase/supabase-js';
 import {
   FileText,
   FilePlus,
@@ -12,37 +11,51 @@ import {
   PanelLeftOpen,
   LogOut,
   Users,
+  BarChart3,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
+import { useAppAuthRole } from '@/hooks/use-app-auth-role';
+import { getNavigationForRole } from '@/lib/auth/ui-permissions';
 
 const SIDEBAR_AUTO_COLLAPSE_QUERY = '(max-width: 1024px)';
 const SIDEBAR_HIDE_QUERY = '(max-width: 768px)';
 
 const navigation = [
   {
+    key: 'new-docket' as const,
     name: 'New Docket Entry',
     href: '/new-docket',
     icon: FilePlus,
     description: 'Create a new docket record',
   },
   {
+    key: 'cases' as const,
     name: 'Cases',
     href: '/cases',
     icon: FileText,
     description: 'View case information',
   },
   {
+    key: 'clearance-search' as const,
     name: 'Clearance Search',
     href: '/clearance-search',
     icon: Search,
     description: 'Search clearance records',
   },
   {
+    key: 'user-management' as const,
     name: 'User Management',
     href: '/user-management',
     icon: Users,
     description: 'Manage application users and roles',
+  },
+  {
+    key: 'admin-reports' as const,
+    name: 'Admin Reports',
+    href: '/admin-reports',
+    icon: BarChart3,
+    description: 'View administrative reports',
   },
 ];
 
@@ -51,7 +64,7 @@ function getLoginPath(pathname: string) {
   return `/login?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
-function getUserInitials(user: User | null) {
+function getUserInitials(user: { email?: string | null } | null) {
   const email = user?.email?.trim();
 
   if (!email) {
@@ -74,56 +87,20 @@ export function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isCompactScreen, setIsCompactScreen] = useState(false);
   const [isCompactOpen, setIsCompactOpen] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const { user, roles, isAuthLoading, isRoleLoading, isAuthenticated, roleError } = useAppAuthRole();
 
   useEffect(() => {
-    let isMounted = true;
-
-    async function syncAuthState() {
-      const supabase = await getSupabaseBrowserClient();
-      const { data } = await supabase.auth.getSession();
-
-      if (!isMounted) {
-        return;
-      }
-
-      setUser(data.session?.user ?? null);
-
-      if (!data.session) {
-        router.replace(getLoginPath(pathname));
-      }
+    if (!isAuthLoading && !isAuthenticated) {
+      router.replace(getLoginPath(pathname));
     }
-
-    syncAuthState();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [pathname, router]);
+  }, [isAuthLoading, isAuthenticated, pathname, router]);
 
   useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-
-    async function subscribeToAuthChanges() {
-      const supabase = await getSupabaseBrowserClient();
-      const { data } = supabase.auth.onAuthStateChange((event, session) => {
-        setUser(session?.user ?? null);
-
-        if (event === 'SIGNED_OUT') {
-          router.replace(getLoginPath(pathname));
-        }
-      });
-
-      unsubscribe = () => data.subscription.unsubscribe();
+    if (roleError) {
+      console.error('Unable to resolve application role for sidebar navigation.', roleError);
     }
-
-    subscribeToAuthChanges();
-
-    return () => {
-      unsubscribe?.();
-    };
-  }, [pathname, router]);
+  }, [roleError]);
 
   useEffect(() => {
     const collapseQuery = window.matchMedia(SIDEBAR_AUTO_COLLAPSE_QUERY);
@@ -152,6 +129,7 @@ export function Sidebar() {
   const isIconOnly = !isCompactScreen && isCollapsed;
   const ToggleIcon = isCompactScreen || !isCollapsed ? PanelLeftClose : PanelLeftOpen;
   const toggleLabel = isCompactScreen ? 'Hide sidebar' : isCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+  const visibleNavigation = useMemo(() => getNavigationForRole(roleError ? null : roles, navigation), [roleError, roles]);
 
   function handleToggleSidebar() {
     if (isCompactScreen) {
@@ -233,7 +211,12 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className={cn('flex-1 overflow-y-auto p-4 space-y-1', isIconOnly && 'px-3')}>
-        {navigation.map((item) => {
+        {isAuthLoading || isRoleLoading ? (
+          <p className={cn('px-4 py-3 text-sm text-sidebar-foreground/70', isIconOnly && 'sr-only')}>Loading navigation…</p>
+        ) : roleError ? (
+          <p className={cn('px-4 py-3 text-xs text-sidebar-foreground/70', isIconOnly && 'sr-only')}>Navigation unavailable</p>
+        ) : null}
+        {!isAuthLoading && !isRoleLoading && !roleError ? visibleNavigation.map((item) => {
           const Icon = item.icon;
           const isActive = pathname === item.href || (item.href === '/cases' && pathname.startsWith('/cases/'));
 
@@ -260,7 +243,7 @@ export function Sidebar() {
               {!isIconOnly ? <span>{item.name}</span> : null}
             </Link>
           );
-        })}
+        }) : null}
       </nav>
 
       {/* Footer */}

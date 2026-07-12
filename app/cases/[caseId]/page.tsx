@@ -7,6 +7,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ExternalLink, Printer } from "lucide-react";
 
 import { CaseTimeline } from "@/components/case-timeline";
+import { useCurrentUserRole } from "@/hooks/use-current-user-role";
+import { canShowCaseManagementActions as canShowCaseManagementActionsForRole } from "@/lib/auth/ui-permissions";
 import { StageBadge, StatusBadge } from "@/components/status-badge";
 import { Sidebar } from "@/components/sidebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -1671,6 +1673,7 @@ export default function CaseDetailsPage() {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [isPrintOptionsOpen, setIsPrintOptionsOpen] = useState(false);
+  const { roles: currentRoles, isLoading: isRoleLoading, error: roleError } = useCurrentUserRole();
   const [printOptions, setPrintOptions] = useState<CaseDetailsReportOptions>({
     includeTimeline: true,
     includeAttachmentIndex: true,
@@ -1850,6 +1853,14 @@ export default function CaseDetailsPage() {
     }
   }
 
+  useEffect(() => {
+    if (roleError) {
+      console.error("Unable to resolve application role for case action visibility.", roleError);
+    }
+  }, [roleError]);
+
+  const canShowCaseManagementActions = !isRoleLoading && !roleError && canShowCaseManagementActionsForRole(currentRoles);
+
   const activeSectionEditor =
     activeOverviewEditor && activeOverviewEditor !== "history" && activeOverviewEditor !== "participants"
       ? activeOverviewEditor
@@ -1937,7 +1948,7 @@ export default function CaseDetailsPage() {
                         <Printer className="mr-2 h-4 w-4" />
                         {isGeneratingPdf ? "Generating PDF…" : "Print Details"}
                       </Button>
-                      <DropdownMenu>
+                      {canShowCaseManagementActions ? <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="outline">
                             Actions
@@ -1952,7 +1963,7 @@ export default function CaseDetailsPage() {
                           <DropdownMenuItem onSelect={() => openOverviewEditor("notes")}>Manage Notes</DropdownMenuItem>
                           <DropdownMenuItem onSelect={() => openOverviewEditor("history")}>View Overview Change History</DropdownMenuItem>
                         </DropdownMenuContent>
-                      </DropdownMenu>
+                      </DropdownMenu> : null}
                     </div>
                   </div>
 
@@ -2112,7 +2123,7 @@ export default function CaseDetailsPage() {
                 </DialogContent>
               </Dialog>
 
-              {activeSectionEditor && activeEditorCopy &&
+              {canShowCaseManagementActions && activeSectionEditor && activeEditorCopy &&
               activeSectionEditor !== "places" &&
               activeSectionEditor !== "notes" &&
               activeSectionEditor !== "violations" ? (
@@ -2133,7 +2144,7 @@ export default function CaseDetailsPage() {
                   title={activeEditorCopy.title}
                 />
               ) : null}
-              <ManagePlacesDialog
+              {canShowCaseManagementActions ? <ManagePlacesDialog
                 caseId={caseId}
                 onOpenChange={(open) =>
                   setActiveOverviewEditor(open ? "places" : null)
@@ -2141,24 +2152,24 @@ export default function CaseDetailsPage() {
                 onSaved={loadCase}
                 open={activeOverviewEditor === "places"}
                 refs={refs}
-              />
-              <ManageViolationsDialog
+              /> : null}
+              {canShowCaseManagementActions ? <ManageViolationsDialog
                 caseId={caseId}
                 onOpenChange={(open) =>
                   setActiveOverviewEditor(open ? "violations" : null)
                 }
                 onSaved={loadCase}
                 open={activeOverviewEditor === "violations"}
-              />
-              <ManageNotesDialog
+              /> : null}
+              {canShowCaseManagementActions ? <ManageNotesDialog
                 caseId={caseId}
                 onOpenChange={(open) =>
                   setActiveOverviewEditor(open ? "notes" : null)
                 }
                 onSaved={loadCase}
                 open={activeOverviewEditor === "notes"}
-              />
-              <ManageParticipantsDialog
+              /> : null}
+              {canShowCaseManagementActions ? <ManageParticipantsDialog
                 addressTypes={refs.addressTypes}
                 caseId={caseId}
                 onOpenChange={(open) =>
@@ -2167,7 +2178,7 @@ export default function CaseDetailsPage() {
                 onSaved={loadCase}
                 open={activeOverviewEditor === "participants"}
                 participants={data.participants.filter((participant) => !isVoidedPersonParticipant(participant))}
-              />
+              /> : null}
               <ParticipantCorrectionHistoryDialog corrections={selectedCorrectionHistory} onOpenChange={(open) => setCorrectionParticipantId(open ? correctionParticipantId : null)} open={Boolean(correctionParticipantId)} participant={selectedCorrectionParticipant} />
               <OverviewHistoryDialog
                 caseId={caseId}
@@ -2182,7 +2193,7 @@ export default function CaseDetailsPage() {
                   <CardHeader className="p-4 sm:p-6">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <CardTitle>Parties</CardTitle>
-                      <Button type="button" variant="outline" onClick={() => openOverviewEditor("participants")}>Manage Participants</Button>
+                      {canShowCaseManagementActions ? <Button type="button" variant="outline" onClick={() => openOverviewEditor("participants")}>Manage Participants</Button> : null}
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4 p-4 pt-0 sm:p-6 sm:pt-0">
@@ -2270,6 +2281,7 @@ export default function CaseDetailsPage() {
                   motions={data.motions}
                   onChanged={loadCase}
                   onUpdateStatus={() => openOverviewEditor("status")}
+                  canShowCaseManagementActions={canShowCaseManagementActions}
                   petitionsForReview={data.petitionsForReview}
                 />
 
