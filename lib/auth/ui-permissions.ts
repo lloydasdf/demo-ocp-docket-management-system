@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 
 export type AppRoleCode = 'DEVELOPER' | 'CHIEF' | 'ADMIN' | 'PROSECUTOR' | 'STAFF' | (string & {});
 export type NavigationKey = 'new-docket' | 'cases' | 'clearance-search' | 'user-management' | 'admin-reports';
+export type RoleInput = string | string[] | null | undefined;
 
 export type NavigationDefinition = {
   key: NavigationKey;
@@ -16,12 +17,17 @@ export function normalizeRoleCode(role: string | null | undefined): AppRoleCode 
   return normalized ? normalized : null;
 }
 
-export function isChief(role: string | null | undefined) {
-  return normalizeRoleCode(role) === 'CHIEF';
+export function normalizeRoleCodes(roleInput: RoleInput): AppRoleCode[] {
+  const roleValues = Array.isArray(roleInput) ? roleInput : [roleInput];
+  return Array.from(new Set(roleValues.map((role) => normalizeRoleCode(role)).filter((role): role is AppRoleCode => Boolean(role))));
 }
 
-export function isAdmin(role: string | null | undefined) {
-  return normalizeRoleCode(role) === 'ADMIN';
+export function isChief(role: RoleInput) {
+  return normalizeRoleCodes(role).includes('CHIEF');
+}
+
+export function isAdmin(role: RoleInput) {
+  return normalizeRoleCodes(role).includes('ADMIN');
 }
 
 const ROLE_NAVIGATION: Record<string, NavigationKey[]> = {
@@ -38,23 +44,30 @@ const ROLE_ROUTES: Record<string, string[]> = {
   DEVELOPER: ['/new-docket', '/cases', '/clearance-search', '/user-management'],
 };
 
-export function getNavigationForRole<T extends NavigationDefinition>(role: string | null | undefined, navigation: T[]): T[] {
-  const allowedKeys = ROLE_NAVIGATION[normalizeRoleCode(role) ?? ''] ?? [];
+function getAllowedNavigationKeys(roleInput: RoleInput) {
+  return Array.from(new Set(normalizeRoleCodes(roleInput).flatMap((role) => ROLE_NAVIGATION[role] ?? [])));
+}
+
+function getAllowedRoutes(roleInput: RoleInput) {
+  return Array.from(new Set(normalizeRoleCodes(roleInput).flatMap((role) => ROLE_ROUTES[role] ?? [])));
+}
+
+export function getNavigationForRole<T extends NavigationDefinition>(role: RoleInput, navigation: T[]): T[] {
+  const allowedKeys = getAllowedNavigationKeys(role);
   return navigation.filter((item) => allowedKeys.includes(item.key));
 }
 
-export function canAccessRoute(role: string | null | undefined, route: string) {
-  const normalizedRole = normalizeRoleCode(role);
-  const allowedRoutes = ROLE_ROUTES[normalizedRole ?? ''] ?? [];
+export function canAccessRoute(role: RoleInput, route: string) {
+  const allowedRoutes = getAllowedRoutes(role);
   return allowedRoutes.some((allowedRoute) => route === allowedRoute || (allowedRoute === '/cases' && route.startsWith('/cases/')));
 }
 
-export function canShowCaseManagementActions(role: string | null | undefined) {
-  const normalizedRole = normalizeRoleCode(role);
-  return Boolean(normalizedRole) && normalizedRole !== 'CHIEF';
+export function canShowCaseManagementActions(role: RoleInput) {
+  const roles = normalizeRoleCodes(role);
+  return roles.length > 0 && !roles.includes('CHIEF');
 }
 
-export function canExportCasesToExcel(role: string | null | undefined) {
-  const normalizedRole = normalizeRoleCode(role);
-  return Boolean(normalizedRole) && normalizedRole !== 'PROSECUTOR';
+export function canExportCasesToExcel(role: RoleInput) {
+  const roles = normalizeRoleCodes(role);
+  return roles.length > 0 && !roles.includes('PROSECUTOR');
 }

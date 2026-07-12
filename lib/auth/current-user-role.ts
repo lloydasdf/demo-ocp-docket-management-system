@@ -1,7 +1,26 @@
-import { getCurrentAppRoleCodes, type CurrentAppRoleCode } from '@/lib/supabase/queries';
+import { getCurrentAppRoleCodes } from '@/lib/supabase/queries';
 import { normalizeRoleCode, type AppRoleCode } from '@/lib/auth/ui-permissions';
 
-const ROLE_PRIORITY = ['DEVELOPER', 'CHIEF', 'ADMIN', 'PROSECUTOR', 'STAFF'];
+function readStringProperty(value: object, property: 'role_code' | 'code') {
+  if (property in value) {
+    const candidate = value[property as keyof typeof value];
+    return typeof candidate === 'string' ? candidate : null;
+  }
+
+  return null;
+}
+
+export function extractRoleCode(value: unknown): string | null {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (value && typeof value === 'object') {
+    return readStringProperty(value, 'role_code') ?? readStringProperty(value, 'code');
+  }
+
+  return null;
+}
 
 export type CurrentUserRoleResult = {
   role: AppRoleCode | null;
@@ -16,10 +35,9 @@ export async function getCurrentUserRole(): Promise<CurrentUserRoleResult> {
     return { role: null, roles: [], error: result.error };
   }
 
-  const roles = (result.data ?? [])
-    .map((role: CurrentAppRoleCode) => normalizeRoleCode(role))
-    .filter((role): role is AppRoleCode => Boolean(role));
+  const roles = Array.from(new Set((result.data ?? [])
+    .map((role: unknown) => normalizeRoleCode(extractRoleCode(role)))
+    .filter((role): role is AppRoleCode => Boolean(role))));
 
-  const role = ROLE_PRIORITY.find((candidate) => roles.includes(candidate)) ?? roles[0] ?? null;
-  return { role, roles, error: null };
+  return { role: roles.length === 1 ? roles[0] : null, roles, error: null };
 }

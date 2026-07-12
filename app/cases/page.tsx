@@ -426,8 +426,8 @@ export default function CasesPage() {
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
-  const { role: currentRole, isLoading: isRoleLoading, error: roleError } = useCurrentUserRole();
-  const canShowExcelExport = !isRoleLoading && !roleError && canExportCasesToExcel(currentRole);
+  const { roles: currentRoles, isLoading: isRoleLoading, error: roleError } = useCurrentUserRole();
+  const canShowExcelExport = !isRoleLoading && !roleError && canExportCasesToExcel(currentRoles);
 
   useEffect(() => {
     let isMounted = true;

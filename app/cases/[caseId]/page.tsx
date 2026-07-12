@@ -1673,7 +1673,7 @@ export default function CaseDetailsPage() {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [isPrintOptionsOpen, setIsPrintOptionsOpen] = useState(false);
-  const { role: currentRole, isLoading: isRoleLoading, error: roleError } = useCurrentUserRole();
+  const { roles: currentRoles, isLoading: isRoleLoading, error: roleError } = useCurrentUserRole();
   const [printOptions, setPrintOptions] = useState<CaseDetailsReportOptions>({
     includeTimeline: true,
     includeAttachmentIndex: true,
@@ -1859,7 +1859,7 @@ export default function CaseDetailsPage() {
     }
   }, [roleError]);
 
-  const canShowCaseManagementActions = !isRoleLoading && !roleError && canShowCaseManagementActionsForRole(currentRole);
+  const canShowCaseManagementActions = !isRoleLoading && !roleError && canShowCaseManagementActionsForRole(currentRoles);
 
   const activeSectionEditor =
     activeOverviewEditor && activeOverviewEditor !== "history" && activeOverviewEditor !== "participants"

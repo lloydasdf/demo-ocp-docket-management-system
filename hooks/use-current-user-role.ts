@@ -1,41 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { getCurrentUserRole } from '@/lib/auth/current-user-role';
-import type { AppRoleCode } from '@/lib/auth/ui-permissions';
+import { useAppAuthRole } from '@/hooks/use-app-auth-role';
 
 export function useCurrentUserRole(enabled = true) {
-  const [role, setRole] = useState<AppRoleCode | null>(null);
-  const [roles, setRoles] = useState<AppRoleCode[]>([]);
-  const [isLoading, setIsLoading] = useState(enabled);
-  const [error, setError] = useState<unknown | null>(null);
+  const { role, roles, isRoleLoading, roleError } = useAppAuthRole();
 
-  useEffect(() => {
-    let isMounted = true;
+  if (!enabled) {
+    return { role: null, roles: [], isLoading: false, error: null };
+  }
 
-    async function loadRole() {
-      if (!enabled) {
-        setRole(null);
-        setRoles([]);
-        setIsLoading(false);
-        setError(null);
-        return;
-      }
-
-      setIsLoading(true);
-      const result = await getCurrentUserRole();
-      if (!isMounted) return;
-      setRole(result.role);
-      setRoles(result.roles);
-      setError(result.error);
-      setIsLoading(false);
-    }
-
-    loadRole();
-    return () => {
-      isMounted = false;
-    };
-  }, [enabled]);
-
-  return { role, roles, isLoading, error };
+  return { role, roles, isLoading: isRoleLoading, error: roleError };
 }
