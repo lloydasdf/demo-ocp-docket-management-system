@@ -1482,10 +1482,12 @@ function normalizeReportText(value: string) {
 }
 
 function allVisibleParticipantAddresses(participant: CaseParticipantRecord) {
-  const addresses = [
-    ...(participant.persons?.person_addresses ?? []),
-    ...(participant.organizations?.organization_addresses ?? []),
-  ];
+  const primaryAddresses = participantAddresses(participant);
+  const addresses = primaryAddresses.length > 0
+    ? primaryAddresses
+    : participant.participant_kind === "ORGANIZATION"
+      ? participant.persons?.person_addresses ?? []
+      : participant.organizations?.organization_addresses ?? [];
   const seen = new Set<string>();
 
   return addresses.filter((address) => {
