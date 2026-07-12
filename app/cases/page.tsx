@@ -1132,7 +1132,7 @@ export default function CasesPage() {
               <div className="flex flex-wrap gap-2">
                 <ExportCasesDialog
                   availableYears={docketYearFilters.map((year) => Number(year)).filter((year) => Number.isFinite(year))}
-                  disabled={isLoading || isLoadingAllCases || isGeneratingPdf}
+                  disabled={isLoading}
                 />
                 <Button
                   type="button"

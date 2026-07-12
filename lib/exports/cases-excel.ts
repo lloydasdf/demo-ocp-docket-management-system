@@ -28,18 +28,6 @@ export const CASE_EXCEL_COLUMNS: WorkbookColumn[] = [
   { header: 'Case Notes', key: 'case_notes', width: 50 },
 ];
 
-type ExcelCell = { value: unknown; font?: unknown; alignment?: unknown; numFmt?: string };
-type ExcelWorksheet = {
-  views: unknown[];
-  autoFilter?: string;
-  pageSetup?: { orientation?: string; printTitlesRow?: string };
-  columns: { header: string; key: string; width: number }[];
-  addRow(values: unknown[]): { eachCell(callback: (cell: ExcelCell) => void): void };
-  getRow(rowNumber: number): { eachCell(callback: (cell: ExcelCell) => void): void };
-};
-type ExcelWorkbook = { creator: string; created: Date; addWorksheet(name: string): ExcelWorksheet; xlsx: { writeBuffer(): Promise<ArrayBuffer> } };
-type ExcelModule = { Workbook: new () => ExcelWorkbook };
-
 function parseDateOnly(value: string | null) {
   if (!value || value.includes('\n')) return value ?? '';
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -60,7 +48,7 @@ function localDateString() {
 }
 
 export async function downloadCasesWorkbook(rows: CaseExcelExportRow[], filters: { yearLabel: string; docketTypeLabel: string }): Promise<void> {
-  const ExcelJS = (await import('exceljs')) as ExcelModule;
+  const ExcelJS = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'OCP Docket Management System';
   workbook.created = new Date();
