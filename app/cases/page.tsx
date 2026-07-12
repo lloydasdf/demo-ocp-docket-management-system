@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ChevronDown, Printer, RefreshCw, X } from 'lucide-react';
+import { ExportCasesDialog } from '@/components/cases/export-cases-dialog';
 import {
   getDocketCaseLabelsForCases,
   getDocketParticipantsForCases,
@@ -1129,6 +1130,10 @@ export default function CasesPage() {
                 <p className="text-muted-foreground mt-1">Browse all cases in the system</p>
               </div>
               <div className="flex flex-wrap gap-2">
+                <ExportCasesDialog
+                  availableYears={docketYearFilters.map((year) => Number(year)).filter((year) => Number.isFinite(year))}
+                  disabled={isLoading || isLoadingAllCases || isGeneratingPdf}
+                />
                 <Button
                   type="button"
                   variant="outline"
