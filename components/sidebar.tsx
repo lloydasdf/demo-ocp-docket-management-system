@@ -140,8 +140,23 @@ export function Sidebar() {
     setIsCollapsed((current) => !current);
   }
 
+  function clearCasesPageSessionCaches() {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.sessionStorage.key(index);
+
+      if (key?.startsWith('ocp-cases-page-cache-v')) {
+        window.sessionStorage.removeItem(key);
+      }
+    }
+  }
+
   async function handleSignOut() {
     setIsSigningOut(true);
+    clearCasesPageSessionCaches();
     const supabase = await getSupabaseBrowserClient();
     await supabase.auth.signOut();
     setIsSigningOut(false);

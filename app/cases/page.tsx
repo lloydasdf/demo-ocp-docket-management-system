@@ -90,12 +90,26 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY = 'ocp-cases-page-cache-v17';
-let casesPageMemoryCache: CasesPageCache | null = null;
+const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v18';
+const casesPageMemoryCache = new Map<string, CasesPageCache>();
 
-function readCasesPageCache() {
-  if (casesPageMemoryCache) {
-    return casesPageMemoryCache;
+function getCasesPageCacheKey(userId: string) {
+  return `${CASES_PAGE_CACHE_KEY_PREFIX}:${userId}`;
+}
+
+function clearLegacyCasesPageCaches() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.sessionStorage.removeItem('ocp-cases-page-cache-v16');
+  window.sessionStorage.removeItem('ocp-cases-page-cache-v17');
+}
+
+function readCasesPageCache(userId: string) {
+  const memoryCache = casesPageMemoryCache.get(userId);
+  if (memoryCache) {
+    return memoryCache;
   }
 
   if (typeof window === 'undefined') {
@@ -103,33 +117,40 @@ function readCasesPageCache() {
   }
 
   try {
-    const cachedValue = window.sessionStorage.getItem(CASES_PAGE_CACHE_KEY);
+    const cachedValue = window.sessionStorage.getItem(getCasesPageCacheKey(userId));
     if (!cachedValue) {
       return null;
     }
 
-    casesPageMemoryCache = JSON.parse(cachedValue) as CasesPageCache;
-    return casesPageMemoryCache;
+    const cache = JSON.parse(cachedValue) as CasesPageCache;
+    casesPageMemoryCache.set(userId, cache);
+    return cache;
   } catch {
     return null;
   }
 }
 
 function hasUsableCasesCache(cache: CasesPageCache | null) {
-  return Boolean(cache?.hasLoadedCases && Array.isArray(cache.cases));
+  return Boolean(
+    cache?.hasLoadedCases &&
+    cache.hasAllCases &&
+    Array.isArray(cache.cases),
+  );
 }
 
-function writeCasesPageCache(cache: CasesPageCache) {
-  casesPageMemoryCache = cache;
+function writeCasesPageCache(userId: string, cache: CasesPageCache) {
+  casesPageMemoryCache.set(userId, cache);
 
   if (typeof window === 'undefined') {
     return;
   }
 
+  const cacheKey = getCasesPageCacheKey(userId);
+
   try {
-    window.sessionStorage.setItem(CASES_PAGE_CACHE_KEY, JSON.stringify(cache));
+    window.sessionStorage.setItem(cacheKey, JSON.stringify(cache));
   } catch {
-    window.sessionStorage.removeItem(CASES_PAGE_CACHE_KEY);
+    window.sessionStorage.removeItem(cacheKey);
   }
 }
 
@@ -401,31 +422,31 @@ function buildClassificationsByCase(casesToMap: CompactCase[]) {
 export default function CasesPage() {
   const router = useRouter();
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
-  const [cachedInitialState] = useState(() => readCasesPageCache());
-  const [cases, setCases] = useState<CompactCase[]>(cachedInitialState?.cases ?? []);
-  const docketFiltersTouchedRef = useRef(
-    Array.isArray(cachedInitialState?.selectedDocketTypes) || Array.isArray(cachedInitialState?.selectedDocketYears),
-  );
-  const [selectedDocketTypes, setSelectedDocketTypes] = useState<DocketTypeFilter[]>(cachedInitialState?.selectedDocketTypes ?? []);
-  const [selectedDocketYears, setSelectedDocketYears] = useState<DocketYearFilter[]>(cachedInitialState?.selectedDocketYears ?? []);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [hasResolvedCurrentUser, setHasResolvedCurrentUser] = useState(false);
+  const [cachedInitialState, setCachedInitialState] = useState<CasesPageCache | null>(null);
+  const [cases, setCases] = useState<CompactCase[]>([]);
+  const docketFiltersTouchedRef = useRef(false);
+  const [selectedDocketTypes, setSelectedDocketTypes] = useState<DocketTypeFilter[]>([]);
+  const [selectedDocketYears, setSelectedDocketYears] = useState<DocketYearFilter[]>([]);
   const columnFilterTouchedRef = useRef<ColumnFilterTouched>(
-    getInitialColumnFilterTouched(cachedInitialState?.selectedColumnFilters),
+    getInitialColumnFilterTouched(undefined),
   );
   const [selectedColumnFilters, setSelectedColumnFilters] = useState<ColumnFilters>(() =>
-    getInitialColumnFilters(cachedInitialState?.selectedColumnFilters),
+    getInitialColumnFilters(undefined),
   );
-  const [showColumnFilters, setShowColumnFilters] = useState(cachedInitialState?.showColumnFilters ?? false);
-  const [searchTerm, setSearchTerm] = useState(cachedInitialState?.searchTerm ?? '');
+  const [showColumnFilters, setShowColumnFilters] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const [selectedSearchColumns, setSelectedSearchColumns] = useState<CaseSearchColumnKey[]>(() =>
-    cachedInitialState?.selectedSearchColumns ?? [...DEFAULT_SEARCH_COLUMNS],
+    [...DEFAULT_SEARCH_COLUMNS],
   );
-  const [isLoading, setIsLoading] = useState(!hasUsableCasesCache(cachedInitialState));
+  const [isLoading, setIsLoading] = useState(true);
   const [isLoadingAllCases, setIsLoadingAllCases] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedCaseKey, setSelectedCaseKey] = useState<string | null>(null);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(() => getInitialColumnWidths());
-  const [partyNamesByCase, setPartyNamesByCase] = useState<Record<number, CasePartyNames>>(cachedInitialState?.partyNamesByCase ?? {});
-  const [classificationsByCase, setClassificationsByCase] = useState<CaseClassificationByCase>(cachedInitialState?.classificationsByCase ?? {});
+  const [partyNamesByCase, setPartyNamesByCase] = useState<Record<number, CasePartyNames>>({});
+  const [classificationsByCase, setClassificationsByCase] = useState<CaseClassificationByCase>({});
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(640);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -453,11 +474,29 @@ export default function CasesPage() {
 
   const isMountedRef = useRef(false);
 
+  const applyCachedCasesPageState = useCallback((cache: CasesPageCache) => {
+    setCases(cache.cases);
+    setPartyNamesByCase(cache.partyNamesByCase);
+    setClassificationsByCase(cache.classificationsByCase);
+    setSearchTerm(cache.searchTerm ?? '');
+    setSelectedSearchColumns(cache.selectedSearchColumns ?? [...DEFAULT_SEARCH_COLUMNS]);
+    setSelectedDocketTypes(cache.selectedDocketTypes ?? []);
+    setSelectedDocketYears(cache.selectedDocketYears ?? []);
+    setSelectedColumnFilters(getInitialColumnFilters(cache.selectedColumnFilters));
+    setShowColumnFilters(cache.showColumnFilters ?? false);
+    docketFiltersTouchedRef.current = Array.isArray(cache.selectedDocketTypes) || Array.isArray(cache.selectedDocketYears);
+    columnFilterTouchedRef.current = getInitialColumnFilterTouched(cache.selectedColumnFilters);
+  }, []);
+
   const cacheCasesPageState = useCallback((
     nextCases: CompactCase[],
     options: { hasAllCases?: boolean } = {},
   ) => {
-    const currentCache = readCasesPageCache();
+    if (!currentUserId) {
+      return;
+    }
+
+    const currentCache = readCasesPageCache(currentUserId);
     const latestCacheableState = latestCacheableStateRef.current;
     const nextPartyNamesByCase = buildPartyNamesByCase(nextCases);
     const nextClassificationsByCase = buildClassificationsByCase(nextCases);
@@ -465,7 +504,7 @@ export default function CasesPage() {
     setPartyNamesByCase(nextPartyNamesByCase);
     setClassificationsByCase(nextClassificationsByCase);
 
-    writeCasesPageCache({
+    writeCasesPageCache(currentUserId, {
       cases: nextCases,
       partyNamesByCase: nextPartyNamesByCase,
       classificationsByCase: nextClassificationsByCase,
@@ -478,7 +517,7 @@ export default function CasesPage() {
       selectedColumnFilters: currentCache?.selectedColumnFilters ?? latestCacheableState.selectedColumnFilters,
       showColumnFilters: currentCache?.showColumnFilters ?? latestCacheableState.showColumnFilters,
     });
-  }, []);
+  }, [currentUserId]);
 
   const hydrateParticipantsLabelsAndQuickDetails = useCallback(async (shellCases: CompactCase[]) => {
     setIsLoadingAllCases(true);
@@ -558,7 +597,7 @@ export default function CasesPage() {
     if (shellResult.error) {
       setErrorMessage(shellResult.error.message);
 
-      if (!options.preserveExistingRows && !hasUsableCasesCache(readCasesPageCache())) {
+      if (!options.preserveExistingRows && (!currentUserId || !hasUsableCasesCache(readCasesPageCache(currentUserId)))) {
         setCases([]);
         setPartyNamesByCase({});
         setClassificationsByCase({});
@@ -578,34 +617,75 @@ export default function CasesPage() {
     setIsRefreshing(false);
 
     void hydrateParticipantsLabelsAndQuickDetails(shellCases);
-  }, [cacheCasesPageState, hydrateParticipantsLabelsAndQuickDetails]);
+  }, [cacheCasesPageState, currentUserId, hydrateParticipantsLabelsAndQuickDetails]);
 
   useEffect(() => {
     isMountedRef.current = true;
+    clearLegacyCasesPageCaches();
 
-    if (hasUsableCasesCache(cachedInitialState)) {
-      setIsLoading(false);
-    } else {
-      void loadCases({ preserveExistingRows: false });
+    async function resolveAuthenticatedUserCache() {
+      const supabase = await getSupabaseBrowserClient();
+      const { data } = await supabase.auth.getUser();
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      const userId = data.user?.id ?? null;
+      setCurrentUserId(userId);
+
+      if (!userId) {
+        setCases([]);
+        setPartyNamesByCase({});
+        setClassificationsByCase({});
+        setCachedInitialState(null);
+        setIsLoading(false);
+        setHasResolvedCurrentUser(true);
+        return;
+      }
+
+      const userCache = readCasesPageCache(userId);
+      setCachedInitialState(userCache);
+
+      if (userCache && hasUsableCasesCache(userCache)) {
+        applyCachedCasesPageState(userCache);
+        setIsLoading(false);
+      }
+
+      setHasResolvedCurrentUser(true);
     }
+
+    void resolveAuthenticatedUserCache();
 
     return () => {
       isMountedRef.current = false;
     };
-  }, [cachedInitialState, loadCases]);
+  }, [applyCachedCasesPageState]);
+
+  useEffect(() => {
+    if (!hasResolvedCurrentUser || !currentUserId || hasUsableCasesCache(cachedInitialState)) {
+      return;
+    }
+
+    void loadCases({ preserveExistingRows: false });
+  }, [cachedInitialState, currentUserId, hasResolvedCurrentUser, loadCases]);
 
   function refreshCases() {
     void loadCases({ preserveExistingRows: true });
   }
 
   useEffect(() => {
-    const currentCache = readCasesPageCache();
+    if (!currentUserId) {
+      return;
+    }
+
+    const currentCache = readCasesPageCache(currentUserId);
 
     if (!currentCache) {
       return;
     }
 
-    writeCasesPageCache({
+    writeCasesPageCache(currentUserId, {
       ...currentCache,
       searchTerm,
       selectedSearchColumns,
@@ -615,6 +695,7 @@ export default function CasesPage() {
       showColumnFilters,
     });
   }, [
+    currentUserId,
     searchTerm,
     selectedColumnFilters,
     selectedDocketTypes,
