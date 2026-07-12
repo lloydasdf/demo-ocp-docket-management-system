@@ -25,7 +25,6 @@ import {
   assignUserManagementRole,
   getUserManagementRoles,
   getUserManagementUsers,
-  removeUserManagementUser,
   setUserManagementBlocked,
   type UserManagementRoleRecord,
   type UserManagementUserRecord,
@@ -35,7 +34,7 @@ type PendingAction =
   | { type: 'role'; user: UserManagementUserRecord; roleId: number; roleLabel: string }
   | { type: 'block'; user: UserManagementUserRecord }
   | { type: 'unblock'; user: UserManagementUserRecord }
-  | { type: 'remove'; user: UserManagementUserRecord };
+  | { type: 'delete-login'; user: UserManagementUserRecord };
 
 function formatDate(value: string | null) {
   if (!value) return 'Never';
@@ -72,9 +71,9 @@ function getActionText(action: PendingAction | null) {
   }
 
   return {
-    title: 'Confirm user removal',
-    description: `Remove ${action.user.email}? This permanently deletes the application user row from the users table.`,
-    confirm: 'Remove user',
+    title: 'Delete Login Account',
+    description: `This permanently deletes the user’s Supabase login account. The application user record, role history, personnel links, case assignments, and audit history will remain. The user will no longer be able to sign in.`,
+    confirm: 'Delete Login Account',
   };
 }
 
@@ -85,11 +84,11 @@ export default function UserManagementPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
-  const [removeConfirmationText, setRemoveConfirmationText] = useState('');
+  const [deleteLoginConfirmationText, setDeleteLoginConfirmationText] = useState('');
   const [currentAuthUserId, setCurrentAuthUserId] = useState<string | null>(null);
 
   const actionText = useMemo(() => getActionText(pendingAction), [pendingAction]);
-  const isRemoveConfirmationValid = pendingAction?.type !== 'remove' || removeConfirmationText === 'Remove this User';
+  const isDeleteLoginConfirmationValid = pendingAction?.type !== 'delete-login' || deleteLoginConfirmationText === 'DELETE LOGIN ACCOUNT';
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -128,6 +127,28 @@ export default function UserManagementPage() {
     };
   }, []);
 
+  async function deleteUserLoginAccount(userId: number) {
+    const supabase = await getSupabaseBrowserClient();
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token;
+
+    if (!accessToken) {
+      return { error: { message: 'Authentication is required.' } };
+    }
+
+    const response = await fetch(`/api/admin/users/${userId}/auth-account`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+
+    if (!response.ok) {
+      return { error: { message: body?.error?.message ?? 'Unable to delete login account.' } };
+    }
+
+    return { error: null };
+  }
+
   async function confirmAction() {
     if (!pendingAction) return;
 
@@ -140,14 +161,14 @@ export default function UserManagementPage() {
         ? await setUserManagementBlocked(pendingAction.user.id, true)
         : pendingAction.type === 'unblock'
           ? await setUserManagementBlocked(pendingAction.user.id, false)
-          : await removeUserManagementUser(pendingAction.user.id);
+          : await deleteUserLoginAccount(pendingAction.user.id);
 
     if (result.error) {
       setMessage({ type: 'error', text: result.error.message });
     } else {
       setMessage({ type: 'success', text: `${actionText.confirm} completed successfully.` });
       setPendingAction(null);
-      setRemoveConfirmationText('');
+      setDeleteLoginConfirmationText('');
       await loadData();
     }
 
@@ -162,7 +183,7 @@ export default function UserManagementPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h1 className="text-3xl font-bold tracking-tight">User Management</h1>
-              <p className="text-muted-foreground">View users, assign roles, block access, and remove application users.</p>
+              <p className="text-muted-foreground">View users, assign roles, block access, and delete Supabase login accounts while preserving application identities.</p>
             </div>
             <Button variant="outline" onClick={loadData} disabled={isLoading || isSaving}>
               <RefreshCw className="mr-2 h-4 w-4" />
@@ -180,7 +201,7 @@ export default function UserManagementPage() {
           <Card>
             <CardHeader>
               <CardTitle>Application users</CardTitle>
-              <CardDescription>Actions use the User Management database view and RPCs only.</CardDescription>
+              <CardDescription>Application identities stay in place; login deletion is performed through a protected server route.</CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
@@ -205,7 +226,10 @@ export default function UserManagementPage() {
                     <TableRow key={user.id}>
                       <TableCell className="font-medium">{user.email}</TableCell>
                       <TableCell>
-                        <Badge variant={user.is_active ? 'secondary' : 'destructive'}>{user.is_active ? 'Active' : 'Blocked'}</Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant={user.is_active ? 'secondary' : 'destructive'}>{user.is_active ? 'Active' : 'Blocked'}</Badge>
+                          {user.auth_user_id === null ? <Badge variant="outline">Login deleted</Badge> : null}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <Select
@@ -233,10 +257,14 @@ export default function UserManagementPage() {
                               <ShieldAlert className="mr-2 h-4 w-4" />
                               {user.is_active ? 'Block' : 'Unblock'}
                             </Button>
-                            <Button size="sm" variant="destructive" onClick={() => setPendingAction({ type: 'remove', user })} disabled={isSaving}>
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Remove
-                            </Button>
+                            {user.auth_user_id === null ? (
+                              <span className="text-sm text-muted-foreground">Login deleted</span>
+                            ) : (
+                              <Button size="sm" variant="destructive" onClick={() => setPendingAction({ type: 'delete-login', user })} disabled={isSaving}>
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete Login Account
+                              </Button>
+                            )}
                           </>
                         )}
                       </TableCell>
@@ -253,7 +281,7 @@ export default function UserManagementPage() {
       <AlertDialog open={pendingAction !== null} onOpenChange={(open) => {
         if (!open && !isSaving) {
           setPendingAction(null);
-          setRemoveConfirmationText('');
+          setDeleteLoginConfirmationText('');
         }
       }}>
         <AlertDialogContent>
@@ -261,20 +289,20 @@ export default function UserManagementPage() {
             <AlertDialogTitle>{actionText.title}</AlertDialogTitle>
             <AlertDialogDescription>{actionText.description}</AlertDialogDescription>
           </AlertDialogHeader>
-          {pendingAction?.type === 'remove' ? (
+          {pendingAction?.type === 'delete-login' ? (
             <div className="space-y-2">
-              <p className="text-sm font-medium">Type <span className="font-bold">Remove this User</span> to proceed.</p>
+              <p className="text-sm font-medium">Type <span className="font-bold">DELETE LOGIN ACCOUNT</span> to proceed.</p>
               <Input
-                value={removeConfirmationText}
-                onChange={(event) => setRemoveConfirmationText(event.target.value)}
-                placeholder="Remove this User"
+                value={deleteLoginConfirmationText}
+                onChange={(event) => setDeleteLoginConfirmationText(event.target.value)}
+                placeholder="DELETE LOGIN ACCOUNT"
                 disabled={isSaving}
               />
             </div>
           ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isSaving}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmAction} disabled={isSaving || !isRemoveConfirmationValid}>{isSaving ? 'Saving...' : actionText.confirm}</AlertDialogAction>
+            <AlertDialogAction onClick={confirmAction} disabled={isSaving || !isDeleteLoginConfirmationValid}>{isSaving ? 'Saving...' : actionText.confirm}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

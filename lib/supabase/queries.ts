@@ -3760,11 +3760,3 @@ export async function setUserManagementBlocked(userId: number, isBlocked: boolea
     return { data: null, error };
   }, null);
 }
-
-export async function removeUserManagementUser(userId: number): Promise<SupabaseQueryResult<null>> {
-  return runSupabaseQuery("removeUserManagementUser", "users", async () => {
-    const supabase = await getSupabaseBrowserClient();
-    const { error } = await supabase.rpc("remove_user_management_user" as never, { p_user_id: userId } as never);
-    return { data: null, error };
-  }, null);
-}

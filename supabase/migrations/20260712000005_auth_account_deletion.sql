@@ -1,0 +1,195 @@
+-- Secure Supabase Auth login deletion while preserving public.users identity rows.
+
+DO $$
+DECLARE
+  v_constraint_name text;
+  v_delete_rule text;
+BEGIN
+  SELECT rc.constraint_name, rc.delete_rule
+  INTO v_constraint_name, v_delete_rule
+  FROM information_schema.referential_constraints rc
+  JOIN information_schema.key_column_usage kcu
+    ON kcu.constraint_schema = rc.constraint_schema
+   AND kcu.constraint_name = rc.constraint_name
+  JOIN information_schema.constraint_column_usage ccu
+    ON ccu.constraint_schema = rc.unique_constraint_schema
+   AND ccu.constraint_name = rc.unique_constraint_name
+  WHERE kcu.table_schema = 'public'
+    AND kcu.table_name = 'users'
+    AND kcu.column_name = 'auth_user_id'
+    AND ccu.table_schema = 'auth'
+    AND ccu.table_name = 'users'
+    AND ccu.column_name = 'id'
+  LIMIT 1;
+
+  IF v_constraint_name IS NOT NULL AND v_delete_rule <> 'SET NULL' THEN
+    EXECUTE format('ALTER TABLE public.users DROP CONSTRAINT %I', v_constraint_name);
+    ALTER TABLE public.users
+      ADD CONSTRAINT users_auth_user_id_fkey FOREIGN KEY (auth_user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+  ELSIF v_constraint_name IS NULL THEN
+    ALTER TABLE public.users
+      ADD CONSTRAINT users_auth_user_id_fkey FOREIGN KEY (auth_user_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.prepare_auth_account_deletion(p_target_user_id bigint)
+RETURNS TABLE(application_user_id bigint, auth_user_id uuid, email text, role_code text, is_active boolean)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+DECLARE
+  v_actor_user_id bigint := public.current_app_user_id();
+  v_actor_is_developer boolean := public.has_app_role('DEVELOPER');
+  v_actor_is_chief boolean := public.has_app_role('CHIEF');
+  v_target record;
+  v_active_developer_count integer;
+BEGIN
+  IF NOT public.can_manage_users() THEN
+    RAISE EXCEPTION 'You are not authorized to manage users' USING ERRCODE = '42501';
+  END IF;
+
+  IF v_actor_user_id = p_target_user_id THEN
+    RAISE EXCEPTION 'You cannot delete your own login account' USING ERRCODE = '23514';
+  END IF;
+
+  SELECT u.id, u.auth_user_id, u.email, u.is_active, upper(r.code) AS role_code
+  INTO v_target
+  FROM public.users u
+  LEFT JOIN public.user_roles ur ON ur.user_id = u.id
+  LEFT JOIN public.roles r ON r.id = ur.role_id
+  WHERE u.id = p_target_user_id
+  FOR UPDATE OF u;
+
+  IF v_target.id IS NULL THEN
+    RAISE EXCEPTION 'User % does not exist', p_target_user_id USING ERRCODE = 'P0002';
+  END IF;
+
+  IF v_target.auth_user_id IS NULL THEN
+    RAISE EXCEPTION 'Login account for user % is already deleted', p_target_user_id USING ERRCODE = '23514';
+  END IF;
+
+  IF v_actor_is_chief AND NOT v_actor_is_developer AND v_target.role_code = 'DEVELOPER' THEN
+    RAISE EXCEPTION 'CHIEF users cannot delete a DEVELOPER login account' USING ERRCODE = '42501';
+  END IF;
+
+  IF v_target.role_code = 'DEVELOPER' THEN
+    SELECT count(*)
+    INTO v_active_developer_count
+    FROM public.users u
+    JOIN public.user_roles ur ON ur.user_id = u.id
+    JOIN public.roles r ON r.id = ur.role_id
+    WHERE u.auth_user_id IS NOT NULL
+      AND u.is_active IS TRUE
+      AND r.is_active IS TRUE
+      AND upper(r.code) = 'DEVELOPER';
+
+    IF v_active_developer_count <= 1 THEN
+      RAISE EXCEPTION 'Cannot delete the final active DEVELOPER login account' USING ERRCODE = '23514';
+    END IF;
+  END IF;
+
+  application_user_id := v_target.id;
+  auth_user_id := v_target.auth_user_id;
+  email := v_target.email;
+  role_code := v_target.role_code;
+  is_active := v_target.is_active;
+  RETURN NEXT;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.finalize_auth_account_deletion(p_target_user_id bigint, p_expected_auth_user_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+DECLARE
+  v_actor_user_id bigint := public.current_app_user_id();
+  v_old jsonb;
+  v_new jsonb;
+BEGIN
+  IF NOT public.can_manage_users() THEN
+    RAISE EXCEPTION 'You are not authorized to manage users' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT to_jsonb(v.*)
+  INTO v_old
+  FROM public.v_user_management_users v
+  WHERE v.id = p_target_user_id;
+
+  IF v_old IS NULL THEN
+    RAISE EXCEPTION 'Login account deletion finalization conflict for user %', p_target_user_id USING ERRCODE = '23514';
+  END IF;
+
+  IF (v_old->>'auth_user_id') IS NOT NULL AND (v_old->>'auth_user_id')::uuid <> p_expected_auth_user_id THEN
+    RAISE EXCEPTION 'Login account deletion finalization conflict for user %', p_target_user_id USING ERRCODE = '23514';
+  END IF;
+
+  UPDATE public.users
+  SET auth_user_id = NULL,
+      is_active = false,
+      updated_at = now()
+  WHERE id = p_target_user_id
+    AND (auth_user_id = p_expected_auth_user_id OR auth_user_id IS NULL);
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Login account deletion finalization conflict for user %', p_target_user_id USING ERRCODE = '23514';
+  END IF;
+
+  SELECT to_jsonb(v.*) INTO v_new FROM public.v_user_management_users v WHERE v.id = p_target_user_id;
+
+  INSERT INTO public.audit_logs(actor_user_id, entity_name, entity_id, action, old_data, new_data, summary, metadata)
+  VALUES (
+    v_actor_user_id,
+    'users',
+    p_target_user_id,
+    'AUTH_LOGIN_ACCOUNT_DELETED',
+    v_old,
+    v_new,
+    'Supabase Auth login account deleted; application user identity preserved.',
+    jsonb_build_object('auth_user_id', p_expected_auth_user_id, 'application_user_preserved', true)
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.record_auth_account_deletion_failure(p_target_user_id bigint, p_expected_auth_user_id uuid, p_error_message text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+DECLARE
+  v_actor_user_id bigint := public.current_app_user_id();
+  v_old jsonb;
+  v_safe_error text := left(coalesce(p_error_message, 'Supabase Auth deletion failed.'), 500);
+BEGIN
+  IF NOT public.can_manage_users() THEN
+    RAISE EXCEPTION 'You are not authorized to manage users' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT to_jsonb(v.*)
+  INTO v_old
+  FROM public.v_user_management_users v
+  WHERE v.id = p_target_user_id;
+
+  INSERT INTO public.audit_logs(actor_user_id, entity_name, entity_id, action, old_data, new_data, summary, metadata)
+  VALUES (
+    v_actor_user_id,
+    'users',
+    p_target_user_id,
+    'AUTH_LOGIN_ACCOUNT_DELETE_FAILED',
+    v_old,
+    v_old,
+    'Supabase Auth login account deletion failed; application user was not detached.',
+    jsonb_build_object('auth_user_id', p_expected_auth_user_id, 'error_message', v_safe_error)
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.prepare_auth_account_deletion(bigint) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.finalize_auth_account_deletion(bigint, uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.record_auth_account_deletion_failure(bigint, uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.prepare_auth_account_deletion(bigint) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.finalize_auth_account_deletion(bigint, uuid) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.record_auth_account_deletion_failure(bigint, uuid, text) TO authenticated, service_role;
