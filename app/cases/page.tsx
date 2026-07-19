@@ -1241,7 +1241,7 @@ export default function CasesPage() {
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden p-4 pt-16 md:p-8">
-        <div className="flex min-h-0 flex-1 flex-col gap-6">
+        <div className="mx-auto flex min-h-0 w-full max-w-[1400px] flex-1 flex-col gap-6">
           <div className="shrink-0">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -1420,7 +1420,7 @@ export default function CasesPage() {
               ) : (
                 <div
                   ref={tableContainerRef}
-                  className="min-h-0 flex-1 overflow-auto rounded-lg border border-border"
+                  className="min-h-0 flex-1 overflow-x-auto overflow-y-auto rounded-lg border border-border"
                   aria-label="Cases table with native horizontal and vertical scrollbars"
                   onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
                 >
