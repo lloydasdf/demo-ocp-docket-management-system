@@ -207,20 +207,24 @@ function getCorrectedPersonName(result: ClearanceSearchResult) {
   return result.activePersonId ? `Person #${result.activePersonId}` : "—";
 }
 
-function getResultNameKey(result: ClearanceSearchResult) {
-  return result.respondentName.trim().toLowerCase().replace(/\s+/g, " ");
+function getResultEntityKey(result: ClearanceSearchResult) {
+  const entityId = result.participantKind === "ORGANIZATION"
+    ? result.organizationId
+    : result.activePersonId ?? result.personId;
+
+  return entityId === null ? `case-${result.caseId}` : `${result.participantKind}-${entityId}`;
 }
 
-function getResultNameKeys(results: ClearanceSearchResult[]) {
-  return new Set(results.map(getResultNameKey).filter(Boolean));
+function getResultEntityKeys(results: ClearanceSearchResult[]) {
+  return new Set(results.map(getResultEntityKey));
 }
 
-function excludeResultsByName(
+function excludeResultsByEntity(
   results: ClearanceSearchResult[],
-  excludedNameKeys: Set<string>,
+  excludedEntityKeys: Set<string>,
 ) {
   return results.filter(
-    (result) => !excludedNameKeys.has(getResultNameKey(result)),
+    (result) => !excludedEntityKeys.has(getResultEntityKey(result)),
   );
 }
 
@@ -236,9 +240,49 @@ function getRoleFilterSummary(roleFilter: ParticipantRoleFilter) {
   return "complainant or respondent";
 }
 
+interface EntitySearchResult extends ClearanceSearchResult {
+  cases: ClearanceSearchResult[];
+}
+
+function groupResultsByEntity(results: ClearanceSearchResult[]) {
+  const entities = new Map<string, EntitySearchResult>();
+
+  for (const result of results) {
+    const entityKey = getResultEntityKey(result);
+    const existing = entities.get(entityKey);
+
+    if (!existing) {
+      entities.set(entityKey, { ...result, cases: [result] });
+      continue;
+    }
+
+    existing.cases.push(result);
+    existing.respondentAliases = Array.from(
+      new Set([...existing.respondentAliases, ...result.respondentAliases]),
+    );
+
+    if (result.confidenceScore > existing.confidenceScore) {
+      Object.assign(existing, result, {
+        cases: existing.cases,
+        respondentAliases: existing.respondentAliases,
+      });
+    }
+  }
+
+  return Array.from(entities.values()).sort(
+    (a, b) => b.confidenceScore - a.confidenceScore || a.respondentName.localeCompare(b.respondentName),
+  );
+}
+
+function getDistinctDockets(result: EntitySearchResult) {
+  return Array.from(
+    new Map(result.cases.map((caseResult) => [caseResult.caseId, caseResult])).values(),
+  );
+}
+
 function groupResults(results: ClearanceSearchResult[]) {
-  return results.reduce<
-    Record<keyof typeof confidenceGroups, ClearanceSearchResult[]>
+  return groupResultsByEntity(results).reduce<
+    Record<keyof typeof confidenceGroups, EntitySearchResult[]>
   >(
     (groups, result) => {
       if (result.confidenceScore >= confidenceGroups.High.min) {
@@ -257,7 +301,7 @@ function groupResults(results: ClearanceSearchResult[]) {
 
 interface ResultGroupProps {
   label: keyof typeof confidenceGroups;
-  results: ClearanceSearchResult[];
+  results: EntitySearchResult[];
   confidenceTone?: "standard" | "phonetic";
   onInactiveSelect?: (result: ClearanceSearchResult) => void;
 }
@@ -282,12 +326,13 @@ function ResultGroup({
       <CardHeader className="pb-3">
         <CardTitle className="text-lg flex items-center gap-2">
           <Badge className={config.badgeClass}>{label} Confidence</Badge>
-          {results.length} result{results.length === 1 ? "" : "s"}
+          {results.length} entit{results.length === 1 ? "y" : "ies"}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         {results.map((result) => {
           const matchDetails = result.matchDetails;
+          const dockets = getDistinctDockets(result);
 
           const isInactive = isInactiveClearanceResult(result);
           const cardClassName = `block p-4 bg-white border rounded-lg transition-colors ${config.itemClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`;
@@ -332,14 +377,24 @@ function ResultGroup({
                     ) : null}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Violations: {result.violations || "—"} | Docket:{" "}
-                    {result.docketNumber} | Status: {result.status || "—"}
+                    {dockets.length} docket{dockets.length === 1 ? "" : "s"} · Best match: {result.matchType}
                     {isInactive ? ` | Corrected to: ${getCorrectedPersonName(result)}` : ""}
                   </p>
                 </div>
                 <Badge className={`${config.badgeClass} font-bold text-white`}>
                   {result.confidenceScore}%
                 </Badge>
+              </div>
+              <div className="mb-3 rounded-md border bg-muted/30 p-2.5 text-sm">
+                <p className="mb-1 font-medium text-foreground">Associated dockets</p>
+                <ul className="space-y-1 text-muted-foreground">
+                  {dockets.map((caseResult) => (
+                    <li key={caseResult.caseId}>
+                      <span className="font-medium text-foreground">{caseResult.docketNumber}</span>
+                      {" · "}{caseResult.violations || "—"}{" · "}{caseResult.status || "—"}
+                    </li>
+                  ))}
+                </ul>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -719,9 +774,9 @@ export default function ClearanceSearch() {
       participantRoleFilter,
     );
 
-    return excludeResultsByName(
+    return excludeResultsByEntity(
       roleFilteredResults,
-      getResultNameKeys(filteredSearchResults),
+      getResultEntityKeys(filteredSearchResults),
     );
   }, [filteredSearchResults, participantRoleFilter, possibleMatchResults]);
   const filteredPhoneticMatchResults = useMemo(() => {
@@ -729,12 +784,12 @@ export default function ClearanceSearch() {
       phoneticMatchResults,
       participantRoleFilter,
     );
-    const previouslyShownNameKeys = new Set([
-      ...getResultNameKeys(filteredSearchResults),
-      ...getResultNameKeys(filteredPossibleMatchResults),
+    const previouslyShownEntityKeys = new Set([
+      ...getResultEntityKeys(filteredSearchResults),
+      ...getResultEntityKeys(filteredPossibleMatchResults),
     ]);
 
-    return excludeResultsByName(roleFilteredResults, previouslyShownNameKeys);
+    return excludeResultsByEntity(roleFilteredResults, previouslyShownEntityKeys);
   }, [
     filteredPossibleMatchResults,
     filteredSearchResults,
