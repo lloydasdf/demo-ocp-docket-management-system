@@ -1873,7 +1873,7 @@ export default function CaseDetailsPage() {
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
       <main className="min-w-0 flex-1 overflow-y-auto p-3 pt-16 md:p-8">
-        <div className="flex w-full max-w-[824px] flex-col gap-4 md:gap-6">
+        <div className="mx-auto flex w-full max-w-[900px] flex-col gap-4 md:gap-6">
           {isLoading ? (
             <Card>
               <CardContent className="py-10 text-center text-sm text-muted-foreground">
@@ -2207,7 +2207,7 @@ export default function CaseDetailsPage() {
                             {participants.map((participant) => (
                               <div
                                 key={participant.id}
-                                className="rounded-lg border p-4"
+                                className="min-w-0 rounded-lg border p-4"
                               >
                                 <div className="space-y-2">
                                   <div className="flex flex-wrap items-center gap-2">
