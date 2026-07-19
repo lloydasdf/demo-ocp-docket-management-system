@@ -812,7 +812,7 @@ export default function ClearanceSearch() {
     phoneticMatchResults.length === 0;
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="mx-auto w-full max-w-[900px] space-y-6 p-8">
       <div>
         <div className="flex items-center gap-3">
           <h1 className="text-3xl font-bold text-foreground">
