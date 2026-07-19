@@ -331,7 +331,6 @@ function ResultGroup({
             <>
               <p className="mb-3 text-lg font-semibold">{result.respondentName}</p>
               <div className="mb-3 rounded-md border bg-muted/30 p-2.5 text-sm">
-                <p className="mb-1 font-medium text-foreground">Associated dockets</p>
                 <ul className="space-y-1 text-muted-foreground">
                   {dockets.map((caseResult) => (
                     <li key={caseResult.caseId}>{caseResult.docketNumber}</li>
@@ -945,13 +944,7 @@ export default function ClearanceSearch() {
               {shouldShowPossibleMatches && (
                 <section className="space-y-4">
                   <div>
-                    <h2 className="text-2xl font-semibold">
-                      Possible Matches — manual review required
-                    </h2>
-                    <p className="text-sm text-muted-foreground">
-                      These results are separate from exact matches and require
-                      manual review before clearance decisions.
-                    </p>
+                    <h2 className="text-2xl font-semibold">Possible Matches</h2>
                   </div>
 
                   {possibleMatchError && (
@@ -995,10 +988,7 @@ export default function ClearanceSearch() {
                     !possibleMatchError && (
                       <Card>
                         <CardContent className="text-center py-8">
-                          <p className="text-muted-foreground">
-                            No possible {roleFilterSummary} matches found for
-                            &quot;{searchQuery}&quot;
-                          </p>
+                          <p className="text-muted-foreground">No Possible Matches</p>
                         </CardContent>
                       </Card>
                     )
@@ -1025,13 +1015,7 @@ export default function ClearanceSearch() {
               {shouldShowPhoneticMatches && (
                 <section className="space-y-4">
                   <div>
-                    <h2 className="text-2xl font-semibold">
-                      Sound-alike Matches — broad manual review required
-                    </h2>
-                    <p className="text-sm text-muted-foreground">
-                      These are phonetic/sound-alike results only. Verify
-                      carefully before making a clearance decision.
-                    </p>
+                    <h2 className="text-2xl font-semibold">Sound-alike Matches</h2>
                   </div>
 
                   {phoneticMatchError && (
@@ -1075,10 +1059,7 @@ export default function ClearanceSearch() {
                     !phoneticMatchError && (
                       <Card>
                         <CardContent className="text-center py-8">
-                          <p className="text-muted-foreground">
-                            No sound-alike {roleFilterSummary} matches found for
-                            &quot;{searchQuery}&quot;
-                          </p>
+                          <p className="text-muted-foreground">No Sound-alike Matches</p>
                         </CardContent>
                       </Card>
                     )
