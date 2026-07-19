@@ -5,12 +5,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Database,
-  Info,
   ListFilter,
   Search as SearchIcon,
 } from "lucide-react";
 
-import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,11 +38,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   type ClearanceSearchResult,
   searchClearancePhoneticMatches,
@@ -331,96 +324,23 @@ function ResultGroup({
       </CardHeader>
       <CardContent className="space-y-3">
         {results.map((result) => {
-          const matchDetails = result.matchDetails;
           const dockets = getDistinctDockets(result);
-
           const isInactive = isInactiveClearanceResult(result);
           const cardClassName = `block p-4 bg-white border rounded-lg transition-colors ${config.itemClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`;
-          const content = (<>
-              <div className="flex items-start justify-between gap-4 mb-2">
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-semibold text-lg">
-                      {result.respondentName}
-                      {result.participantKind === "PERSON" && result.age ? (
-                        <span className="ml-2 text-base font-medium text-muted-foreground">
-                          {result.age}
-                        </span>
-                      ) : null}
-                    </p>
-                    <Badge variant="outline" className="text-xs">
-                      {result.roleLabel}
-                    </Badge>
-                    <Badge variant="secondary" className="text-xs capitalize">
-                      {result.matchType}
-                    </Badge>
-                    {isInactive ? (
-                      <Badge variant="destructive" className="text-xs">
-                        {getInactiveBadgeLabel(result)}
-                      </Badge>
-                    ) : null}
-                    {matchDetails ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span
-                            className="inline-flex h-6 w-6 items-center justify-center rounded-full border bg-background text-muted-foreground"
-                            aria-label="Show match details"
-                            tabIndex={0}
-                          >
-                            <Info className="h-3.5 w-3.5" />
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-xs text-left">
-                          {matchDetails}
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : null}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {dockets.length} docket{dockets.length === 1 ? "" : "s"} · Best match: {result.matchType}
-                    {isInactive ? ` | Corrected to: ${getCorrectedPersonName(result)}` : ""}
-                  </p>
-                </div>
-                <Badge className={`${config.badgeClass} font-bold text-white`}>
-                  {result.confidenceScore}%
-                </Badge>
-              </div>
+          const content = (
+            <>
+              <p className="mb-3 text-lg font-semibold">{result.respondentName}</p>
               <div className="mb-3 rounded-md border bg-muted/30 p-2.5 text-sm">
                 <p className="mb-1 font-medium text-foreground">Associated dockets</p>
                 <ul className="space-y-1 text-muted-foreground">
                   {dockets.map((caseResult) => (
-                    <li key={caseResult.caseId}>
-                      <span className="font-medium text-foreground">{caseResult.docketNumber}</span>
-                      {" · "}{caseResult.violations || "—"}{" · "}{caseResult.status || "—"}
-                    </li>
+                    <li key={caseResult.caseId}>{caseResult.docketNumber}</li>
                   ))}
                 </ul>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <StatusBadge status={result.status} size="sm" />
-                  {isInactive && result.correctionReason ? (
-                    <Badge variant="outline" className="text-xs">
-                      Reason: {result.correctionReason}
-                    </Badge>
-                  ) : null}
-                  {isInactive && result.correctedBy ? (
-                    <Badge variant="outline" className="text-xs">
-                      By: {result.correctedBy}
-                    </Badge>
-                  ) : null}
-                  {result.respondentAliases.length > 0 && (
-                    <Badge variant="outline" className="text-xs">
-                      Aliases: {result.respondentAliases.slice(0, 3).join(", ")}
-                      {result.respondentAliases.length > 3 ? "…" : ""}
-                    </Badge>
-                  )}
-                </div>
-                <span className="text-sm font-medium text-primary">
-                  {isInactive ? "View correction details" : `View ${result.participantKind === "ORGANIZATION" ? "organization" : "person"} details`}
-                </span>
-              </div>
-            </>);
+              <span className="text-sm font-medium text-primary">View person details</span>
+            </>
+          );
 
           if (isInactive) {
             return (
