@@ -218,7 +218,7 @@ export default function PersonDetailsPage() {
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
       <main className="min-w-0 flex-1 overflow-y-auto p-3 pt-16 md:p-8">
-        <div className="flex w-full max-w-[960px] flex-col gap-4 md:gap-6">
+        <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 md:gap-6">
           {isLoading ? (
             <Card>
               <CardContent className="py-10 text-center text-sm text-muted-foreground">
