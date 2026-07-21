@@ -158,4 +158,41 @@ export async function getCasesExcelExport(params: {
   return { data: rows, error: null };
 }
 
+export async function getCasesExcelExportForCaseIds(params: {
+  caseIds: number[];
+  onPageLoaded?: (pageNumber: number, loadedCount: number) => void;
+}): Promise<SupabaseQueryResult<CaseExcelExportRow[]>> {
+  const operation = 'getCasesExcelExportForCaseIds';
+  const table = 'cases' as RelationName;
+  const configurationError = environmentError(operation, table);
+  if (configurationError) return configurationError;
+
+  const rows: CaseExcelExportRow[] = [];
+  let pageNumber = 1;
+
+  try {
+    const supabase = await getSupabaseBrowserClient();
+
+    while (true) {
+      const from = rows.length;
+      const { data, error } = (await supabase
+        .rpc('export_cases_excel_data_for_cases' as never, { p_case_ids: params.caseIds } as never)
+        .range(from, from + EXPORT_PAGE_SIZE - 1)) as unknown as { data: CaseExcelExportRow[] | null; error: unknown };
+
+      if (error) return { data: null, error: toQueryError(error, operation, table) };
+
+      const pageRows = data ?? [];
+      rows.push(...pageRows);
+      params.onPageLoaded?.(pageNumber, rows.length);
+
+      if (rows.length >= params.caseIds.length || pageRows.length < EXPORT_PAGE_SIZE) break;
+      pageNumber += 1;
+    }
+
+    return { data: rows, error: null };
+  } catch (error) {
+    return { data: null, error: toQueryError(error, operation, table) };
+  }
+}
+
 export { EXPORT_PAGE_SIZE };

@@ -1251,8 +1251,11 @@ export default function CasesPage() {
               <div className="flex flex-wrap gap-2">
                 {canShowExcelExport ? (
                   <ExportCasesDialog
-                    availableYears={docketYearFilters.map((year) => Number(year)).filter((year) => Number.isFinite(year))}
-                    disabled={isLoading}
+                    caseIds={sortedCases.map((caseDetail) => caseDetail.id)}
+                    yearLabel={selectedDocketYears.length === 1 ? selectedDocketYears[0] : 'ALL_YEARS'}
+                    docketTypeLabel={selectedDocketTypes.length === 1 ? selectedDocketTypes[0] : 'ALL_TYPES'}
+                    docketTypeId={null}
+                    disabled={isLoading || isLoadingAllCases || sortedCases.length === 0}
                   />
                 ) : null}
                 <Button
