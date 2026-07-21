@@ -232,10 +232,10 @@ function motionWorkflowEventDetails(event: CaseTimelineEventRecord) {
       { label: "Update Case Status", value: details.updates_case_status === true ? "Yes" : "No" },
       { label: "Selected Case Status", value: details.updates_case_status === true ? stringDetail(details.selected_case_status_label) : null },
       { label: "Selected Case Stage", value: details.updates_case_status === true ? stringDetail(details.selected_case_stage_label) : null },
-    ] : [
-      { label: event.event_type_code === "MOTION_RESOLVED" ? "Date Resolved" : "Time Filed", value: event.event_type_code === "MOTION_RESOLVED" ? formatDate(stringDetail(details.date_resolved) ?? event.event_date) : formatTime(stringDetail(details.time_filed) ?? event.event_time) },
-      ...(event.event_type_code === "MOTION_RESOLVED" ? [{ label: "Time Resolved", value: formatTime(stringDetail(details.time_resolved) ?? event.event_time) }] : []),
-    ]),
+    ] : event.event_type_code === "MOTION_RESOLVED" ? [
+      { label: "Date Resolved", value: formatDate(stringDetail(details.date_resolved) ?? event.event_date) },
+      { label: "Time Resolved", value: formatTime(stringDetail(details.time_resolved) ?? event.event_time) },
+    ] : []),
     { label: "Remarks", value: stringDetail(details.remarks) ?? event.description },
   ];
 }
@@ -345,7 +345,6 @@ function courtFilingEventDetails(event: CaseTimelineEventRecord) {
     { label: "Court Branch", value: stringDetail(details.court_branch) },
     { label: "Charge Filed", value: stringDetail(details.charge_filed) },
     { label: "Date Filed", value: formatDate(stringDetail(details.date_filed) ?? event.event_date) },
-    { label: "Time Filed", value: formatTime(stringDetail(details.time_filed) ?? event.event_time) },
     { label: "Criminal Case Numbers", value: criminalCaseNumbers },
     { label: "Court Status History", value: courtStatuses },
     { label: "Information Count", value: stringDetail(details.information_count) },
@@ -695,7 +694,6 @@ function PetitionForReviewEventDetails({
     { label: "Filed By", value: petition.filed_by ?? motionFiledByLabel(petition.filed_by_code) },
     { label: "Status", value: petition.petition_status },
     { label: "Date Filed", value: formatOptionalDate(petition.date_filed ?? petition.date_received, petition.date_received_raw) },
-    { label: "Time Filed", value: formatTime(petition.time_filed) },
     { label: "Status Date", value: formatDate(petition.status_date) },
     { label: "Date Resolved", value: formatOptionalDate(petition.date_resolved, petition.date_resolved_raw) },
     { label: "Date Approved", value: formatOptionalDate(petition.date_approved, petition.date_approved_raw) },
