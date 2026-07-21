@@ -2428,7 +2428,7 @@ export async function recordCaseResolvedEvent(
 
 export interface RecordCaseDecisionApprovedEventInput {
   caseId: number;
-  caseResolutionId: number;
+  caseResolutionId?: number | null;
   approvedByProsecutorId: number;
   dateApproved: string;
   timeApproved?: string | null;
@@ -2453,7 +2453,7 @@ export async function recordCaseDecisionApprovedEvent(
     const supabase = await getSupabaseBrowserClient();
     const { data, error } = await supabase.rpc("record_case_decision_approved_event" as never, {
       p_case_id: input.caseId,
-      p_case_resolution_id: input.caseResolutionId,
+      p_case_resolution_id: input.caseResolutionId ?? null,
       p_approved_by_prosecutor_id: input.approvedByProsecutorId,
       p_date_approved: input.dateApproved,
       p_time_approved: input.timeApproved?.trim() || null,
@@ -2546,7 +2546,7 @@ export async function getAvailableCourtFilingDecisions(caseId: number): Promise<
 
 export interface RecordCourtFilingEventInput {
   caseId: number;
-  caseResolutionApprovalActionId: number;
+  caseResolutionApprovalActionId?: number | null;
   courtId?: number | null;
   courtName: string;
   courtBranch?: string | null;
@@ -2567,7 +2567,7 @@ export async function recordCourtFilingEvent(input: RecordCourtFilingEventInput)
     const supabase = await getSupabaseBrowserClient();
     const { data, error } = await supabase.rpc("record_court_filing_event" as never, {
       p_case_id: input.caseId,
-      p_case_resolution_approval_action_id: input.caseResolutionApprovalActionId,
+      p_case_resolution_approval_action_id: input.caseResolutionApprovalActionId ?? null,
       p_court_id: input.courtId ?? null,
       p_court_name: input.courtName.trim(),
       p_court_branch: input.courtBranch?.trim() || null,
@@ -2670,7 +2670,7 @@ export async function addMotionResolutionRecommendation(input: { displayLabel: s
 
 export interface RecordMotionResolvedEventInput {
   caseId: number;
-  caseMotionId: number;
+  caseMotionId?: number | null;
   recommendationId: number;
   dateResolved: string;
   timeResolved?: string | null;
@@ -2686,7 +2686,7 @@ export async function recordMotionResolvedEvent(input: RecordMotionResolvedEvent
     const supabase = await getSupabaseBrowserClient();
     const { data, error } = await supabase.rpc("record_motion_resolved_event" as never, {
       p_case_id: input.caseId,
-      p_case_motion_id: input.caseMotionId,
+      p_case_motion_id: input.caseMotionId ?? null,
       p_recommendation_id: input.recommendationId,
       p_date_resolved: input.dateResolved,
       p_time_resolved: input.timeResolved?.trim() || null,
@@ -2751,7 +2751,7 @@ export async function getMotionDecisionCaseStageOptions(): Promise<SupabaseQuery
 
 export interface RecordMotionDecisionApprovedEventInput {
   caseId: number;
-  motionResolutionId: number;
+  motionResolutionId?: number | null;
   approvedDecisionRecommendationId: number;
   approvedByProsecutorId: number;
   dateApproved: string;
@@ -2771,7 +2771,7 @@ export async function recordMotionDecisionApprovedEvent(input: RecordMotionDecis
     const supabase = await getSupabaseBrowserClient();
     const { data, error } = await supabase.rpc("record_motion_decision_approved_event" as never, {
       p_case_id: input.caseId,
-      p_case_motion_resolution_id: input.motionResolutionId,
+      p_case_motion_resolution_id: input.motionResolutionId ?? null,
       p_approved_decision_recommendation_id: input.approvedDecisionRecommendationId,
       p_approved_by_prosecutor_id: input.approvedByProsecutorId,
       p_date_approved: input.dateApproved,
@@ -3597,7 +3597,7 @@ export async function getCourtStatusUpdateCandidates(caseId: number): Promise<Su
 
 export interface UpdateCourtFilingStatusDetailsInput {
   caseId: number;
-  courtFilingId: number;
+  courtFilingId?: number | null;
   criminalCaseNumbers: { criminal_case_no: string }[];
   courtStatuses: { court_status: string; status_date: string }[];
   informationCount?: number | null;
@@ -3614,7 +3614,7 @@ export async function updateCourtFilingStatusDetails(input: UpdateCourtFilingSta
     const supabase = await getSupabaseBrowserClient();
     const { data, error } = await supabase.rpc("update_court_filing_status_details" as never, {
       p_case_id: input.caseId,
-      p_court_filing_id: input.courtFilingId,
+      p_court_filing_id: input.courtFilingId ?? null,
       p_criminal_case_numbers: input.criminalCaseNumbers.map((row) => ({ criminal_case_no: row.criminal_case_no.trim() })).filter((row) => row.criminal_case_no),
       p_court_statuses: input.courtStatuses.map((row) => ({ court_status: row.court_status.trim(), status_date: row.status_date })).filter((row) => row.court_status || row.status_date),
       p_information_count: input.informationCount ?? null,
@@ -3668,7 +3668,7 @@ export async function recordPetitionForReviewEvent(input: RecordPetitionForRevie
 
 export interface RecordPetitionForReviewUpdateInput {
   caseId: number;
-  petitionForReviewId: number;
+  petitionForReviewId?: number | null;
   petitionStatus: string;
   statusDate: string;
   remarks?: string | null;
@@ -3688,7 +3688,7 @@ export async function recordPetitionForReviewUpdate(input: RecordPetitionForRevi
     const supabase = await getSupabaseBrowserClient();
     const { data, error } = await supabase.rpc("record_petition_for_review_update" as never, {
       p_case_id: input.caseId,
-      p_petition_for_review_id: input.petitionForReviewId,
+      p_petition_for_review_id: input.petitionForReviewId ?? null,
       p_petition_status: input.petitionStatus.trim(),
       p_status_date: input.statusDate,
       p_remarks: input.remarks?.trim() || null,
