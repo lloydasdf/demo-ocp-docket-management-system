@@ -75,6 +75,7 @@ import {
   recordPetitionForReviewEvent,
   recordPetitionForReviewUpdate,
   editCaseEvent,
+  editCourtFilingEvent,
   getCaseEventTypes,
   voidCaseEvent,
 } from "@/lib/supabase/queries";
@@ -1135,7 +1136,6 @@ const ADD_EVENT_TYPE_CODES = new Set([
   "CASE_RESOLVED",
   "CASE_DECISION_APPROVED",
   "COURT_FILING",
-  "COURT_STATUS_UPDATE",
   "MOTION_RECEIVED",
   "MOTION_RESOLVED",
   "MOTION_DECISION_APPROVED",
@@ -1147,7 +1147,6 @@ const ADD_EVENT_TYPE_CODES = new Set([
 function addableEventTypes(eventTypes: CaseEventTypeReference[]) {
   const priority = new Map([
     ["COURT_FILING", 140],
-    ["COURT_STATUS_UPDATE", 145],
     ["MOTION_RECEIVED", 150],
     ["MOTION_DECISION_APPROVED", 160],
     ["PETITION_FOR_REVIEW", 170],
@@ -1198,7 +1197,7 @@ export function CaseTimeline({
   const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: initialManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", filedByCode: "", assignedProsecutorId: "", motionResolveMotionId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalResolutionId: "", motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[], petitionStatus: "", petitionUpdateStep: 1, petitionUpdatePetitionId: "", petitionUpdateCaseStatus: "", petitionSelectedCaseStatusId: "", petitionSelectedCaseStageId: "", petitionDetails: [] as MotionDetailRow[], customStep: 1, customUpdateCaseStatus: "", customSelectedCaseStatusId: "", customSelectedCaseStageId: "", customDetails: [] as MotionDetailRow[] });
   const [manilaNow, setManilaNow] = useState(() => new Date());
   const [isAddDateTimeDirty, setIsAddDateTimeDirty] = useState(false);
-  const [editForm, setEditForm] = useState({ eventDate: "", eventTime: "", title: "", description: "", editReason: "", prosecutorId: "", staffId: "", assignedProsecutorId: "", filedByCode: "", petitionStatus: "", courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", approvedByProsecutorId: "", motionTitle: "", additionalDetails: [] as MotionDetailRow[] });
+  const [editForm, setEditForm] = useState({ eventDate: "", eventTime: "", title: "", description: "", editReason: "", prosecutorId: "", staffId: "", assignedProsecutorId: "", filedByCode: "", petitionStatus: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", criminalCaseNumbers: [{ criminal_case_no: "" }] as CriminalCaseNumberRow[], courtStatuses: [{ court_status: "", status_date: "" }] as CourtStatusRow[], approvedFilingDecision: "", approvedByProsecutorId: "", motionTitle: "", additionalDetails: [] as MotionDetailRow[] });
   const [voidReason, setVoidReason] = useState("");
   const [voidConfirmed, setVoidConfirmed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -1520,6 +1519,7 @@ export function CaseTimeline({
       if (!result.error) setStaffMembers(result.data);
     }
     const details = event.details_jsonb && typeof event.details_jsonb === "object" ? event.details_jsonb as Record<string, unknown> : {};
+    const courtFiling = event.event_type_code === "COURT_FILING" ? ((await getCourtStatusUpdateCandidates(caseId)).data ?? []).find((filing) => filing.case_event_id === event.case_event_id) : undefined;
     const sourceMotion = motions.find((motion) => sourceIdMatches(event, motion.id));
     const sourcePetition = petitionsForReview.find((petition) => sourceIdMatches(event, petition.id));
     setEditingEvent(event);
@@ -1534,14 +1534,18 @@ export function CaseTimeline({
       assignedProsecutorId: String(sourceMotion?.assigned_prosecutor_id ?? sourcePetition?.assigned_prosecutor_id ?? details.assigned_prosecutor_id ?? details.approved_by_prosecutor_id ?? details.approved_by_id ?? ""),
       filedByCode: sourceMotion?.filed_by_code ?? sourcePetition?.filed_by_code ?? stringDetail(details.filed_by_code) ?? "",
       petitionStatus: sourcePetition?.petition_status ?? stringDetail(details.petition_status) ?? "",
-      courtName: stringDetail(details.court_name) ?? "",
-      courtBranch: stringDetail(details.court_branch) ?? "",
-      chargeFiled: stringDetail(details.charge_filed) ?? "",
-      informationCount: String(details.information_count ?? ""),
-      criminalCaseNo: stringDetail(details.criminal_case_no) ?? "",
+      courtId: courtFiling?.court_id ?? null,
+      courtName: courtFiling?.court_name ?? stringDetail(details.court_name) ?? stringDetail(details.court) ?? "",
+      courtBranch: courtFiling?.court_branch ?? stringDetail(details.court_branch) ?? "",
+      chargeFiled: courtFiling?.charge_filed ?? stringDetail(details.charge_filed) ?? "",
+      informationCount: String(courtFiling?.information_count ?? details.information_count ?? ""),
+      criminalCaseNo: courtFiling?.criminal_case_no ?? stringDetail(details.criminal_case_no) ?? "",
+      criminalCaseNumbers: courtFiling?.criminal_case_numbers.length ? courtFiling.criminal_case_numbers.map((row) => ({ criminal_case_no: row.criminal_case_no })) : courtFiling?.criminal_case_no ? [{ criminal_case_no: courtFiling.criminal_case_no }] : Array.isArray(details.criminal_case_numbers) ? details.criminal_case_numbers.map((row) => ({ criminal_case_no: String((row as Record<string, unknown>)?.criminal_case_no ?? row ?? "") })) : [{ criminal_case_no: "" }],
+      courtStatuses: courtFiling?.court_statuses.length ? courtFiling.court_statuses.map((row) => ({ court_status: row.court_status, status_date: row.status_date })) : Array.isArray(details.court_statuses) ? details.court_statuses.map((row) => ({ court_status: String((row as Record<string, unknown>)?.court_status ?? ""), status_date: String((row as Record<string, unknown>)?.status_date ?? "") })) : [{ court_status: "", status_date: "" }],
+      approvedFilingDecision: courtFiling?.approved_filing_decision ?? stringDetail(details.approved_filing_decision_label) ?? stringDetail(details.approved_filing_decision) ?? "",
       approvedByProsecutorId: String(details.approved_by_prosecutor_id ?? details.approved_by_id ?? ""),
       motionTitle: sourceMotion?.motion_title ?? stringDetail(details.motion_title) ?? event.title ?? "",
-      additionalDetails: Array.isArray(sourceMotion?.details_jsonb) ? sourceMotion.details_jsonb.map((row) => ({ detail: String((row as Record<string, unknown>)?.detail ?? ""), value: String((row as Record<string, unknown>)?.value ?? "") })) : sourcePetition?.additional_details_jsonb ? sourcePetition.additional_details_jsonb : Array.isArray(details.additional_details) ? details.additional_details.map((row) => ({ detail: String((row as Record<string, unknown>)?.detail ?? ""), value: String((row as Record<string, unknown>)?.value ?? "") })) : Array.isArray(details.details) ? details.details.map((row) => ({ detail: String((row as Record<string, unknown>)?.detail ?? ""), value: String((row as Record<string, unknown>)?.value ?? "") })) : [],
+      additionalDetails: courtFiling?.additional_details_jsonb?.length ? courtFiling.additional_details_jsonb : Array.isArray(sourceMotion?.details_jsonb) ? sourceMotion.details_jsonb.map((row) => ({ detail: String((row as Record<string, unknown>)?.detail ?? ""), value: String((row as Record<string, unknown>)?.value ?? "") })) : sourcePetition?.additional_details_jsonb ? sourcePetition.additional_details_jsonb : Array.isArray(details.additional_details) ? details.additional_details.map((row) => ({ detail: String((row as Record<string, unknown>)?.detail ?? ""), value: String((row as Record<string, unknown>)?.value ?? "") })) : Array.isArray(details.details) ? details.details.map((row) => ({ detail: String((row as Record<string, unknown>)?.detail ?? ""), value: String((row as Record<string, unknown>)?.value ?? "") })) : [],
     });
   };
 
@@ -1554,13 +1558,15 @@ export function CaseTimeline({
   };
 
   const handleEditSave = async () => {
-    if (!editingEvent || !editForm.eventDate || !editForm.editReason.trim()) return;
+    if (!editingEvent || !editForm.eventDate) return;
     const code = editingEvent.event_type_code ?? "LEGACY_EVENT";
     const isCustomOrLegacy = code === "CUSTOM_EVENT" || !SUPPORTED_EVENT_EDIT_TYPES.has(code);
     if (isCustomOrLegacy && !editForm.title.trim()) return;
     setIsSaving(true);
     setActionError(null);
-    const result = await editCaseEvent({
+    const result = code === "COURT_FILING"
+      ? await editCourtFilingEvent({ caseEventId: editingEvent.case_event_id, courtId: editForm.courtId, courtName: editForm.courtName, courtBranch: editForm.courtBranch, chargeFiled: editForm.chargeFiled, dateFiled: editForm.eventDate, timeFiled: editForm.eventTime || null, informationCount: editForm.informationCount ? Number(editForm.informationCount) : null, criminalCaseNumbers: editForm.criminalCaseNumbers, courtStatuses: editForm.courtStatuses, additionalDetails: editForm.additionalDetails, remarks: editForm.description, editReason: editForm.editReason.trim() || null })
+      : await editCaseEvent({
       caseEventId: editingEvent.case_event_id,
       eventTypeCode: code,
       values: {
@@ -1582,7 +1588,7 @@ export function CaseTimeline({
         motion_title: editForm.motionTitle,
         details: editForm.additionalDetails,
       },
-      editReason: editForm.editReason,
+      editReason: editForm.editReason.trim() || null,
     });
     setIsSaving(false);
     if (result.error) {
@@ -1885,7 +1891,7 @@ export function CaseTimeline({
                             ) : null}
                             {canShowCaseManagementActions && !event.is_voided ? (
                               <div className="flex gap-2 border-t pt-3">
-                                {(!EDIT_WORKFLOW_TEMPORARILY_DISABLED || event.event_type_code === "CASE_RECEIVED") ? <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button> : null}
+                                {(!EDIT_WORKFLOW_TEMPORARILY_DISABLED || event.event_type_code === "CASE_RECEIVED" || event.event_type_code === "COURT_FILING") ? <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button> : null}
                                 {event.event_type_code !== "CASE_RECEIVED" ? <Button type="button" variant="destructive" size="sm" onClick={() => openVoidDialog(event)}>Void</Button> : null}
                               </div>
                             ) : null}
@@ -2141,17 +2147,17 @@ export function CaseTimeline({
                 {isApproval ? <div className="space-y-2"><Label htmlFor="edit-approved-by">Who Approved</Label><select id="edit-approved-by" className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={editForm.approvedByProsecutorId} onChange={(e) => setEditForm((form) => ({ ...form, approvedByProsecutorId: e.target.value }))}><option value="">Select prosecutor</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.full_name}</option>)}</select></div> : null}
                 {isMotionReceived ? <><div className="space-y-2"><Label htmlFor="edit-motion-title">Motion Title</Label><Input id="edit-motion-title" value={editForm.motionTitle} onChange={(e) => setEditForm((form) => ({ ...form, motionTitle: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="edit-filed-by">Filed By</Label><select id="edit-filed-by" className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={editForm.filedByCode} onChange={(e) => setEditForm((form) => ({ ...form, filedByCode: e.target.value }))}><option value="">Select filer</option><option value="COMPLAINANT">Complainant</option><option value="RESPONDENT">Respondent</option></select></div><div className="space-y-2"><Label htmlFor="edit-motion-prosecutor">Assigned Prosecutor</Label><select id="edit-motion-prosecutor" className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={editForm.assignedProsecutorId} onChange={(e) => setEditForm((form) => ({ ...form, assignedProsecutorId: e.target.value }))}><option value="">No assigned prosecutor</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.full_name}</option>)}</select></div></> : null}
                 {isPetition ? <><div className="space-y-2"><Label htmlFor="edit-petition-filed-by">Filed By</Label><select id="edit-petition-filed-by" className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={editForm.filedByCode} onChange={(e) => setEditForm((form) => ({ ...form, filedByCode: e.target.value }))}><option value="">Select filer</option><option value="COMPLAINANT">Complainant</option><option value="RESPONDENT">Respondent</option></select></div><div className="space-y-2"><Label htmlFor="edit-petition-status">Petition Status</Label><Input id="edit-petition-status" value={editForm.petitionStatus} onChange={(e) => setEditForm((form) => ({ ...form, petitionStatus: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="edit-petition-prosecutor">Assigned Prosecutor</Label><select id="edit-petition-prosecutor" className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={editForm.assignedProsecutorId} onChange={(e) => setEditForm((form) => ({ ...form, assignedProsecutorId: e.target.value }))}><option value="">No assigned prosecutor</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.full_name}</option>)}</select></div></> : null}
-                {isCourtFiling ? <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="edit-court-name">Court</Label><Input id="edit-court-name" value={editForm.courtName} onChange={(e) => setEditForm((form) => ({ ...form, courtName: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="edit-court-branch">Branch</Label><Input id="edit-court-branch" value={editForm.courtBranch} onChange={(e) => setEditForm((form) => ({ ...form, courtBranch: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="edit-info-count">Information Count</Label><Input id="edit-info-count" type="number" min="0" value={editForm.informationCount} onChange={(e) => setEditForm((form) => ({ ...form, informationCount: e.target.value }))} /></div><div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">Criminal Case Numbers are read-only here. Use Court Status Update to correct normalized criminal case number history.</div></div> : null}
+                {isCourtFiling ? <><div className="space-y-2"><Label>Approved Filing Decision</Label><Input value={editForm.approvedFilingDecision || "—"} readOnly /></div><div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="edit-court-name">Court</Label><Input id="edit-court-name" value={editForm.courtName} onChange={(e) => setEditForm((form) => ({ ...form, courtName: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="edit-court-branch">Court Branch</Label><Input id="edit-court-branch" value={editForm.courtBranch} onChange={(e) => setEditForm((form) => ({ ...form, courtBranch: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="edit-charge-filed">Charge Filed</Label><Input id="edit-charge-filed" value={editForm.chargeFiled} onChange={(e) => setEditForm((form) => ({ ...form, chargeFiled: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="edit-info-count">Information Count</Label><Input id="edit-info-count" type="number" min="0" value={editForm.informationCount} onChange={(e) => setEditForm((form) => ({ ...form, informationCount: e.target.value }))} /></div></div><div className="space-y-2"><div className="flex items-center justify-between"><Label>Criminal Case Numbers</Label><Button type="button" size="sm" variant="outline" onClick={() => setEditForm((form) => ({ ...form, criminalCaseNumbers: [...form.criminalCaseNumbers, { criminal_case_no: "" }] }))}>Add number</Button></div>{editForm.criminalCaseNumbers.map((row, index) => <div key={index} className="flex gap-2"><Input value={row.criminal_case_no} onChange={(e) => setEditForm((form) => ({ ...form, criminalCaseNumbers: form.criminalCaseNumbers.map((item, itemIndex) => itemIndex === index ? { criminal_case_no: e.target.value } : item) }))} /><Button type="button" variant="outline" size="sm" onClick={() => setEditForm((form) => ({ ...form, criminalCaseNumbers: form.criminalCaseNumbers.length === 1 ? [{ criminal_case_no: "" }] : form.criminalCaseNumbers.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</Button></div>)}</div><div className="space-y-2"><div className="flex items-center justify-between"><Label>Court Status History</Label><Button type="button" size="sm" variant="outline" onClick={() => setEditForm((form) => ({ ...form, courtStatuses: [...form.courtStatuses, { court_status: "", status_date: "" }] }))}>Add status</Button></div>{editForm.courtStatuses.map((row, index) => <div key={index} className="grid gap-2 sm:grid-cols-[1fr_10rem_auto]"><Input placeholder="Court status" value={row.court_status} onChange={(e) => setEditForm((form) => ({ ...form, courtStatuses: form.courtStatuses.map((item, itemIndex) => itemIndex === index ? { ...item, court_status: e.target.value } : item) }))} /><Input type="date" value={row.status_date} onChange={(e) => setEditForm((form) => ({ ...form, courtStatuses: form.courtStatuses.map((item, itemIndex) => itemIndex === index ? { ...item, status_date: e.target.value } : item) }))} /><Button type="button" variant="outline" size="sm" onClick={() => setEditForm((form) => ({ ...form, courtStatuses: form.courtStatuses.length === 1 ? [{ court_status: "", status_date: "" }] : form.courtStatuses.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</Button></div>)}</div><MotionDetailsEditor rows={editForm.additionalDetails} onChange={(rows) => setEditForm((form) => ({ ...form, additionalDetails: rows }))} /></> : null}
                 {isCustomOrLegacy ? <div className="space-y-2"><Label htmlFor="edit-title">{code === "CUSTOM_EVENT" ? "Title" : "Legacy Title"}</Label><Input id="edit-title" value={editForm.title} disabled={code !== "CUSTOM_EVENT"} onChange={(e) => setEditForm((form) => ({ ...form, title: e.target.value }))} /></div> : null}
                 {(isMotionReceived || isPetition || code === "CUSTOM_EVENT") ? <MotionDetailsEditor rows={editForm.additionalDetails} onChange={(rows) => setEditForm((form) => ({ ...form, additionalDetails: rows }))} /> : null}
                 <div className="space-y-2"><Label htmlFor="edit-description">{isCustomOrLegacy ? "Description / Remarks" : "Remarks"}</Label><Textarea id="edit-description" value={editForm.description} onChange={(e) => setEditForm((form) => ({ ...form, description: e.target.value }))} /></div>
-                <div className="space-y-2"><Label htmlFor="edit-reason">Reason for Edit</Label><Textarea id="edit-reason" required value={editForm.editReason} onChange={(e) => setEditForm((form) => ({ ...form, editReason: e.target.value }))} /></div>
+                <div className="space-y-2"><Label htmlFor="edit-reason">Reason for Edit <span className="text-muted-foreground">(Optional)</span></Label><Textarea id="edit-reason" value={editForm.editReason} onChange={(e) => setEditForm((form) => ({ ...form, editReason: e.target.value }))} /></div>
               </>;
             })()}
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setEditingEvent(null)}>Cancel</Button>
-            <Button type="button" onClick={handleEditSave} disabled={isSaving || !editForm.eventDate || !editForm.editReason.trim()}>{isSaving ? "Saving..." : "Save Corrections"}</Button>
+            <Button type="button" onClick={handleEditSave} disabled={isSaving || !editForm.eventDate}>{isSaving ? "Saving..." : "Save Corrections"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

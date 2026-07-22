@@ -2831,7 +2831,7 @@ export interface EditCaseEventInput {
   caseEventId: number;
   eventTypeCode: string;
   values: Json;
-  editReason: string;
+  editReason: string | null;
 }
 
 export async function editCaseEvent(
@@ -2854,7 +2854,7 @@ export async function editCaseEvent(
       p_case_event_id: input.caseEventId,
       p_expected_event_type_code: input.eventTypeCode,
       p_values: input.values ?? {},
-      p_edit_reason: input.editReason,
+      p_edit_reason: input.editReason?.trim() || null,
       p_user_id: currentUserQuery.data.id,
     } as never);
 
@@ -2866,6 +2866,39 @@ export async function editCaseEvent(
   } catch (error) {
     return fail(toQueryError(error, "editCaseEvent", "cases"));
   }
+}
+
+export interface EditCourtFilingEventInput {
+  caseEventId: number;
+  courtId?: number | null;
+  courtName: string;
+  courtBranch?: string | null;
+  chargeFiled: string;
+  dateFiled: string;
+  timeFiled?: string | null;
+  informationCount?: number | null;
+  criminalCaseNumbers: { criminal_case_no: string }[];
+  courtStatuses: { court_status: string; status_date: string }[];
+  additionalDetails: CourtStatusUpdateDetailInput[];
+  remarks?: string | null;
+  editReason?: string | null;
+}
+
+export async function editCourtFilingEvent(input: EditCourtFilingEventInput): Promise<SupabaseQueryResult<number>> {
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user."), "editCourtFilingEvent", "users"));
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("edit_court_filing_event" as never, {
+      p_case_event_id: input.caseEventId, p_court_id: input.courtId ?? null, p_court_name: input.courtName.trim(), p_court_branch: input.courtBranch?.trim() || null, p_charge_filed: input.chargeFiled.trim(), p_date_filed: input.dateFiled, p_time_filed: input.timeFiled || null, p_information_count: input.informationCount ?? null,
+      p_criminal_case_numbers: input.criminalCaseNumbers.map((row) => ({ criminal_case_no: row.criminal_case_no.trim() })).filter((row) => row.criminal_case_no),
+      p_court_statuses: input.courtStatuses.map((row) => ({ court_status: row.court_status.trim(), status_date: row.status_date })).filter((row) => row.court_status || row.status_date),
+      p_additional_details_jsonb: input.additionalDetails.map((row) => ({ detail: row.detail.trim(), value: row.value.trim() })).filter((row) => row.detail || row.value),
+      p_remarks: input.remarks?.trim() || null, p_edit_reason: input.editReason?.trim() || null, p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "editCourtFilingEvent", "case_court_filings" as RelationName));
+    return ok(Number(data));
+  } catch (error) { return fail(toQueryError(error, "editCourtFilingEvent", "case_court_filings" as RelationName)); }
 }
 
 export async function voidCaseEvent(
@@ -3546,6 +3579,7 @@ export type CourtStatusUpdateCandidateRecord = {
   case_id: number;
   case_event_id: number;
   court_name: string;
+  court_id: number | null;
   court_branch: string | null;
   charge_filed: string;
   date_filed: string;
@@ -3566,7 +3600,7 @@ export async function getCourtStatusUpdateCandidates(caseId: number): Promise<Su
     const supabase = await getSupabaseBrowserClient();
     const { data, error } = await supabase
       .from("case_court_filings" as never)
-      .select("id, case_id, case_event_id, court_name, court_branch, charge_filed, date_filed, time_filed, information_count, criminal_case_no, court_status, remarks, court_status_update_remarks, additional_details_jsonb, case_events!inner(id, is_voided, details_jsonb), case_court_filing_criminal_cases(id, criminal_case_no, sort_order, is_voided), case_court_filing_statuses(id, court_status, status_date, sort_order, is_voided)" as never)
+      .select("id, case_id, case_event_id, court_id, court_name, court_branch, charge_filed, date_filed, time_filed, information_count, criminal_case_no, court_status, remarks, court_status_update_remarks, additional_details_jsonb, case_events!inner(id, is_voided, details_jsonb), case_court_filing_criminal_cases(id, criminal_case_no, sort_order, is_voided), case_court_filing_statuses(id, court_status, status_date, sort_order, is_voided)" as never)
       .eq("case_id" as never, caseId)
       .eq("is_voided" as never, false)
       .eq("case_events.is_voided" as never, false)
@@ -3577,6 +3611,7 @@ export async function getCourtStatusUpdateCandidates(caseId: number): Promise<Su
       case_id: Number(row.case_id),
       case_event_id: Number(row.case_event_id),
       court_name: row.court_name ?? "",
+      court_id: row.court_id === null || row.court_id === undefined ? null : Number(row.court_id),
       court_branch: row.court_branch ?? null,
       charge_filed: row.charge_filed ?? "",
       date_filed: row.date_filed ?? "",
