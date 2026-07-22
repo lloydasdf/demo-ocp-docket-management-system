@@ -1,0 +1,218 @@
+-- Temporarily allow multiple active Case Assignment events for workflow debugging.
+
+-- The uniqueness guard would otherwise reject the assignment insert after the RPC validation is removed.
+
+DROP INDEX IF EXISTS public.one_active_assignment_per_case;
+
+CREATE OR REPLACE FUNCTION public.record_case_assignment_event(
+  p_case_id bigint,
+  p_prosecutor_id bigint,
+  p_assignment_date date,
+  p_assignment_time time without time zone DEFAULT NULL,
+  p_staff_id bigint DEFAULT NULL,
+  p_remarks text DEFAULT NULL,
+  p_user_id bigint DEFAULT NULL
+) RETURNS bigint
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_event_type_id bigint;
+  v_pending_status_id bigint;
+  v_case_raffled_stage_id bigint;
+  v_event_id bigint;
+  v_assignment_id bigint;
+  v_status_history_id bigint;
+  v_stage_history_id bigint;
+  v_previous_status_id bigint;
+  v_previous_case_status_id bigint;
+  v_previous_stage_id bigint;
+  v_assigned_at timestamptz;
+  v_assignment_time time without time zone;
+  v_prosecutor_name text;
+  v_staff_name text;
+  v_old_details jsonb;
+  v_new_details jsonb;
+BEGIN
+  IF p_case_id IS NULL THEN RAISE EXCEPTION 'Case id is required'; END IF;
+  IF p_prosecutor_id IS NULL THEN RAISE EXCEPTION 'Assigned prosecutor is required'; END IF;
+  IF p_assignment_date IS NULL THEN RAISE EXCEPTION 'Assignment date is required'; END IF;
+
+  SELECT id INTO v_event_type_id
+  FROM public.case_event_types
+  WHERE code = 'CASE_ASSIGNMENT' AND is_active IS TRUE
+  LIMIT 1;
+
+  IF v_event_type_id IS NULL THEN
+    RAISE EXCEPTION 'Missing active case event type CASE_ASSIGNMENT';
+  END IF;
+
+  SELECT id INTO v_pending_status_id
+  FROM public.case_statuses
+  WHERE code = 'PENDING' AND is_active IS TRUE
+  LIMIT 1;
+
+  IF v_pending_status_id IS NULL THEN
+    INSERT INTO public.case_statuses (code, display_label, sort_order, is_final, is_milestone, is_active)
+    VALUES ('PENDING', 'Pending', 20, false, false, true)
+    ON CONFLICT (code) DO UPDATE SET display_label = EXCLUDED.display_label, sort_order = EXCLUDED.sort_order, is_final = false, is_milestone = false, is_active = true
+    RETURNING id INTO v_pending_status_id;
+  END IF;
+
+  SELECT id INTO v_case_raffled_stage_id
+  FROM public.case_stages
+  WHERE code = 'CASE_RAFFLED' AND is_active IS TRUE
+  LIMIT 1;
+
+  IF v_case_raffled_stage_id IS NULL THEN
+    RAISE EXCEPTION 'Missing active case stage CASE_RAFFLED';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = p_case_id) THEN
+    RAISE EXCEPTION 'Unknown case id %', p_case_id;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM public.prosecutors WHERE id = p_prosecutor_id) THEN
+    RAISE EXCEPTION 'Unknown prosecutor id %', p_prosecutor_id;
+  END IF;
+
+  IF p_staff_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.staff WHERE id = p_staff_id) THEN
+    RAISE EXCEPTION 'Unknown staff id %', p_staff_id;
+  END IF;
+
+  SELECT cpd.current_status_id, cpd.current_case_status_id, cpd.current_case_stage_id, to_jsonb(cpd)
+  INTO v_previous_status_id, v_previous_case_status_id, v_previous_stage_id, v_old_details
+  FROM public.case_private_details cpd
+  WHERE cpd.case_id = p_case_id;
+
+  v_assignment_time := COALESCE(p_assignment_time, (now() AT TIME ZONE 'Asia/Manila')::time(0));
+  v_assigned_at := ((p_assignment_date::timestamp + v_assignment_time) AT TIME ZONE 'Asia/Manila');
+
+  SELECT COALESCE(short_name, full_name) INTO v_prosecutor_name
+  FROM public.prosecutors
+  WHERE id = p_prosecutor_id;
+
+  SELECT COALESCE(short_name, full_name) INTO v_staff_name
+  FROM public.staff
+  WHERE id = p_staff_id;
+
+  INSERT INTO public.case_events (
+    case_id, event_type_id, event_date, event_time, title, description,
+    status_id, case_status_id, case_stage_id,
+    prosecutor_id, staff_id, details_jsonb, source, created_by_user_id, updated_by_user_id
+  ) VALUES (
+    p_case_id,
+    v_event_type_id,
+    p_assignment_date,
+    v_assignment_time,
+    'Case Assignment',
+    'Assigned to Prosec ' || COALESCE(v_prosecutor_name, p_prosecutor_id::text) || ' on ' || to_char(p_assignment_date, 'Mon DD, YYYY'),
+    v_pending_status_id,
+    v_pending_status_id,
+    v_case_raffled_stage_id,
+    p_prosecutor_id,
+    p_staff_id,
+    jsonb_build_object(
+      'action', 'case_assignment',
+      'new_prosecutor_id', p_prosecutor_id,
+      'new_prosecutor_name', v_prosecutor_name,
+      'staff_id', p_staff_id,
+      'staff_name', v_staff_name,
+      'remarks', NULLIF(btrim(COALESCE(p_remarks, '')), ''),
+      'automatic_status', 'Pending',
+      'automatic_case_status', 'Pending',
+      'automatic_case_stage', 'Case Raffled'
+    ),
+    'MANUAL_ENTRY', p_user_id, p_user_id
+  ) RETURNING id INTO v_event_id;
+
+  INSERT INTO public.case_assignments (case_id, prosecutor_id, staff_id, assigned_by_user_id, assigned_at, remarks, case_event_id)
+  VALUES (p_case_id, p_prosecutor_id, p_staff_id, p_user_id, v_assigned_at, NULLIF(btrim(COALESCE(p_remarks, '')), ''), v_event_id)
+  RETURNING id INTO v_assignment_id;
+
+  UPDATE public.case_events
+  SET source_table = 'case_assignments', source_id = v_assignment_id, updated_by_user_id = p_user_id
+  WHERE id = v_event_id;
+
+  INSERT INTO public.case_status_history (
+    case_id, from_status_id, to_status_id, changed_by_user_id, changed_at, status_date, remarks, case_event_id
+  ) VALUES (
+    p_case_id,
+    COALESCE(v_previous_case_status_id, v_previous_status_id),
+    v_pending_status_id,
+    p_user_id,
+    now(),
+    p_assignment_date,
+    'Case Assignment recorded. Broad case status set to Pending.',
+    v_event_id
+  ) RETURNING id INTO v_status_history_id;
+
+  INSERT INTO public.case_stage_history (
+    case_id, from_stage_id, to_stage_id, changed_by_user_id, changed_at, stage_date, remarks, case_event_id
+  ) VALUES (
+    p_case_id,
+    v_previous_stage_id,
+    v_case_raffled_stage_id,
+    p_user_id,
+    now(),
+    p_assignment_date,
+    'Case Assignment recorded. Workflow stage set to Case Raffled.',
+    v_event_id
+  ) RETURNING id INTO v_stage_history_id;
+
+  INSERT INTO public.case_private_details (
+    case_id,
+    current_status_id,
+    current_status_date,
+    current_case_status_id,
+    current_case_status_date,
+    current_case_stage_id,
+    current_case_stage_date,
+    updated_at
+  )
+  VALUES (
+    p_case_id,
+    v_pending_status_id,
+    p_assignment_date,
+    v_pending_status_id,
+    p_assignment_date,
+    v_case_raffled_stage_id,
+    p_assignment_date,
+    now()
+  )
+  ON CONFLICT (case_id) DO UPDATE SET
+    current_status_id = EXCLUDED.current_status_id,
+    current_status_date = EXCLUDED.current_status_date,
+    current_case_status_id = EXCLUDED.current_case_status_id,
+    current_case_status_date = EXCLUDED.current_case_status_date,
+    current_case_stage_id = EXCLUDED.current_case_stage_id,
+    current_case_stage_date = EXCLUDED.current_case_stage_date,
+    updated_at = now();
+
+  SELECT to_jsonb(cpd) INTO v_new_details
+  FROM public.case_private_details cpd
+  WHERE cpd.case_id = p_case_id;
+
+  INSERT INTO public.audit_logs (actor_user_id, entity_name, entity_id, action, old_data, new_data, case_id, summary, metadata)
+  VALUES (
+    p_user_id,
+    'case_assignments',
+    v_assignment_id,
+    'CASE_ASSIGNED_CASE_RAFFLED_STAGE',
+    v_old_details,
+    v_new_details,
+    p_case_id,
+    'Case assigned to ' || COALESCE(v_prosecutor_name, 'selected prosecutor') || '; case status set to Pending and case stage set to Case Raffled.',
+    jsonb_build_object(
+      'case_event_id', v_event_id,
+      'assignment_id', v_assignment_id,
+      'status_id', v_pending_status_id,
+      'case_status_id', v_pending_status_id,
+      'case_stage_id', v_case_raffled_stage_id,
+      'status_history_id', v_status_history_id,
+      'case_stage_history_id', v_stage_history_id
+    )
+  );
+
+  RETURN v_event_id;
+END;
+$$;
