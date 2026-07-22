@@ -2001,7 +2001,6 @@ export type CasePetitionForReviewRecord = {
   id: number;
   case_id: number;
   petition_title: string | null;
-  handling_prosecutor_text: string | null;
   date_received: string | null;
   date_received_raw: string | null;
   filed_by: string | null;
@@ -2017,8 +2016,6 @@ export type CasePetitionForReviewRecord = {
   time_filed?: string | null;
   status_date?: string | null;
   additional_details_jsonb?: MotionDetailInput[];
-  assigned_prosecutor_id?: number | null;
-  assigned_prosecutor_name?: string | null;
   is_voided?: boolean | null;
 };
 
@@ -2081,7 +2078,7 @@ export async function getCasePetitionsForReview(
       return (await supabase
         .from("v_case_petitions_for_review_detail" as never)
         .select(
-          "id, case_id, case_event_id, petition_title, handling_prosecutor_text, date_received, date_received_raw, filed_by, filed_by_code, date_filed, time_filed, petition_status, status_date, date_resolved, date_resolved_raw, date_approved, date_approved_raw, remarks, additional_details_jsonb, assigned_prosecutor_id, assigned_prosecutor_name, is_voided",
+          "id, case_id, case_event_id, petition_title, date_received, date_received_raw, filed_by, filed_by_code, date_filed, time_filed, petition_status, status_date, date_resolved, date_resolved_raw, date_approved, date_approved_raw, remarks, additional_details_jsonb, is_voided",
         )
         .eq("case_id" as never, caseId)
         .order("date_received" as never, { ascending: false, nullsFirst: false })) as {
@@ -3684,7 +3681,6 @@ export interface RecordPetitionForReviewEventInput {
   timeFiled?: string | null;
   petitionStatus: string;
   additionalDetails?: MotionDetailInput[];
-  assignedProsecutorId?: number | null;
   remarks?: string | null;
 }
 
@@ -3703,7 +3699,6 @@ export async function recordPetitionForReviewEvent(input: RecordPetitionForRevie
       p_time_filed: input.timeFiled?.trim() || null,
       p_petition_status: input.petitionStatus.trim(),
       p_additional_details_jsonb: details,
-      p_assigned_prosecutor_id: input.assignedProsecutorId ?? null,
       p_remarks: input.remarks?.trim() || null,
       p_user_id: currentUserQuery.data.id,
     } as never);

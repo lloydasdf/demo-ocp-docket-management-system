@@ -1599,7 +1599,7 @@ function normalizeTimeline(data: CaseDetailsState): CaseDetailsReport["timeline"
       date: petition.date_filed ?? petition.date_received ?? null,
       category: "Petition for Review",
       title: petition.petition_title ?? "Petition for review",
-      details: [petition.filed_by, petition.handling_prosecutor_text, petition.petition_status, petition.date_resolved_raw ?? petition.date_resolved, petition.remarks]
+      details: [petition.filed_by, petition.petition_status, petition.date_resolved_raw ?? petition.date_resolved, petition.remarks]
         .filter((detail): detail is string => Boolean(nullableDisplay(detail))),
     });
   });
