@@ -3571,6 +3571,16 @@ export async function createNewDocketEntry(input: NewDocketEntryInput): Promise<
   }
 }
 
+export type LegacyCourtFilingRecord = Pick<TableRow<"case_courts">, "id" | "case_id" | "court_id" | "raw_court_text" | "court_branch" | "charge_filed" | "criminal_case_number" | "information_count" | "date_filed_in_court" | "actual_filing_date" | "court_status" | "court_remarks">;
+
+export async function getLegacyCourtFilingBySource(caseId: number, sourceId: number): Promise<SupabaseQueryResult<LegacyCourtFilingRecord | null>> {
+  return runSupabaseQuery("getLegacyCourtFilingBySource", "case_courts" as RelationName, async () => {
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.from("case_courts" as never).select("id, case_id, court_id, raw_court_text, court_branch, charge_filed, criminal_case_number, information_count, date_filed_in_court, actual_filing_date, court_status, court_remarks" as never).eq("id" as never, sourceId).eq("case_id" as never, caseId).maybeSingle() as unknown as { data: LegacyCourtFilingRecord | null; error: unknown };
+    return { data, error };
+  }, null);
+}
+
 export type CourtStatusUpdateDetailInput = { detail: string; value: string };
 export type CourtStatusUpdateCriminalCaseRecord = { id: number | null; criminal_case_no: string; sort_order: number | null };
 export type CourtStatusUpdateStatusRecord = { id: number | null; court_status: string; status_date: string; sort_order: number | null };

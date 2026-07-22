@@ -71,6 +71,7 @@ import {
   type CaseStageOptionRecord,
   type CourtStatusUpdateCandidateRecord,
   getCourtStatusUpdateCandidates,
+  getLegacyCourtFilingBySource,
   updateCourtFilingStatusDetails,
   recordPetitionForReviewEvent,
   recordPetitionForReviewUpdate,
@@ -188,6 +189,11 @@ function OptionalDetailItem({
 type MotionDetailRow = { detail: string; value: string };
 type CourtStatusRow = { court_status: string; status_date: string };
 type CriminalCaseNumberRow = { criminal_case_no: string };
+
+function legacyCriminalCaseNumbers(value: string | null | undefined): CriminalCaseNumberRow[] {
+  const rows = (value ?? "").split(/[,;|\n]+/).map((criminal_case_no) => ({ criminal_case_no: criminal_case_no.trim() })).filter((row) => row.criminal_case_no);
+  return rows.length ? rows : [{ criminal_case_no: "" }];
+}
 
 
 function MotionDetailsEditor({ rows, onChange }: { rows: MotionDetailRow[]; onChange: (rows: MotionDetailRow[]) => void }) {
@@ -1520,28 +1526,29 @@ export function CaseTimeline({
     }
     const details = event.details_jsonb && typeof event.details_jsonb === "object" ? event.details_jsonb as Record<string, unknown> : {};
     const courtFiling = event.event_type_code === "COURT_FILING" ? ((await getCourtStatusUpdateCandidates(caseId)).data ?? []).find((filing) => filing.case_event_id === event.case_event_id) : undefined;
+    const legacyCourt = !courtFiling && event.event_type_code === "COURT_FILING" && event.source_table === "case_courts" && event.source_id !== null ? (await getLegacyCourtFilingBySource(caseId, event.source_id)).data : null;
     const sourceMotion = motions.find((motion) => sourceIdMatches(event, motion.id));
     const sourcePetition = petitionsForReview.find((petition) => sourceIdMatches(event, petition.id));
     setEditingEvent(event);
     setEditForm({
-      eventDate: toDateInputValue(sourceMotion?.date_filed ?? sourcePetition?.date_filed ?? stringDetail(details.date_filed) ?? stringDetail(details.date_resolved) ?? stringDetail(details.date_approved) ?? stringDetail(details.status_date) ?? event.event_date),
+      eventDate: toDateInputValue(sourceMotion?.date_filed ?? sourcePetition?.date_filed ?? legacyCourt?.actual_filing_date ?? legacyCourt?.date_filed_in_court ?? stringDetail(details.date_filed) ?? stringDetail(details.date_resolved) ?? stringDetail(details.date_approved) ?? stringDetail(details.status_date) ?? event.event_date),
       eventTime: sourceMotion?.time_filed ?? sourcePetition?.time_filed ?? stringDetail(details.time_filed) ?? stringDetail(details.time_resolved) ?? stringDetail(details.time_approved) ?? event.event_time ?? "",
       title: stringDetail(details.motion_title) ?? sourceMotion?.motion_title ?? event.title ?? "",
-      description: sourceMotion?.remarks ?? sourcePetition?.remarks ?? stringDetail(details.remarks) ?? event.description ?? "",
+      description: sourceMotion?.remarks ?? sourcePetition?.remarks ?? legacyCourt?.court_remarks ?? stringDetail(details.remarks) ?? event.description ?? "",
       editReason: "",
       prosecutorId: String(details.prosecutor_id ?? details.assigned_prosecutor_id ?? ""),
       staffId: String(details.staff_id ?? ""),
       assignedProsecutorId: String(sourceMotion?.assigned_prosecutor_id ?? sourcePetition?.assigned_prosecutor_id ?? details.assigned_prosecutor_id ?? details.approved_by_prosecutor_id ?? details.approved_by_id ?? ""),
       filedByCode: sourceMotion?.filed_by_code ?? sourcePetition?.filed_by_code ?? stringDetail(details.filed_by_code) ?? "",
       petitionStatus: sourcePetition?.petition_status ?? stringDetail(details.petition_status) ?? "",
-      courtId: courtFiling?.court_id ?? null,
-      courtName: courtFiling?.court_name ?? stringDetail(details.court_name) ?? stringDetail(details.court) ?? "",
-      courtBranch: courtFiling?.court_branch ?? stringDetail(details.court_branch) ?? "",
-      chargeFiled: courtFiling?.charge_filed ?? stringDetail(details.charge_filed) ?? "",
-      informationCount: String(courtFiling?.information_count ?? details.information_count ?? ""),
-      criminalCaseNo: courtFiling?.criminal_case_no ?? stringDetail(details.criminal_case_no) ?? "",
-      criminalCaseNumbers: courtFiling?.criminal_case_numbers.length ? courtFiling.criminal_case_numbers.map((row) => ({ criminal_case_no: row.criminal_case_no })) : courtFiling?.criminal_case_no ? [{ criminal_case_no: courtFiling.criminal_case_no }] : Array.isArray(details.criminal_case_numbers) ? details.criminal_case_numbers.map((row) => ({ criminal_case_no: String((row as Record<string, unknown>)?.criminal_case_no ?? row ?? "") })) : [{ criminal_case_no: "" }],
-      courtStatuses: courtFiling?.court_statuses.length ? courtFiling.court_statuses.map((row) => ({ court_status: row.court_status, status_date: row.status_date })) : Array.isArray(details.court_statuses) ? details.court_statuses.map((row) => ({ court_status: String((row as Record<string, unknown>)?.court_status ?? ""), status_date: String((row as Record<string, unknown>)?.status_date ?? "") })) : [{ court_status: "", status_date: "" }],
+      courtId: courtFiling?.court_id ?? legacyCourt?.court_id ?? null,
+      courtName: courtFiling?.court_name ?? legacyCourt?.raw_court_text ?? stringDetail(details.court_name) ?? stringDetail(details.court) ?? "",
+      courtBranch: courtFiling?.court_branch ?? legacyCourt?.court_branch ?? stringDetail(details.court_branch) ?? "",
+      chargeFiled: courtFiling?.charge_filed ?? legacyCourt?.charge_filed ?? stringDetail(details.charge_filed) ?? "",
+      informationCount: String(courtFiling?.information_count ?? legacyCourt?.information_count ?? details.information_count ?? ""),
+      criminalCaseNo: courtFiling?.criminal_case_no ?? legacyCourt?.criminal_case_number ?? stringDetail(details.criminal_case_no) ?? "",
+      criminalCaseNumbers: courtFiling?.criminal_case_numbers.length ? courtFiling.criminal_case_numbers.map((row) => ({ criminal_case_no: row.criminal_case_no })) : courtFiling?.criminal_case_no ? [{ criminal_case_no: courtFiling.criminal_case_no }] : legacyCourt ? legacyCriminalCaseNumbers(legacyCourt.criminal_case_number) : Array.isArray(details.criminal_case_numbers) ? details.criminal_case_numbers.map((row) => ({ criminal_case_no: String((row as Record<string, unknown>)?.criminal_case_no ?? row ?? "") })) : [{ criminal_case_no: "" }],
+      courtStatuses: courtFiling?.court_statuses.length ? courtFiling.court_statuses.map((row) => ({ court_status: row.court_status, status_date: row.status_date })) : legacyCourt?.court_status ? [{ court_status: legacyCourt.court_status, status_date: "" }] : Array.isArray(details.court_statuses) ? details.court_statuses.map((row) => ({ court_status: String((row as Record<string, unknown>)?.court_status ?? ""), status_date: String((row as Record<string, unknown>)?.status_date ?? "") })) : [{ court_status: "", status_date: "" }],
       approvedFilingDecision: courtFiling?.approved_filing_decision ?? stringDetail(details.approved_filing_decision_label) ?? stringDetail(details.approved_filing_decision) ?? "",
       approvedByProsecutorId: String(details.approved_by_prosecutor_id ?? details.approved_by_id ?? ""),
       motionTitle: sourceMotion?.motion_title ?? stringDetail(details.motion_title) ?? event.title ?? "",
