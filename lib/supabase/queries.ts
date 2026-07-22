@@ -2674,6 +2674,7 @@ export interface RecordMotionResolvedEventInput {
   dateResolved: string;
   timeResolved?: string | null;
   remarks?: string | null;
+  motionTitle?: string | null;
 }
 
 export async function recordMotionResolvedEvent(input: RecordMotionResolvedEventInput): Promise<SupabaseQueryResult<number>> {
@@ -2691,6 +2692,7 @@ export async function recordMotionResolvedEvent(input: RecordMotionResolvedEvent
       p_time_resolved: input.timeResolved?.trim() || null,
       p_remarks: input.remarks?.trim() || null,
       p_user_id: currentUserQuery.data.id,
+      p_motion_title: input.motionTitle?.trim() || null,
     } as never);
     if (error) return fail(toQueryError(error, "recordMotionResolvedEvent", "case_motion_resolutions" as RelationName));
     return ok(Number(data ?? 0));

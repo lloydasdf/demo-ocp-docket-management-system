@@ -8,6 +8,16 @@ DROP INDEX IF EXISTS public.case_motion_resolutions_one_active_per_motion_uidx;
 ALTER TABLE public.case_motion_resolutions
   ALTER COLUMN case_motion_id DROP NOT NULL;
 
+DROP FUNCTION IF EXISTS public.record_motion_resolved_event(
+  bigint,
+  bigint,
+  bigint,
+  date,
+  time without time zone,
+  text,
+  bigint
+);
+
 CREATE OR REPLACE FUNCTION public.record_motion_resolved_event(
   p_case_id bigint,
   p_case_motion_id bigint,
@@ -15,7 +25,8 @@ CREATE OR REPLACE FUNCTION public.record_motion_resolved_event(
   p_date_resolved date,
   p_time_resolved time without time zone DEFAULT NULL,
   p_remarks text DEFAULT NULL,
-  p_user_id bigint DEFAULT NULL
+  p_user_id bigint DEFAULT NULL,
+  p_motion_title text DEFAULT NULL
 )
 RETURNS bigint
 LANGUAGE plpgsql
@@ -64,7 +75,9 @@ BEGIN
     RAISE EXCEPTION 'Unknown recommendation id %', p_recommendation_id;
   END IF;
 
-  IF p_case_motion_id IS NOT NULL THEN
+  IF p_case_motion_id IS NULL THEN
+    v_motion_title := NULLIF(btrim(p_motion_title), '');
+  ELSE
     SELECT
       COALESCE(
         NULLIF(btrim(cm.motion_title), ''),
@@ -164,6 +177,17 @@ BEGIN
   RETURN v_event_id;
 END;
 $$;
+
+GRANT EXECUTE ON FUNCTION public.record_motion_resolved_event(
+  bigint,
+  bigint,
+  bigint,
+  date,
+  time without time zone,
+  text,
+  bigint,
+  text
+) TO authenticated;
 
 -- The public RPC above now contains the linked implementation, so remove the old alias.
 DROP FUNCTION IF EXISTS public.record_motion_resolved_event_linked(
