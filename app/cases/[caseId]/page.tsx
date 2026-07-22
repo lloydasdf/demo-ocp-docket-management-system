@@ -52,6 +52,7 @@ import {
   addCaseStage,
   getDocketTypes,
   getCaseMotions,
+  getLinkedDocketsForCases,
   getCaseParticipants,
   getCasePetitionsForReview,
   getCaseTimelineEvents,
@@ -1698,6 +1699,7 @@ export default function CaseDetailsPage() {
   const [activeOverviewEditor, setActiveOverviewEditor] =
     useState<OverviewAction | null>(null);
   const [correctionParticipantId, setCorrectionParticipantId] = useState<number | null>(null);
+  const [linkedDocketNumber, setLinkedDocketNumber] = useState<string | null>(null);
   const loadCase = useCallback(async () => {
     if (!Number.isFinite(caseId)) {
       setErrorMessage("Invalid case id.");
@@ -1722,6 +1724,7 @@ export default function CaseDetailsPage() {
       statuses,
       stages,
       addressTypes,
+      linkedDockets,
     ] = await Promise.all([
       getCaseDetailsPageById(caseId),
       getCaseParticipants(caseId),
@@ -1736,6 +1739,7 @@ export default function CaseDetailsPage() {
       getCaseStatuses(),
       getCaseStages(),
       getAddressTypes(),
+      getLinkedDocketsForCases([caseId]),
     ]);
 
     const criticalError = caseDetailsPage.error;
@@ -1766,6 +1770,8 @@ export default function CaseDetailsPage() {
       stages: (stages.data ?? []) as RefOption[],
       addressTypes: (addressTypes.data ?? []) as RefOption[],
     });
+    const link = linkedDockets.data?.[0];
+    setLinkedDocketNumber(link ? (link.pe_case_id === caseId ? link.linked_docket_number : link.pe_docket_number) : null);
 
     setData({
       compact: caseDetailsPage.data,
@@ -1875,7 +1881,7 @@ export default function CaseDetailsPage() {
   }, [roleError]);
 
   const canShowCaseManagementActions = !isRoleLoading && !roleError && canShowCaseManagementActionsForRole(currentRoles);
-  const canCreateLinkedDocket = !isRoleLoading && !roleError && canViewLinkedDocket(currentRoles) && data?.details?.docket_type_prefix?.toUpperCase() === "PE";
+  const canCreateLinkedDocket = !isRoleLoading && !roleError && canViewLinkedDocket(currentRoles) && data?.details?.docket_type_prefix?.toUpperCase() === "PE" && !linkedDocketNumber;
 
   const activeSectionEditor =
     activeOverviewEditor && activeOverviewEditor !== "history" && activeOverviewEditor !== "participants"
@@ -1936,6 +1942,7 @@ export default function CaseDetailsPage() {
                       <CardDescription className="mt-3 text-sm text-foreground sm:text-base">
                         {data.compact.violations ?? "No violation recorded"}
                       </CardDescription>
+                      {linkedDocketNumber ? <p className="mt-2 text-sm text-muted-foreground">Linked docket: <span className="font-medium text-foreground">{linkedDocketNumber}</span></p> : null}
                       {classificationLabel(data.details) ||
                       data.details.is_summary_procedure ? (
                         <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">

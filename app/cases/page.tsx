@@ -91,7 +91,7 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v18';
+const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v19';
 const casesPageMemoryCache = new Map<string, CasesPageCache>();
 
 function getCasesPageCacheKey(userId: string) {
@@ -105,6 +105,7 @@ function clearLegacyCasesPageCaches() {
 
   window.sessionStorage.removeItem('ocp-cases-page-cache-v16');
   window.sessionStorage.removeItem('ocp-cases-page-cache-v17');
+  window.sessionStorage.removeItem('ocp-cases-page-cache-v18');
 }
 
 function readCasesPageCache(userId: string) {
@@ -929,8 +930,8 @@ export default function CasesPage() {
   }, [docketYearFilters, selectedDocketYears]);
 
   const tableWidth = useMemo(
-    () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0),
-    [columnWidths],
+    () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0) + (canViewLinkedDockets ? 180 : 0),
+    [canViewLinkedDockets, columnWidths],
   );
 
   const rowHeights = useMemo(
@@ -1445,6 +1446,7 @@ export default function CasesPage() {
                 >
                   <table className="w-full caption-bottom table-fixed text-sm" style={{ width: tableWidth, minWidth: '100%' }}>
                     <colgroup>
+                      {canViewLinkedDockets ? <col style={{ width: 180 }} /> : null}
                       {CASE_TABLE_COLUMNS.map((column) => (
                         <col key={column.key} style={{ width: columnWidths[column.key] }} />
                       ))}
