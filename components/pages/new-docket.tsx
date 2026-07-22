@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AlertCircle, CheckCircle2, Loader2, MapPin, Plus, Search, Settings2, X } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -25,6 +25,9 @@ import {
   getAddressTypes,
   getCaseStatuses,
   getCaseClassifications,
+  getCaseDetailsPageById,
+  getCaseManagedViolations,
+  getCaseParticipants,
   getCurrentDatabaseUser,
   getDocketTypes,
   getNextDocketNumber,
@@ -299,6 +302,9 @@ function makeEmptyAddress(defaultAddressTypeId: string, prefix = 'address'): Add
 
 export default function NewDocket() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const linkedPeCaseId = Number.parseInt(searchParams.get('linkedPeCaseId') ?? '', 10);
+  const linkedDocketType = searchParams.get('docketType')?.toUpperCase();
   const [activeTab, setActiveTab] = useState('case-info');
   const [lookups, setLookups] = useState<LookupState>(emptyLookups);
   const [currentUser, setCurrentUser] = useState<DatabaseUserSummary | null>(null);
@@ -334,6 +340,54 @@ export default function NewDocket() {
   const [remarks, setRemarks] = useState('');
   const [notes, setNotes] = useState('');
   const [isSummaryProcedure, setIsSummaryProcedure] = useState(false);
+
+  // A linked docket is intentionally initialized from database read views, not
+  // from a browser draft, so users review the PE's actual current details.
+  useEffect(() => {
+    if (!Number.isFinite(linkedPeCaseId) || !linkedDocketType || lookups.docketTypes.length === 0) return;
+    let mounted = true;
+    async function prefillLinkedDocket() {
+      const [detailsResult, participantsResult, violationsResult] = await Promise.all([
+        getCaseDetailsPageById(linkedPeCaseId),
+        getCaseParticipants(linkedPeCaseId),
+        getCaseManagedViolations(linkedPeCaseId),
+      ]);
+      if (!mounted) return;
+      const details = detailsResult.data;
+      const targetType = lookups.docketTypes.find((type) => type.prefix.toUpperCase() === linkedDocketType);
+      if (!details || !targetType || participantsResult.error || violationsResult.error) {
+        setMessage({ type: 'error', text: 'Unable to pre-fill the linked PE docket.' });
+        return;
+      }
+      setDocketTypeId(String(targetType.id));
+      setDocketYear(String(details.docket_year ?? thisYear));
+      setDateReceived(details.date_received ?? getManilaDateTimeInputValues().date);
+      setTimeReceived(getManilaDateTimeInputValues().time);
+      setCaseReceivedDescription(details.summary_text ?? 'Linked from PE docket');
+      setIsCaseReceivedDescriptionEdited(true);
+      setCaseClassificationId(details.case_classification_id ? String(details.case_classification_id) : '');
+      setRegionCode(details.region_code ?? defaultRegionCode);
+      setSummaryText(details.summary_text ?? '');
+      setRemarks(details.remarks ?? '');
+      setIsSummaryProcedure(Boolean(details.is_summary_procedure));
+      setPersons((participantsResult.data ?? []).map((participant, index) => ({
+        id: makeId('linked-person'), participantKind: (participant.participant_kind === 'ORGANIZATION' || participant.organization_id ? 'ORGANIZATION' : 'PERSON') as 'PERSON' | 'ORGANIZATION',
+        roleId: participant.role_id ?? 0, participantOrder: participant.participant_order ?? index + 1,
+        existingPersonId: participant.person_id ?? undefined, existingOrganizationId: participant.organization_id ?? undefined,
+        firstName: participant.persons?.first_name ?? '', middleName: participant.persons?.middle_name ?? '', lastName: participant.persons?.last_name ?? '', suffix: participant.persons?.suffix ?? '',
+        organizationName: participant.organizations?.organization_name ?? '', selectedExistingName: participant.persons?.full_name ?? null,
+        selectedExistingOrganizationName: participant.organizations?.organization_name ?? null,
+      })));
+      setViolations((violationsResult.data ?? []).map((violation, index) => ({
+        id: makeId('linked-violation'), existingViolationId: violation.violation_id ?? undefined, violationOrder: violation.violation_order ?? index + 1,
+        rawViolationText: violation.raw_violation_text ?? null, searchText: violation.violations?.title ?? violation.raw_violation_text ?? '', selectedExistingTitle: violation.violations?.title ?? null,
+      })));
+      setIsDocketInformationSaved(true);
+      setActiveTab('review');
+    }
+    void prefillLinkedDocket();
+    return () => { mounted = false; };
+  }, [linkedDocketType, linkedPeCaseId, lookups.docketTypes]);
 
   useEffect(() => {
     if (!isCaseReceivedDescriptionEdited) {
@@ -1025,6 +1079,7 @@ export default function NewDocket() {
     setMessage(null);
 
     const payload: NewDocketEntryInput = {
+      linkedPeCaseId: Number.isFinite(linkedPeCaseId) ? linkedPeCaseId : null,
       docketTypeId: toNumber(docketTypeId),
       docketYear: toNumber(docketYear),
       dateReceived,

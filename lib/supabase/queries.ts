@@ -481,6 +481,15 @@ export type DocketQuickDetailsRecord = {
 
 export type CasesDisplayRecord = DocketShellRecord & DocketParticipantsRecord & DocketCaseLabelsRecord & DocketQuickDetailsRecord;
 
+export type LinkedDocketRecord = {
+  id: number;
+  pe_case_id: number | null;
+  linked_case_id: number | null;
+  pe_docket_number: string | null;
+  linked_docket_number: string | null;
+  linked_docket_type_prefix: string | null;
+};
+
 const DOCKET_SHELL_COLUMNS =
   "id, docket_type_id, docket_year, docket_number, docket_month_code, docket_display_number, docket_type_prefix, docket_type_name, created_at";
 
@@ -623,6 +632,15 @@ export async function getDocketQuickDetailsForCases(
     "getDocketQuickDetailsForCases",
     "v_docket_quickdetails",
     DOCKET_QUICK_DETAILS_COLUMNS,
+    caseIds,
+  );
+}
+
+export async function getLinkedDocketsForCases(caseIds: number[]): Promise<SupabaseQueryResult<LinkedDocketRecord[]>> {
+  return getRowsByCaseIds<LinkedDocketRecord>(
+    "getLinkedDocketsForCases",
+    "v_case_linked_dockets",
+    "id, pe_case_id, linked_case_id, pe_docket_number, linked_docket_number, linked_docket_type_prefix",
     caseIds,
   );
 }
@@ -3450,6 +3468,7 @@ export interface NewDocketEntryInput {
   addresses: NewDocketAddressInput[];
   violations: NewDocketViolationInput[];
   notes?: string | null;
+  linkedPeCaseId?: number | null;
 }
 
 export interface NewDocketEntryResult {
@@ -3557,9 +3576,10 @@ export async function createNewDocketEntry(input: NewDocketEntryInput): Promise<
 
   try {
     const supabase = await getSupabaseBrowserClient();
-    const { data, error } = await supabase.rpc("create_new_docket_entry" as never, {
-      p_payload: input as unknown as Json,
-    } as never);
+    const { linkedPeCaseId, ...payload } = input;
+    const { data, error } = linkedPeCaseId
+      ? await supabase.rpc("create_linked_docket_entry" as never, { p_payload: payload as unknown as Json, p_pe_case_id: linkedPeCaseId } as never)
+      : await supabase.rpc("create_new_docket_entry" as never, { p_payload: payload as unknown as Json } as never);
 
     if (error) {
       return fail(toQueryError(error, "createNewDocketEntry", "cases"));

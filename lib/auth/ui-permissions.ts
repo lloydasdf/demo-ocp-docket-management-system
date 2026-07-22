@@ -71,3 +71,8 @@ export function canExportCasesToExcel(role: RoleInput) {
   const roles = normalizeRoleCodes(role);
   return roles.length > 0 && !roles.includes('PROSECUTOR');
 }
+
+export function canViewLinkedDocket(role: RoleInput) {
+  const roles = normalizeRoleCodes(role);
+  return roles.includes('ADMIN') || roles.includes('DEVELOPER');
+}

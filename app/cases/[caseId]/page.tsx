@@ -8,7 +8,7 @@ import { ChevronDown, ExternalLink, Printer } from "lucide-react";
 
 import { CaseTimeline } from "@/components/case-timeline";
 import { useCurrentUserRole } from "@/hooks/use-current-user-role";
-import { canShowCaseManagementActions as canShowCaseManagementActionsForRole } from "@/lib/auth/ui-permissions";
+import { canShowCaseManagementActions as canShowCaseManagementActionsForRole, canViewLinkedDocket } from "@/lib/auth/ui-permissions";
 import { StageBadge, StatusBadge } from "@/components/status-badge";
 import { Sidebar } from "@/components/sidebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -1875,6 +1875,7 @@ export default function CaseDetailsPage() {
   }, [roleError]);
 
   const canShowCaseManagementActions = !isRoleLoading && !roleError && canShowCaseManagementActionsForRole(currentRoles);
+  const canCreateLinkedDocket = !isRoleLoading && !roleError && canViewLinkedDocket(currentRoles) && data?.details?.docket_type_prefix?.toUpperCase() === "PE";
 
   const activeSectionEditor =
     activeOverviewEditor && activeOverviewEditor !== "history" && activeOverviewEditor !== "participants"
@@ -1951,6 +1952,12 @@ export default function CaseDetailsPage() {
                     </div>
 
                     <div className="flex shrink-0 flex-wrap gap-2 self-start">
+                      {canCreateLinkedDocket ? (
+                        <>
+                          <Link href={`/new-docket?linkedPeCaseId=${caseId}&docketType=INV`}><Button type="button" variant="outline">Docket as INV</Button></Link>
+                          <Link href={`/new-docket?linkedPeCaseId=${caseId}&docketType=INQ`}><Button type="button" variant="outline">Docket as INQ</Button></Link>
+                        </>
+                      ) : null}
                       <Button
                         type="button"
                         variant="outline"

@@ -19,13 +19,14 @@ import {
 import { ChevronDown, Printer, RefreshCw, X } from 'lucide-react';
 import { ExportCasesDialog } from '@/components/cases/export-cases-dialog';
 import { useCurrentUserRole } from '@/hooks/use-current-user-role';
-import { canExportCasesToExcel } from '@/lib/auth/ui-permissions';
+import { canExportCasesToExcel, canViewLinkedDocket } from '@/lib/auth/ui-permissions';
 import {
   getDocketCaseLabelsForCases,
   getDocketParticipantsForCases,
   canCurrentUserViewDocketQuickDetails,
   getDocketQuickDetailsForCases,
   getDocketShellDisplay,
+  getLinkedDocketsForCases,
   type CasesDisplayRecord,
   type DocketCaseLabelsRecord,
   type DocketParticipantsRecord,
@@ -447,6 +448,7 @@ export default function CasesPage() {
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(() => getInitialColumnWidths());
   const [partyNamesByCase, setPartyNamesByCase] = useState<Record<number, CasePartyNames>>({});
   const [classificationsByCase, setClassificationsByCase] = useState<CaseClassificationByCase>({});
+  const [linkedDocketsByCase, setLinkedDocketsByCase] = useState<Record<number, string>>({});
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(640);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -454,6 +456,20 @@ export default function CasesPage() {
   const [pdfError, setPdfError] = useState<string | null>(null);
   const { roles: currentRoles, isLoading: isRoleLoading, error: roleError } = useCurrentUserRole();
   const canShowExcelExport = !isRoleLoading && !roleError && canExportCasesToExcel(currentRoles);
+  const canViewLinkedDockets = !isRoleLoading && !roleError && canViewLinkedDocket(currentRoles);
+
+  useEffect(() => {
+    if (!canViewLinkedDockets || cases.length === 0) return;
+    let mounted = true;
+    void getLinkedDocketsForCases(cases.map((caseDetail) => caseDetail.id).filter((id): id is number => id !== null)).then((result) => {
+      if (!mounted || result.error) return;
+      setLinkedDocketsByCase(result.data.reduce<Record<number, string>>((links, link) => {
+        links[link.id] = (link.pe_case_id === link.id ? link.linked_docket_number : link.pe_docket_number) ?? '—';
+        return links;
+      }, {}));
+    });
+    return () => { mounted = false; };
+  }, [canViewLinkedDockets, cases]);
   const latestCacheableStateRef = useRef({
     searchTerm,
     selectedSearchColumns,
@@ -1435,6 +1451,7 @@ export default function CasesPage() {
                     </colgroup>
                     <TableHeader className="sticky top-0 z-20 bg-muted shadow-sm">
                       <TableRow className="bg-muted hover:bg-muted">
+                        {canViewLinkedDockets ? <TableHead className="whitespace-nowrap uppercase">Linked Docket</TableHead> : null}
                         {CASE_TABLE_COLUMNS.map((column) => (
                           <TableHead key={column.key} className="relative select-none whitespace-nowrap pr-4 uppercase">
                             <div className="flex min-w-0 flex-col gap-1">
@@ -1504,6 +1521,7 @@ export default function CasesPage() {
                               }
                             }}
                           >
+                            {canViewLinkedDockets ? <TableCell className="truncate text-sm">{caseDetail.id ? linkedDocketsByCase[caseDetail.id] ?? '—' : '—'}</TableCell> : null}
                             <TableCell className="truncate font-medium text-primary">
                               {formatDisplayDocketNumber(caseDetail)}
                             </TableCell>
