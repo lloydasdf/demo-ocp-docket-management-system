@@ -2753,6 +2753,7 @@ export async function getMotionDecisionCaseStageOptions(): Promise<SupabaseQuery
 export interface RecordMotionDecisionApprovedEventInput {
   caseId: number;
   motionTitle: string;
+  caseMotionResolutionId?: number | null;
   approvedDecisionRecommendationId: number;
   approvedByProsecutorId: number;
   dateApproved: string;
@@ -2772,7 +2773,7 @@ export async function recordMotionDecisionApprovedEvent(input: RecordMotionDecis
     const supabase = await getSupabaseBrowserClient();
     const { data, error } = await supabase.rpc("record_motion_decision_approved_event" as never, {
       p_case_id: input.caseId,
-      p_case_motion_resolution_id: null,
+      p_case_motion_resolution_id: input.caseMotionResolutionId ?? null,
       p_motion_title: input.motionTitle.trim(),
       p_approved_decision_recommendation_id: input.approvedDecisionRecommendationId,
       p_approved_by_prosecutor_id: input.approvedByProsecutorId,
