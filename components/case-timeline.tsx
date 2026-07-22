@@ -1364,10 +1364,6 @@ export function CaseTimeline({
     if (isMotionResolved && !addForm.motionRecommendationId) return;
     if (isMotionDecisionApproved && (addForm.motionDecisionStep !== 5 || !addForm.motionApprovalDecisionId || !addForm.motionApprovedByProsecutorId || !addForm.eventDate || !addForm.motionUpdateCaseStatus || (addForm.motionUpdateCaseStatus === "YES" && (!addForm.motionSelectedCaseStatusId || !addForm.motionSelectedCaseStageId)))) return;
     if (isCustomEvent && (addForm.customStep !== 3 || !addForm.title.trim() || !addForm.eventDate || !addForm.eventTime || !addForm.customUpdateCaseStatus || (addForm.customUpdateCaseStatus === "YES" && (!addForm.customSelectedCaseStatusId || !addForm.customSelectedCaseStageId)))) return;
-    if (isReassignment && currentAssignment?.prosecutor_id === Number(addForm.prosecutorId)) {
-      setActionError("The selected prosecutor is already assigned to this case.");
-      return;
-    }
     if (!isAssignment && !isReassignment && !isResolved && !isDecisionApproved && !isCourtFiling && !isCourtStatusUpdate && !isMotionReceived && !isMotionResolved && !isMotionDecisionApproved && !isCustomEvent && !addForm.title.trim()) return;
     setIsSaving(true);
     setActionError(null);
