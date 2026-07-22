@@ -166,7 +166,7 @@ END;
 $$;
 
 -- The public RPC above now contains the linked implementation, so remove the old alias.
-DROP FUNCTION public.record_motion_resolved_event_linked(
+DROP FUNCTION IF EXISTS public.record_motion_resolved_event_linked(
   bigint,
   bigint,
   bigint,
