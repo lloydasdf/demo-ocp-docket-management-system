@@ -1,8 +1,12 @@
 -- Support resolving legacy-imported motions whose normalized title is empty.
 -- Consolidate the linked workflow back into the public RPC.
 
--- The linked workflow may temporarily record more than one active resolution for a motion.
+-- The workflow may temporarily record more than one active resolution for a motion.
 DROP INDEX IF EXISTS public.case_motion_resolutions_one_active_per_motion_uidx;
+
+-- Standalone Motion Resolved events have no selected motion.
+ALTER TABLE public.case_motion_resolutions
+  ALTER COLUMN case_motion_id DROP NOT NULL;
 
 CREATE OR REPLACE FUNCTION public.record_motion_resolved_event(
   p_case_id bigint,
@@ -60,49 +64,34 @@ BEGIN
     RAISE EXCEPTION 'Unknown recommendation id %', p_recommendation_id;
   END IF;
 
-  IF p_case_motion_id IS NULL THEN
-    RETURN public.record_optional_workflow_event(
-      p_case_id,
-      'MOTION_RESOLVED',
-      'Motion Resolved',
-      p_date_resolved,
-      p_time_resolved,
-      p_remarks,
-      jsonb_build_object(
-        'motion_id', NULL,
-        'recommendation_id', p_recommendation_id,
-        'recommendation_label', v_recommendation_label
+  IF p_case_motion_id IS NOT NULL THEN
+    SELECT
+      COALESCE(
+        NULLIF(btrim(cm.motion_title), ''),
+        NULLIF(btrim(ce.details_jsonb->>'motion_title'), ''),
+        NULLIF(btrim(ce.title), ''),
+        'Motion'
       ),
-      p_user_id
-    );
-  END IF;
+      cm.filed_by_code,
+      cm.filed_by,
+      cm.assigned_prosecutor_id,
+      coalesce(p.short_name, p.full_name)
+    INTO
+      v_motion_title,
+      v_filed_by_code,
+      v_filed_by_label,
+      v_assigned_prosecutor_id,
+      v_assigned_prosecutor_name
+    FROM public.case_motions cm
+    LEFT JOIN public.prosecutors p ON p.id = cm.assigned_prosecutor_id
+    JOIN public.case_events ce ON ce.id = cm.case_event_id AND ce.is_voided = false
+    WHERE cm.id = p_case_motion_id
+      AND cm.case_id = p_case_id
+      AND cm.is_voided = false;
 
-  SELECT
-    COALESCE(
-      NULLIF(btrim(cm.motion_title), ''),
-      NULLIF(btrim(ce.details_jsonb->>'motion_title'), ''),
-      NULLIF(btrim(ce.title), ''),
-      'Motion'
-    ),
-    cm.filed_by_code,
-    cm.filed_by,
-    cm.assigned_prosecutor_id,
-    coalesce(p.short_name, p.full_name)
-  INTO
-    v_motion_title,
-    v_filed_by_code,
-    v_filed_by_label,
-    v_assigned_prosecutor_id,
-    v_assigned_prosecutor_name
-  FROM public.case_motions cm
-  LEFT JOIN public.prosecutors p ON p.id = cm.assigned_prosecutor_id
-  JOIN public.case_events ce ON ce.id = cm.case_event_id AND ce.is_voided = false
-  WHERE cm.id = p_case_motion_id
-    AND cm.case_id = p_case_id
-    AND cm.is_voided = false;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Selected motion is not active for this case';
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Selected motion is not active for this case';
+    END IF;
   END IF;
 
   v_effective_time := coalesce(p_time_resolved, (now() AT TIME ZONE 'Asia/Manila')::time(0));
@@ -143,9 +132,11 @@ BEGIN
   SET source_id = v_resolution_id, updated_at = now(), updated_by_user_id = p_user_id
   WHERE id = v_event_id;
 
-  UPDATE public.case_motions
-  SET motion_status = 'RESO_FOR_APPROVAL', updated_by_user_id = p_user_id, updated_at = now()
-  WHERE id = p_case_motion_id;
+  IF p_case_motion_id IS NOT NULL THEN
+    UPDATE public.case_motions
+    SET motion_status = 'RESO_FOR_APPROVAL', updated_by_user_id = p_user_id, updated_at = now()
+    WHERE id = p_case_motion_id;
+  END IF;
 
   INSERT INTO public.case_private_details(case_id,current_status_id,current_status_date,current_status_remarks,current_case_status_id,current_case_status_date,current_case_status_remarks,current_case_stage_id,current_case_stage_date,current_case_stage_remarks,updated_at)
   VALUES (p_case_id,v_status_id,p_date_resolved,v_remarks,v_status_id,p_date_resolved,v_remarks,v_stage_id,p_date_resolved,v_remarks,now())
