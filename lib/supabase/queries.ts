@@ -2521,7 +2521,7 @@ export async function getAvailableCourtFilingDecisions(caseId: number): Promise<
     const supabase = await getSupabaseBrowserClient();
     const result = await supabase
       .from("case_resolution_approval_actions" as never)
-      .select("id, approval_id, case_id, charge_text, decision_code, case_resolution_approvals!inner(id, case_resolution_id, date_approved, is_voided, case_resolutions!inner(id, is_voided)), case_court_filings(id, is_voided)" as never)
+      .select("id, approval_id, case_id, charge_text, decision_code, case_resolution_approvals!inner(id, case_resolution_id, date_approved, is_voided, case_resolutions!inner(id, is_voided))" as never)
       .eq("case_id" as never, caseId)
       .eq("decision_code" as never, "FOR_FILING")
       .eq("case_resolution_approvals.is_voided" as never, false)
@@ -2530,7 +2530,6 @@ export async function getAvailableCourtFilingDecisions(caseId: number): Promise<
     if (result.error) return { data: [], error: result.error };
 
     const data = (result.data ?? [])
-      .filter((row) => !(row.case_court_filings ?? []).some((filing: { is_voided?: boolean | null }) => filing.is_voided === false))
       .map((row) => ({
         id: Number(row.id),
         approval_id: Number(row.approval_id),
