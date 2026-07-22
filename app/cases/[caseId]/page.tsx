@@ -670,7 +670,23 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
 
   useEffect(() => {
     if (!open) return;
-    setFormData(Object.fromEntries(Object.entries(initialData).map(([key, value]) => [key, typeof value === "boolean" ? value : value == null ? "" : String(value)])));
+    const nextFormData = Object.fromEntries(
+      Object.entries(initialData).map(([key, value]) => [key, typeof value === "boolean" ? value : value == null ? "" : String(value)]),
+    );
+
+    if (section === "status") {
+      // These reference views contain active options in display order. Keep a saved
+      // value intact, but explicitly select the same first option that the browser
+      // would otherwise show when a new case does not have a current value yet.
+      if (!String(nextFormData.statusId ?? "").trim() && refs.statuses[0]) {
+        nextFormData.statusId = String(refs.statuses[0].id);
+      }
+      if (!String(nextFormData.stageId ?? "").trim() && refs.stages[0]) {
+        nextFormData.stageId = String(refs.stages[0].id);
+      }
+    }
+
+    setFormData(nextFormData);
     setReason("");
     setError(null);
     setLocalStages(refs.stages);
