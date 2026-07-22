@@ -413,6 +413,18 @@ function formatAddress(
   return parts.length > 0 ? parts.join(", ") : null;
 }
 
+function visibleAddressRemark(remark: string | null | undefined) {
+  const normalized = remark?.replace(/\s+/g, " ").trim().toLowerCase();
+
+  // This is an import provenance note, not an address detail that should be
+  // presented to users. The city, province, and region remain visible above.
+  if (normalized === "imported from legacy resident of gentri = yes. only city/province/region known.") {
+    return null;
+  }
+
+  return remark?.trim() || null;
+}
+
 
 function participantContacts(participant: CaseParticipantRecord) {
   const contacts = participant.contact_informations ?? [];
@@ -448,7 +460,7 @@ function ParticipantAddresses({
     .map((address) => ({
       id: address.id,
       isPrimary: address.is_primary,
-      remarks: address.remarks,
+      remarks: visibleAddressRemark(address.remarks),
       text: formatAddress(address.addresses ?? null),
     }))
     .filter((address) => address.text);
@@ -1521,7 +1533,7 @@ function buildParticipantAddressLines(participant: CaseParticipantRecord) {
     .map((address) => {
       const text = formatAddress(address.addresses ?? null);
       if (!text) return null;
-      const notes = [address.is_primary ? "Primary" : null, nullableDisplay(address.remarks)].filter(Boolean).join(" — ");
+      const notes = [address.is_primary ? "Primary" : null, visibleAddressRemark(address.remarks)].filter(Boolean).join(" — ");
       const normalizedText = normalizeReportText(text);
       return notes ? `${normalizedText} (${notes})` : normalizedText;
     })
@@ -1622,7 +1634,7 @@ function buildCaseDetailsReport(data: CaseDetailsState, partiesByRole: Array<[st
 
   const docketNumber = compact.docket_display_number ?? displayValue(details.docket_number);
   const placeLines = caseAddresses(details)
-    .map((address) => [formatCaseAddress(address), address.remarks].filter(Boolean).join("\n"))
+    .map((address) => [formatCaseAddress(address), visibleAddressRemark(address.remarks)].filter(Boolean).join("\n"))
     .filter(Boolean);
 
   return {
