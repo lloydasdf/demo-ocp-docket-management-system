@@ -697,7 +697,6 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
 
   async function save() {
     if (section === "status" && (!String(formData.statusId ?? "").trim() || !String(formData.stageId ?? "").trim() || !String(formData.statusDate ?? "").trim())) { setError("Case Status, Case Stage, and Status Date are required."); return; }
-    if (!reason.trim()) { setError("Reason is required."); return; }
     setIsSaving(true);
     setError(null);
     const result = await editCaseOverviewSection({ caseId, section, reason: reason.trim(), data: formData });
@@ -753,7 +752,7 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
                 <FieldInput label="Status Date" type="date" value={String(formData.statusDate ?? "")} onChange={(v) => setValue("statusDate", v)} className="sm:col-span-2" />
                 <FieldTextarea label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} className="sm:col-span-2" />
               </>) : null}
-              <FieldTextarea label="Reason for edit" value={reason} onChange={setReason} className="sm:col-span-2" />
+              <FieldTextarea label="Reason for edit (optional)" value={reason} onChange={setReason} className="sm:col-span-2" />
             </div>
           )}
           {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
