@@ -327,18 +327,34 @@ function resolutionEventDetails(event: CaseTimelineEventRecord) {
   ];
 }
 
-function courtFilingEventDetails(event: CaseTimelineEventRecord) {
+function uniqueCourtValues(values: Array<string | null | undefined>) {
+  const uniqueValues = new Map<string, string>();
+
+  for (const value of values) {
+    const displayValue = stringDetail(value);
+    if (displayValue) uniqueValues.set(displayValue.toLocaleLowerCase(), displayValue);
+  }
+
+  return uniqueValues.size > 0 ? Array.from(uniqueValues.values()).join("; ") : null;
+}
+
+function courtFilingEventDetails(event: CaseTimelineEventRecord, court: CaseCourtRecord | null) {
   if (event.event_type_code !== "COURT_FILING" && eventSourceTable(event) !== "case_court_filings") return null;
   const details = event.details_jsonb && typeof event.details_jsonb === "object" ? event.details_jsonb as Record<string, unknown> : {};
-  const criminalCaseNumbers = Array.isArray(details.criminal_case_numbers)
-    ? details.criminal_case_numbers.map((row) => stringDetail((row as Record<string, unknown>).criminal_case_no)).filter(Boolean).join("; ")
-    : stringDetail(details.criminal_case_no);
-  const courtStatuses = Array.isArray(details.court_statuses)
+  const snapshotCriminalCaseNumbers = Array.isArray(details.criminal_case_numbers)
+    ? details.criminal_case_numbers.map((row) => stringDetail((row as Record<string, unknown>).criminal_case_no))
+    : [stringDetail(details.criminal_case_no)];
+  const criminalCaseNumbers = uniqueCourtValues([
+    ...snapshotCriminalCaseNumbers,
+    court?.criminal_case_number,
+  ]);
+  const snapshotCourtStatuses = Array.isArray(details.court_statuses)
     ? details.court_statuses.map((row) => {
       const item = row as Record<string, unknown>;
       return `${stringDetail(item.court_status) ?? ""} — ${formatDate(stringDetail(item.status_date))}`.trim();
-    }).filter(Boolean).join("; ")
-    : stringDetail(details.court_status);
+    })
+    : [stringDetail(details.court_status)];
+  const courtStatuses = uniqueCourtValues([...snapshotCourtStatuses, court?.court_status]);
   const additionalDetails = Array.isArray(details.additional_details)
     ? details.additional_details.map((row) => {
       const item = row as Record<string, unknown>;
@@ -347,16 +363,22 @@ function courtFilingEventDetails(event: CaseTimelineEventRecord) {
     : null;
   return [
     { label: "Approved Filing Decision", value: stringDetail(details.approved_filing_decision_label) ?? stringDetail(details.approved_filing_decision) },
-    { label: "Court", value: stringDetail(details.court) ?? event.court_name },
-    { label: "Court Branch", value: stringDetail(details.court_branch) },
-    { label: "Charge Filed", value: stringDetail(details.charge_filed) },
-    { label: "Date Filed", value: formatDate(stringDetail(details.date_filed) ?? event.event_date) },
+    { label: "Court", value: stringDetail(details.court) ?? event.court_name ?? court?.courts?.name ?? court?.raw_court_text },
+    { label: "Court Branch", value: stringDetail(details.court_branch) ?? court?.court_branch },
+    { label: "Charge Filed", value: stringDetail(details.charge_filed) ?? court?.charge_filed },
+    { label: "Date Filed", value: formatDate(stringDetail(details.date_filed) ?? event.event_date ?? court?.date_filed_in_court ?? court?.actual_filing_date) },
     { label: "Criminal Case Numbers", value: criminalCaseNumbers },
     { label: "Court Status History", value: courtStatuses },
-    { label: "Information Count", value: stringDetail(details.information_count) },
+    { label: "Information Count", value: stringDetail(details.information_count) ?? court?.information_count },
+    { label: "Actual Filing Date", value: formatDate(court?.actual_filing_date) },
+    { label: "Needs Review", value: court?.needs_review ? "Yes" : null },
     { label: "Additional Details", value: additionalDetails },
-    { label: "Remarks", value: stringDetail(details.court_status_update_remarks) ?? stringDetail(details.remarks) },
+    { label: "Remarks", value: stringDetail(details.court_status_update_remarks) ?? stringDetail(details.remarks) ?? court?.court_remarks },
   ];
+}
+
+function isCourtFilingEvent(event: CaseTimelineEventRecord) {
+  return event.event_type_code === "COURT_FILING" || eventSourceTable(event) === "case_court_filings";
 }
 
 function approvalEventDetails(event: CaseTimelineEventRecord) {
@@ -481,7 +503,11 @@ function customEventDetails(event: CaseTimelineEventRecord) {
   ];
 }
 
-function timelineDetailItems(event: CaseTimelineEventRecord, assignment?: CaseAssignmentRecord | null) {
+function timelineDetailItems(
+  event: CaseTimelineEventRecord,
+  assignment?: CaseAssignmentRecord | null,
+  court?: CaseCourtRecord | null,
+) {
   if (isPetitionForReviewEvent(event)) {
     return [];
   }
@@ -518,7 +544,7 @@ function timelineDetailItems(event: CaseTimelineEventRecord, assignment?: CaseAs
     return approvalDetails;
   }
 
-  const courtFilingDetails = courtFilingEventDetails(event);
+  const courtFilingDetails = courtFilingEventDetails(event, court ?? null);
   if (courtFilingDetails) {
     return courtFilingDetails;
   }
@@ -581,11 +607,8 @@ function sameDate(left: string | null | undefined, right: string | null | undefi
   return Boolean(left && right && left === right);
 }
 
-function eventCourtDetails(event: CaseTimelineEventRecord, courts: CaseCourtRecord[]) {
-  if (!shouldShowCourtSourceDetails(event)) {
-    return null;
-  }
-
+function linkedCourtDetails(event: CaseTimelineEventRecord, courts: CaseCourtRecord[]) {
+  if (!isCourtSourceEvent(event)) return null;
   const exactSourceCourt = courts.find((court) => sourceIdMatches(event, court.id));
 
   if (exactSourceCourt) {
@@ -1817,7 +1840,7 @@ export function CaseTimeline({
                   className="relative ml-2 space-y-3 border-l border-border pl-6"
                 >
                   {groupedEvents.map((event) => {
-                    const courtDetails = eventCourtDetails(event, courts);
+                    const courtDetails = linkedCourtDetails(event, courts);
                     const motionDetails = eventMotionDetails(event, motions);
                     const petitionDetails = eventPetitionForReviewDetails(
                       event,
@@ -1829,7 +1852,7 @@ export function CaseTimeline({
                         Number(assignment.id) === Number(event.source_id)),
                       ) ?? null
                       : null;
-                    const detailItems = timelineDetailItems(event, assignmentDetails);
+                    const detailItems = timelineDetailItems(event, assignmentDetails, courtDetails);
                     const subtitle = timelineSubtitle(event, petitionDetails);
 
                     return (
@@ -1868,14 +1891,21 @@ export function CaseTimeline({
                               </div>
                             ) : null}
                             {detailItems.length > 0 ? (
-                              <div className="grid gap-3 sm:grid-cols-2">
-                                {detailItems.map((detail) => (
-                                  <OptionalDetailItem
-                                    key={detail.label}
-                                    label={detail.label}
-                                    value={detail.value}
-                                  />
-                                ))}
+                              <div className={isCourtFilingEvent(event) ? "rounded-md border bg-background p-3" : undefined}>
+                                {isCourtFilingEvent(event) ? (
+                                  <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Court filing details
+                                  </p>
+                                ) : null}
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                  {detailItems.map((detail) => (
+                                    <OptionalDetailItem
+                                      key={detail.label}
+                                      label={detail.label}
+                                      value={detail.value}
+                                    />
+                                  ))}
+                                </div>
                               </div>
                             ) : null}
                             {visibleEventDetails(event).length > 0 ? (
@@ -1894,7 +1924,7 @@ export function CaseTimeline({
                                 </div>
                               </div>
                             ) : null}
-                            {courtDetails ? <CourtEventDetails court={courtDetails} /> : null}
+                            {courtDetails && shouldShowCourtSourceDetails(event) ? <CourtEventDetails court={courtDetails} /> : null}
                             <AdditionalDetailsRows rows={motionReceivedAdditionalDetails(event)} />
                             <AdditionalDetailsRows rows={customEventAdditionalDetails(event)} />
                             {motionDetails ? <MotionEventDetails motion={motionDetails} /> : null}
