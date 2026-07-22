@@ -27,6 +27,7 @@ import {
   getCaseClassifications,
   getCaseDetailsPageById,
   getCaseManagedViolations,
+  getCasePlaces,
   getCaseParticipants,
   getCurrentDatabaseUser,
   getDocketTypes,
@@ -193,6 +194,13 @@ function cleanString(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
+function namePartsFromStoredFullName(fullName: string | null | undefined) {
+  const parts = (fullName ?? '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { firstName: '', middleName: '', lastName: '' };
+  if (parts.length === 1) return { firstName: parts[0], middleName: '', lastName: '' };
+  return { firstName: parts[0], middleName: parts.length > 2 ? parts.slice(1, -1).join(' ') : '', lastName: parts.at(-1) ?? '' };
+}
+
 function buildPersonFullName(person: Pick<PersonEntry, 'firstName' | 'middleName' | 'lastName' | 'suffix' | 'noMiddleName'>) {
   return [
     cleanString(person.firstName),
@@ -347,15 +355,16 @@ export default function NewDocket() {
     if (!Number.isFinite(linkedPeCaseId) || !linkedDocketType || lookups.docketTypes.length === 0) return;
     let mounted = true;
     async function prefillLinkedDocket() {
-      const [detailsResult, participantsResult, violationsResult] = await Promise.all([
+      const [detailsResult, participantsResult, violationsResult, placesResult] = await Promise.all([
         getCaseDetailsPageById(linkedPeCaseId),
         getCaseParticipants(linkedPeCaseId),
         getCaseManagedViolations(linkedPeCaseId),
+        getCasePlaces(linkedPeCaseId),
       ]);
       if (!mounted) return;
       const details = detailsResult.data;
       const targetType = lookups.docketTypes.find((type) => type.prefix.toUpperCase() === linkedDocketType);
-      if (!details || !targetType || participantsResult.error || violationsResult.error) {
+      if (!details || !targetType || participantsResult.error || violationsResult.error || placesResult.error) {
         setMessage({ type: 'error', text: 'Unable to pre-fill the linked PE docket.' });
         return;
       }
@@ -370,17 +379,40 @@ export default function NewDocket() {
       setSummaryText(details.summary_text ?? '');
       setRemarks(details.remarks ?? '');
       setIsSummaryProcedure(Boolean(details.is_summary_procedure));
-      setPersons((participantsResult.data ?? []).map((participant, index) => ({
+      const defaultParticipantAddressTypeId = getFirstId(lookups.addressTypes);
+      setPersons((participantsResult.data ?? []).map((participant, index) => {
+        const person = participant.persons;
+        const organization = participant.organizations;
+        const nameParts = namePartsFromStoredFullName(person?.full_name);
+        const storedAddresses = participant.participant_kind === 'ORGANIZATION'
+          ? organization?.organization_addresses ?? []
+          : person?.person_addresses ?? [];
+        const aliases = participant.participant_kind === 'ORGANIZATION'
+          ? organization?.organization_aliases
+          : person?.person_aliases;
+        const attributes = participant.case_participant_attributes;
+        return ({
         id: makeId('linked-person'), participantKind: (participant.participant_kind === 'ORGANIZATION' || participant.organization_id ? 'ORGANIZATION' : 'PERSON') as 'PERSON' | 'ORGANIZATION',
         roleId: participant.role_id ?? 0, participantOrder: participant.participant_order ?? index + 1,
         existingPersonId: participant.person_id ?? undefined, existingOrganizationId: participant.organization_id ?? undefined,
-        firstName: participant.persons?.first_name ?? '', middleName: participant.persons?.middle_name ?? '', lastName: participant.persons?.last_name ?? '', suffix: participant.persons?.suffix ?? '',
-        organizationName: participant.organizations?.organization_name ?? '', selectedExistingName: participant.persons?.full_name ?? null,
-        selectedExistingOrganizationName: participant.organizations?.organization_name ?? null,
-      })));
+        firstName: person?.first_name ?? nameParts.firstName, middleName: person?.middle_name ?? nameParts.middleName, lastName: person?.last_name ?? nameParts.lastName, suffix: person?.suffix ?? '',
+        gender: person?.gender ?? attributes?.gender_text ?? 'Unspecified', age: attributes?.age_text ?? person?.age ?? '', birthDate: person?.birth_date ?? '', noMiddleName: person?.middle_name === 'NMN',
+        organizationName: organization?.organization_name ?? '', contactPerson: organization?.contact_person ?? '', contactNumber: organization?.contact_number ?? '', email: organization?.email ?? '',
+        selectedExistingName: person?.full_name ?? null, fullNamePreview: person?.full_name ?? null, selectedExistingOrganizationName: organization?.organization_name ?? null,
+        remarks: participant.case_participant_private_details?.remarks ?? '', notes: person?.notes ?? '', personDescriptor: person?.person_descriptor ?? '',
+        attributes: attributes ? { ageText: attributes.age_text, ageYears: attributes.age_years, genderText: attributes.gender_text, genderNormalized: attributes.gender_normalized, isMinorAtCase: attributes.is_minor_at_case, isSeniorAtCase: attributes.is_senior_at_case, isPwdAtCase: attributes.is_pwd_at_case } : undefined,
+        aliases: Array.isArray(aliases) ? aliases.map((alias: any) => ({ id: makeId('linked-alias'), aliasName: alias.alias_name ?? String(alias) })) : [],
+        addresses: storedAddresses.map((entry) => ({ id: makeId('linked-address'), existingAddressId: (entry.addresses as any)?.id ?? null, addressTypeId: toNumber(defaultParticipantAddressTypeId), isPrimary: entry.is_primary === true, remarks: entry.remarks ?? '', line1: entry.addresses?.line1 ?? '', line2: entry.addresses?.line2 ?? '', barangay: entry.addresses?.barangay ?? '', city: entry.addresses?.city ?? '', province: entry.addresses?.province ?? '', region: entry.addresses?.region ?? defaultAddressRegionCode, zipCode: entry.addresses?.zip_code ?? '', country: entry.addresses?.country ?? 'Philippines', suggestionQuery: '', selectedExistingLabel: '' })),
+        contactInformations: (participant.contact_informations ?? []).map((contact) => ({ id: makeId('linked-contact'), contactType: contact.contact_type, contactValue: contact.contact_value, label: contact.label, isPrimary: contact.is_primary, remarks: contact.remarks })),
+      });
+      }));
       setViolations((violationsResult.data ?? []).map((violation, index) => ({
         id: makeId('linked-violation'), existingViolationId: violation.violation_id ?? undefined, violationOrder: violation.violation_order ?? index + 1,
         rawViolationText: violation.raw_violation_text ?? null, searchText: violation.violations?.title ?? violation.raw_violation_text ?? '', selectedExistingTitle: violation.violations?.title ?? null,
+      })));
+      setPlacesOfCommission((placesResult.data ?? []).map((place) => ({
+        id: makeId('linked-place'), existingAddressId: place.address_id ?? null, addressTypeId: place.address_type_id ?? toNumber(defaultParticipantAddressTypeId),
+        isPrimary: place.is_primary === true, remarks: place.remarks ?? '', line1: place.addresses?.line1 ?? '', line2: place.addresses?.line2 ?? '', barangay: place.addresses?.barangay ?? '', city: place.addresses?.city ?? '', province: place.addresses?.province ?? '', region: place.addresses?.region ?? defaultAddressRegionCode, zipCode: place.addresses?.zip_code ?? '', country: place.addresses?.country ?? 'Philippines', suggestionQuery: '', selectedExistingLabel: '',
       })));
       setIsDocketInformationSaved(true);
       setActiveTab('review');
