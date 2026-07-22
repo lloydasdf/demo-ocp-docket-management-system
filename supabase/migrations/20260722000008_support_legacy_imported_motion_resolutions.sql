@@ -49,6 +49,34 @@ BEGIN
     RAISE EXCEPTION 'Date Resolved is required';
   END IF;
 
+  -- Temporarily allow inactive recommendations during workflow simplification.
+  SELECT code, display_label
+  INTO v_recommendation_code, v_recommendation_label
+  FROM public.motion_resolution_recommendations
+  WHERE id = p_recommendation_id
+  LIMIT 1;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Unknown recommendation id %', p_recommendation_id;
+  END IF;
+
+  IF p_case_motion_id IS NULL THEN
+    RETURN public.record_optional_workflow_event(
+      p_case_id,
+      'MOTION_RESOLVED',
+      'Motion Resolved',
+      p_date_resolved,
+      p_time_resolved,
+      p_remarks,
+      jsonb_build_object(
+        'motion_id', NULL,
+        'recommendation_id', p_recommendation_id,
+        'recommendation_label', v_recommendation_label
+      ),
+      p_user_id
+    );
+  END IF;
+
   SELECT
     COALESCE(
       NULLIF(btrim(cm.motion_title), ''),
@@ -75,17 +103,6 @@ BEGIN
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Selected motion is not active for this case';
-  END IF;
-
-  -- Temporarily allow inactive recommendations during workflow simplification.
-  SELECT code, display_label
-  INTO v_recommendation_code, v_recommendation_label
-  FROM public.motion_resolution_recommendations
-  WHERE id = p_recommendation_id
-  LIMIT 1;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Unknown recommendation id %', p_recommendation_id;
   END IF;
 
   v_effective_time := coalesce(p_time_resolved, (now() AT TIME ZONE 'Asia/Manila')::time(0));
