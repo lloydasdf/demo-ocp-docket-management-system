@@ -1,10 +1,10 @@
 -- Support resolving legacy-imported motions whose normalized title is empty.
--- The linked RPC is the implementation used whenever a case_motion_id is supplied.
+-- Consolidate the linked workflow back into the public RPC.
 
 -- The linked workflow may temporarily record more than one active resolution for a motion.
 DROP INDEX IF EXISTS public.case_motion_resolutions_one_active_per_motion_uidx;
 
-CREATE OR REPLACE FUNCTION public.record_motion_resolved_event_linked(
+CREATE OR REPLACE FUNCTION public.record_motion_resolved_event(
   p_case_id bigint,
   p_case_motion_id bigint,
   p_recommendation_id bigint,
@@ -156,3 +156,14 @@ BEGIN
   RETURN v_event_id;
 END;
 $$;
+
+-- The public RPC above now contains the linked implementation, so remove the old alias.
+DROP FUNCTION public.record_motion_resolved_event_linked(
+  bigint,
+  bigint,
+  bigint,
+  date,
+  time without time zone,
+  text,
+  bigint
+);
