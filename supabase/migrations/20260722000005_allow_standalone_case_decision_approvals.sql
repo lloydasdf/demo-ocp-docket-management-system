@@ -129,7 +129,7 @@ BEGIN
 
       v_display_order := v_display_order + 1;
       INSERT INTO public.case_resolution_approval_actions (approval_id, case_id, source_resolution_charge_action_id, case_violation_id, violation_id, charge_text, decision_code, display_order, remarks)
-      VALUES (v_approval_id, p_case_id, NULLIF(v_action->>'source_resolution_charge_action_id', '')::bigint, NULLIF(v_action->>'case_violation_id', '')::bigint, NULLIF(v_action->>'violation_id', '')::bigint, NULLIF(btrim(v_action->>'charge_text'), ''), v_action->>'decision_code', v_display_order, NULLIF(btrim(COALESCE(v_action->>'remarks', '')), ''));
+      VALUES (v_approval_id, p_case_id, CASE WHEN p_case_resolution_id IS NOT NULL THEN NULLIF(v_action->>'source_resolution_charge_action_id', '')::bigint ELSE NULL END, NULLIF(v_action->>'case_violation_id', '')::bigint, NULLIF(v_action->>'violation_id', '')::bigint, NULLIF(btrim(v_action->>'charge_text'), ''), v_action->>'decision_code', v_display_order, NULLIF(btrim(COALESCE(v_action->>'remarks', '')), ''));
     END IF;
   END LOOP;
 
