@@ -1,6 +1,9 @@
 -- Link Motion Decision Approved events to an active resolution when one is selected.
 BEGIN;
 
+ALTER TABLE public.case_motion_resolutions
+  ADD COLUMN IF NOT EXISTS motion_title text;
+
 CREATE OR REPLACE FUNCTION public.record_motion_decision_approved_event(
   p_case_id bigint, p_case_motion_resolution_id bigint DEFAULT NULL,
   p_approved_decision_recommendation_id bigint DEFAULT NULL,
@@ -26,16 +29,15 @@ BEGIN
   IF p_approved_by_prosecutor_id IS NULL THEN RAISE EXCEPTION 'Approved By prosecutor is required'; END IF;
 
   IF p_case_motion_resolution_id IS NOT NULL THEN
-    SELECT cmr.case_motion_id, cm.motion_title, cm.filed_by_code, cm.filed_by, cm.assigned_prosecutor_id, coalesce(ap.short_name, ap.full_name), cmr.recommendation_id, rr.code, rr.display_label
+    SELECT cmr.case_motion_id, coalesce(cmr.motion_title, cm.motion_title, resolution_event.details_jsonb->>'motion_title', resolution_event.title, 'Motion Decision Approved'), cm.filed_by_code, cm.filed_by, cm.assigned_prosecutor_id, coalesce(ap.short_name, ap.full_name), cmr.recommendation_id, rr.code, rr.display_label
     INTO v_case_motion_id, v_motion_title, v_filed_by_code, v_filed_by_label, v_assigned_prosecutor_id, v_assigned_prosecutor_name, v_original_recommendation_id, v_original_recommendation_code, v_original_recommendation_label
     FROM public.case_motion_resolutions cmr
-    JOIN public.case_motions cm ON cm.id = cmr.case_motion_id AND cm.is_voided = false
-    JOIN public.case_events me ON me.id = cm.case_event_id AND me.is_voided = false
-    JOIN public.case_events re ON re.id = cmr.case_event_id AND re.is_voided = false
+    JOIN public.case_events resolution_event ON resolution_event.id = cmr.case_event_id AND resolution_event.is_voided = false
+    LEFT JOIN public.case_motions cm ON cm.id = cmr.case_motion_id AND cm.is_voided = false
     JOIN public.motion_resolution_recommendations rr ON rr.id = cmr.recommendation_id
     LEFT JOIN public.prosecutors ap ON ap.id = cm.assigned_prosecutor_id
     WHERE cmr.id = p_case_motion_resolution_id AND cmr.case_id = p_case_id AND cmr.is_voided = false;
-    IF v_case_motion_id IS NULL THEN RAISE EXCEPTION 'Selected motion resolution is not active for this case'; END IF;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Selected motion resolution is not active for this case'; END IF;
   ELSE
     IF v_entered_motion_title IS NULL THEN RAISE EXCEPTION 'Motion Title is required'; END IF;
     v_motion_title := v_entered_motion_title;
@@ -83,5 +85,41 @@ END; $$;
 
 GRANT EXECUTE ON FUNCTION public.record_motion_decision_approved_event(bigint,bigint,bigint,bigint,date,time without time zone,boolean,bigint,bigint,text,bigint,text) TO authenticated;
 COMMENT ON FUNCTION public.record_motion_decision_approved_event(bigint,bigint,bigint,bigint,date,time without time zone,boolean,bigint,bigint,text,bigint,text) IS 'Records a standalone Motion Decision Approved event with a required standalone title or an active linked resolution title, approval record, optional status update, timeline, history, audit, and void support.';
+
+CREATE OR REPLACE VIEW public.v_case_motion_resolutions_detail WITH (security_invoker = true) AS
+SELECT
+  cmr.id,
+  cmr.case_id,
+  cmr.case_motion_id,
+  cmr.case_event_id,
+  cmr.recommendation_id,
+  rr.code AS recommendation_code,
+  rr.display_label AS recommendation_label,
+  cmr.date_resolved,
+  cmr.time_resolved,
+  cmr.remarks,
+  cmr.is_voided,
+  coalesce(cmr.motion_title, cm.motion_title, resolution_event.details_jsonb->>'motion_title', resolution_event.title, 'Motion Decision Approved') AS motion_title,
+  cm.filed_by,
+  cm.filed_by_code,
+  cm.date_filed,
+  cm.assigned_prosecutor_id,
+  coalesce(ap.short_name, ap.full_name) AS assigned_prosecutor_name,
+  NULL::bigint AS active_motion_decision_approval_id
+FROM public.case_motion_resolutions cmr
+JOIN public.case_events resolution_event ON resolution_event.id = cmr.case_event_id AND resolution_event.is_voided = false
+LEFT JOIN public.case_motions cm ON cm.id = cmr.case_motion_id AND cm.is_voided = false
+LEFT JOIN public.prosecutors ap ON ap.id = cm.assigned_prosecutor_id
+LEFT JOIN public.motion_resolution_recommendations rr ON rr.id = cmr.recommendation_id
+WHERE cmr.is_voided = false
+  AND NOT EXISTS (
+    SELECT 1
+    FROM public.case_motion_resolution_approvals cmra
+    JOIN public.case_events approval_event ON approval_event.id = cmra.case_event_id AND approval_event.is_voided = false
+    WHERE cmra.case_motion_resolution_id = cmr.id
+      AND cmra.is_voided = false
+  );
+
+GRANT SELECT ON public.v_case_motion_resolutions_detail TO authenticated, service_role;
 
 COMMIT;
