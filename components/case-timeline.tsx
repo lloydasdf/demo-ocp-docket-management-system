@@ -65,6 +65,7 @@ import {
   getMotionResolutionApprovalCandidates,
   getMotionDecisionCaseStatusOptions,
   getMotionDecisionCaseStageOptions,
+  addCaseStage,
   type MotionResolutionRecommendationRecord,
   type MotionResolutionApprovalCandidateRecord,
   type CaseStatusOptionRecord,
@@ -1260,6 +1261,8 @@ export function CaseTimeline({
   const [caseStageOptions, setCaseStageOptions] = useState<CaseStageOptionRecord[]>([]);
   const [isRecommendationDialogOpen, setIsRecommendationDialogOpen] = useState(false);
   const [recommendationLabel, setRecommendationLabel] = useState("");
+  const [isStageDialogOpen, setIsStageDialogOpen] = useState(false);
+  const [stageLabel, setStageLabel] = useState("");
   const [isCourtPickerOpen, setIsCourtPickerOpen] = useState(false);
   const [isCourtDialogOpen, setIsCourtDialogOpen] = useState(false);
   const [courtCreateForm, setCourtCreateForm] = useState({ name: "", error: "" });
@@ -1806,11 +1809,6 @@ export function CaseTimeline({
   }, [addForm.eventTypeCode, addForm.petitionUpdatePetitionId, activePetitionsForReview]);
 
 
-  useEffect(() => {
-    if (addForm.eventTypeCode !== "MOTION_DECISION_APPROVED" || addForm.motionApprovalResolutionId || eligibleMotionResolutionApprovals.length !== 1) return;
-    setAddForm((form) => ({ ...form, motionApprovalResolutionId: String(eligibleMotionResolutionApprovals[0].id) }));
-  }, [addForm.eventTypeCode, addForm.motionApprovalResolutionId, eligibleMotionResolutionApprovals]);
-
   const handleAddRecommendationSave = async () => {
     if (!recommendationLabel.trim()) return;
     setIsSaving(true);
@@ -1825,6 +1823,23 @@ export function CaseTimeline({
     if (!recommendationsResult.error) setMotionRecommendations(recommendationsResult.data);
     setAddForm((form) => form.eventTypeCode === "MOTION_DECISION_APPROVED" ? { ...form, motionApprovalDecisionId: String(result.data) } : { ...form, motionRecommendationId: String(result.data) });
     setIsRecommendationDialogOpen(false);
+  };
+
+  const handleAddStageSave = async () => {
+    if (!stageLabel.trim()) return;
+    setIsSaving(true);
+    setActionError(null);
+    const result = await addCaseStage({ displayLabel: stageLabel });
+    setIsSaving(false);
+    if (result.error) {
+      setActionError(result.error.message);
+      return;
+    }
+    const stagesResult = await getMotionDecisionCaseStageOptions();
+    if (!stagesResult.error) setCaseStageOptions(stagesResult.data);
+    setAddForm((form) => ({ ...form, motionSelectedCaseStageId: String(result.data) }));
+    setIsStageDialogOpen(false);
+    setStageLabel("");
   };
 
   const visibleEvents = useMemo(() => events.filter((event) => showVoided || !event.is_voided), [events, showVoided]);
@@ -2101,7 +2116,7 @@ export function CaseTimeline({
                   <div className="flex justify-start"><Button type="button" variant="outline" onClick={() => setAddForm((form) => ({ ...form, motionDecisionStep: 2 }))}>Back</Button></div>
                 </> : null}
                 {addForm.motionDecisionStep === 4 ? <>
-                  <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="motion-selected-status">Case Status</Label><select id="motion-selected-status" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionSelectedCaseStatusId} onChange={(e) => setAddForm((form) => ({ ...form, motionSelectedCaseStatusId: e.target.value }))}><option value="">Select status</option>{caseStatusOptions.map((status) => <option key={status.id} value={status.id}>{status.display_label}</option>)}</select></div><div className="space-y-2"><Label htmlFor="motion-selected-stage">Case Stage</Label><select id="motion-selected-stage" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionSelectedCaseStageId} onChange={(e) => setAddForm((form) => ({ ...form, motionSelectedCaseStageId: e.target.value }))}><option value="">Select stage</option>{caseStageOptions.map((stage) => <option key={stage.id} value={stage.id}>{stage.display_label}</option>)}</select></div></div>
+                  <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="motion-selected-status">Case Status</Label><select id="motion-selected-status" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionSelectedCaseStatusId} onChange={(e) => setAddForm((form) => ({ ...form, motionSelectedCaseStatusId: e.target.value }))}><option value="">Select status</option>{caseStatusOptions.map((status) => <option key={status.id} value={status.id}>{status.display_label}</option>)}</select></div><div className="space-y-2"><Label htmlFor="motion-selected-stage">Case Stage</Label><select id="motion-selected-stage" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.motionSelectedCaseStageId} onChange={(e) => { if (e.target.value === "__add__") { setStageLabel(""); setIsStageDialogOpen(true); return; } setAddForm((form) => ({ ...form, motionSelectedCaseStageId: e.target.value })); }}><option value="">Select stage</option>{caseStageOptions.map((stage) => <option key={stage.id} value={stage.id}>{stage.display_label}</option>)}<option value="__add__">+ Add Case Stage</option></select></div></div>
                   <div className="flex justify-between"><Button type="button" variant="outline" onClick={() => setAddForm((form) => ({ ...form, motionDecisionStep: 3 }))}>Back</Button><Button type="button" onClick={() => setAddForm((form) => ({ ...form, motionDecisionStep: 5 }))} disabled={!addForm.motionSelectedCaseStatusId || !addForm.motionSelectedCaseStageId}>Next</Button></div>
                 </> : null}
                 {addForm.motionDecisionStep === 5 ? <>
@@ -2159,6 +2174,24 @@ export function CaseTimeline({
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setIsCourtDialogOpen(false)}>Cancel</Button>
             <Button type="button" onClick={handleAddCourtSave} disabled={isSaving || !courtCreateForm.name.trim()}>{isSaving ? "Saving..." : "Save Court"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isStageDialogOpen} onOpenChange={setIsStageDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Case Stage</DialogTitle>
+            <DialogDescription>Create an active Case Stage option. The code is generated automatically.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
+            <div className="space-y-2"><Label htmlFor="motion-stage-label">Case Stage</Label><Input id="motion-stage-label" value={stageLabel} onChange={(e) => setStageLabel(e.target.value)} /></div>
+            <p className="text-xs text-muted-foreground">The Case Stage code will be generated automatically.</p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsStageDialogOpen(false)}>Cancel</Button>
+            <Button type="button" onClick={handleAddStageSave} disabled={isSaving || !stageLabel.trim()}>{isSaving ? "Saving..." : "Save Case Stage"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
