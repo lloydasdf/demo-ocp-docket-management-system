@@ -436,6 +436,12 @@ function isCourtSourceEvent(event: CaseTimelineEventRecord) {
   return eventSourceTable(event).includes("case_courts");
 }
 
+function shouldShowCourtSourceDetails(event: CaseTimelineEventRecord) {
+  // COURT_FILING events already present their immutable event snapshot through
+  // courtFilingEventDetails. The case_courts record is only a legacy fallback.
+  return isCourtSourceEvent(event) && event.event_type_code !== "COURT_FILING";
+}
+
 function isPetitionForReviewEvent(event: CaseTimelineEventRecord) {
   return event.event_type_code === "PETITION_FOR_REVIEW";
 }
@@ -576,7 +582,7 @@ function sameDate(left: string | null | undefined, right: string | null | undefi
 }
 
 function eventCourtDetails(event: CaseTimelineEventRecord, courts: CaseCourtRecord[]) {
-  if (!isCourtSourceEvent(event)) {
+  if (!shouldShowCourtSourceDetails(event)) {
     return null;
   }
 
