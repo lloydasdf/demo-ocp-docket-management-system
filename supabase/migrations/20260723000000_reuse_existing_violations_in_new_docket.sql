@@ -4,7 +4,10 @@ DO $$
 DECLARE
   v_original_definition text;
   v_definition text;
-  v_pattern text := '(?s)  FOR v_item IN SELECT \* FROM jsonb_array_elements\(p_payload->''violations''\) LOOP\n.*?\n  END LOOP;\n\n  INSERT INTO public.case_events';
+  -- `pg_get_functiondef` formats function definitions differently depending on
+  -- the database version and how the function was originally deployed. Match
+  -- the violation loop structurally rather than relying on that formatting.
+  v_pattern text := '(?s)FOR[[:space:]]+v_item[[:space:]]+IN[[:space:]]+SELECT[[:space:]]+\*[[:space:]]+FROM[[:space:]]+jsonb_array_elements[[:space:]]*\([[:space:]]*p_payload[[:space:]]*->[[:space:]]*''violations''[[:space:]]*\)[[:space:]]+LOOP[[:space:]]*.*?END[[:space:]]+LOOP;[[:space:]]*INSERT[[:space:]]+INTO[[:space:]]+public\.case_events';
   v_replacement text := $replacement$
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_payload->'violations') LOOP
     v_violation_id := COALESCE(NULLIF(v_item->>'existingViolationId',''), NULLIF(v_item->>'violationId',''))::bigint;
