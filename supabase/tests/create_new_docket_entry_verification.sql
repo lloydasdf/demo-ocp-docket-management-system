@@ -13,8 +13,11 @@ DECLARE
   v_received_event_type_id bigint;
   v_raffled_event_type_id bigint;
   v_prosecutor_id bigint;
+  v_payload jsonb;
   v_result jsonb;
+  v_reused_result jsonb;
   v_case_id bigint;
+  v_reused_case_id bigint;
 BEGIN
   PERFORM set_config('request.jwt.claim.sub', v_auth_uid::text, true);
 
@@ -52,7 +55,7 @@ BEGIN
   SELECT id INTO v_raffled_event_type_id FROM public.case_event_types WHERE code = 'CASE_RAFFLED' AND is_active IS TRUE LIMIT 1;
   IF v_raffled_event_type_id IS NULL THEN RAISE EXCEPTION 'Required CASE_RAFFLED event type is missing'; END IF;
 
-  v_result := public.create_new_docket_entry(jsonb_build_object(
+  v_payload := jsonb_build_object(
     'docketTypeId', v_docket_type_id,
     'docketYear', 2099,
     'dateReceived', '2099-01-15',
@@ -60,6 +63,7 @@ BEGIN
     'regionCode', 'TEST',
     'remarks', 'verification case',
     'isSummaryProcedure', false,
+    'caseAlsoRaffled', true,
     'assignedProsecutorId', v_prosecutor_id,
     'participants', jsonb_build_array(jsonb_build_object(
       'roleId', v_role_id,
@@ -77,7 +81,9 @@ BEGIN
       'newViolation', jsonb_build_object('title','Verification Violation'),
       'rawViolationText', 'Verification Violation Raw'
     ))
-  ));
+  );
+
+  v_result := public.create_new_docket_entry(v_payload);
 
   v_case_id := (v_result->>'caseId')::bigint;
 
@@ -97,6 +103,15 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.v_case_participants_detail WHERE case_id = v_case_id) THEN RAISE EXCEPTION 'v_case_participants_detail row missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.v_case_timeline WHERE case_id = v_case_id) THEN RAISE EXCEPTION 'v_case_timeline row missing'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.v_case_assignment_detail WHERE case_id = v_case_id) THEN RAISE EXCEPTION 'v_case_assignment_detail row missing'; END IF;
+  IF (v_result->>'createdViolationCount')::int <> 1 OR (v_result->>'reusedViolationCount')::int <> 0 THEN RAISE EXCEPTION 'new violation counts are incorrect'; END IF;
+
+  v_reused_result := public.create_new_docket_entry(
+    jsonb_set(v_payload, '{violations,0,newViolation,title}', to_jsonb('  verification   violation  '::text))
+  );
+  v_reused_case_id := (v_reused_result->>'caseId')::bigint;
+
+  IF (v_reused_result->>'createdViolationCount')::int <> 0 OR (v_reused_result->>'reusedViolationCount')::int <> 1 THEN RAISE EXCEPTION 'matching violation was not reused'; END IF;
+  IF (SELECT violation_id FROM public.case_violations WHERE case_id = v_case_id) <> (SELECT violation_id FROM public.case_violations WHERE case_id = v_reused_case_id) THEN RAISE EXCEPTION 'matching violation did not use the existing catalog row'; END IF;
   IF NOT EXISTS (
     SELECT 1
     FROM public.audit_logs
