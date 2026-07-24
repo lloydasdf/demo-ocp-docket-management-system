@@ -340,6 +340,14 @@ function roleLabel(participant: CaseParticipantRecord) {
   );
 }
 
+function partyRoleDisplayOrder(role: string) {
+  const normalizedRole = role.toLowerCase();
+
+  if (normalizedRole.includes("complainant")) return 0;
+  if (normalizedRole.includes("respondent")) return 1;
+  return 2;
+}
+
 function personBirthDateAndSex(participant: CaseParticipantRecord) {
   const gender =
     participant.case_participant_attributes?.gender_text ??
@@ -1818,7 +1826,10 @@ export default function CaseDetailsPage() {
       grouped.set(role, [...(grouped.get(role) ?? []), participant]);
     }
 
-    return Array.from(grouped.entries());
+    return Array.from(grouped.entries()).sort(
+      ([firstRole], [secondRole]) =>
+        partyRoleDisplayOrder(firstRole) - partyRoleDisplayOrder(secondRole),
+    );
   }, [data?.participants]);
 
   const participantCorrectionsByParticipantId = useMemo(() => {
