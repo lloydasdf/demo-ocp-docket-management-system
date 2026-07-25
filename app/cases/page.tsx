@@ -1262,8 +1262,7 @@ export default function CasesPage() {
           <div className="shrink-0">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <h1 className="text-3xl font-bold text-foreground">All Cases</h1>
-                <p className="text-muted-foreground mt-1">Browse all cases in the system</p>
+                <h1 className="text-3xl font-bold text-foreground">Cases</h1>
               </div>
               <div className="flex flex-wrap gap-2">
                 {canShowExcelExport ? (
