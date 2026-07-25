@@ -1343,7 +1343,7 @@ export default function CasesPage() {
             <CardHeader className="shrink-0 px-4 md:px-6">
               <div className="grid grid-cols-2 gap-3 sm:max-w-xl sm:gap-4">
                 <div className="col-span-2 flex flex-col gap-2">
-                  <label className="sr-only text-sm font-medium text-foreground sm:not-sr-only" htmlFor="case-search">
+                  <label className="sr-only" htmlFor="case-search">
                     Search Cases
                   </label>
                   <div className="flex gap-2">
