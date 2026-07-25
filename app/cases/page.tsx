@@ -929,6 +929,31 @@ export default function CasesPage() {
     return `${selectedDocketYears.length} years`;
   }, [docketYearFilters, selectedDocketYears]);
 
+  const allDocketTypesSelected = allOptionsSelected(selectedDocketTypes, docketTypeFilters);
+  const allDocketYearsSelected = allOptionsSelected(selectedDocketYears, docketYearFilters);
+  const docketTypeMobileSummary = selectedDocketTypes.length === 0
+    ? 'None'
+    : allDocketTypesSelected
+      ? DEFAULT_DOCKET_TYPE
+      : selectedDocketTypes.join(', ');
+  const docketYearMobileSummary = selectedDocketYears.length === 0
+    ? 'None'
+    : allDocketYearsSelected
+      ? 'All years'
+      : selectedDocketYears.join(', ');
+  const hideDocketTypeMobileLabel = !allDocketTypesSelected && selectedDocketTypes.length > 2;
+  const hideDocketYearMobileLabel = !allDocketYearsSelected && selectedDocketYears.length > 2;
+  const docketTypeMobileTextSize = docketTypeMobileSummary.length > 24
+    ? 'text-[9px]'
+    : docketTypeMobileSummary.length > 14
+      ? 'text-[10px]'
+      : 'text-xs';
+  const docketYearMobileTextSize = docketYearMobileSummary.length > 24
+    ? 'text-[9px]'
+    : docketYearMobileSummary.length > 14
+      ? 'text-[10px]'
+      : 'text-xs';
+
   const tableWidth = useMemo(
     () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0) + (canViewLinkedDockets ? 180 : 0),
     [canViewLinkedDockets, columnWidths],
@@ -1257,9 +1282,9 @@ export default function CasesPage() {
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden p-4 pt-16 md:p-8">
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden p-4 pt-3 md:p-8">
         <div className="mx-auto flex min-h-0 w-full max-w-[1400px] flex-1 flex-col gap-6">
-          <div className="shrink-0">
+          <div className="shrink-0 pl-12 md:pl-0">
             <div className="flex items-center justify-between gap-3 sm:items-start">
               <div>
                 <h1 className="text-2xl font-bold text-foreground sm:text-3xl">Cases</h1>
@@ -1406,11 +1431,13 @@ export default function CasesPage() {
                   </label>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button id="docket-type-filter" type="button" variant="outline" className="w-full min-w-0 justify-between px-2 sm:px-4">
-                        <span className="sm:hidden">Docket Type</span>
+                      <Button id="docket-type-filter" type="button" variant="outline" className="h-auto min-h-9 w-full min-w-0 justify-between px-2 py-1 sm:h-9 sm:px-4 sm:py-2">
+                        {!hideDocketTypeMobileLabel ? <span className="text-xs sm:hidden">Docket Type</span> : null}
                         <span className="hidden sm:inline">{docketTypeSummary}</span>
-                        <span className="flex min-w-0 items-center gap-1">
-                          <span className="truncate text-muted-foreground italic sm:hidden">{docketTypeSummary}</span>
+                        <span className={`flex min-w-0 items-center gap-1 ${hideDocketTypeMobileLabel ? 'flex-1 justify-between' : ''}`}>
+                          <span className={`min-w-0 whitespace-normal text-left leading-tight text-muted-foreground italic sm:hidden ${docketTypeMobileTextSize}`}>
+                            {docketTypeMobileSummary}
+                          </span>
                           <ChevronDown className="size-4 opacity-70" />
                         </span>
                       </Button>
@@ -1444,11 +1471,13 @@ export default function CasesPage() {
                   </label>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button id="docket-year-filter" type="button" variant="outline" className="w-full min-w-0 justify-between px-2 sm:px-4">
-                        <span className="sm:hidden">Docket Year</span>
+                      <Button id="docket-year-filter" type="button" variant="outline" className="h-auto min-h-9 w-full min-w-0 justify-between px-2 py-1 sm:h-9 sm:px-4 sm:py-2">
+                        {!hideDocketYearMobileLabel ? <span className="text-xs sm:hidden">Docket Year</span> : null}
                         <span className="hidden sm:inline">{docketYearSummary}</span>
-                        <span className="flex min-w-0 items-center gap-1">
-                          <span className="truncate text-muted-foreground italic sm:hidden">{docketYearSummary}</span>
+                        <span className={`flex min-w-0 items-center gap-1 ${hideDocketYearMobileLabel ? 'flex-1 justify-between' : ''}`}>
+                          <span className={`min-w-0 whitespace-normal text-left leading-tight text-muted-foreground italic sm:hidden ${docketYearMobileTextSize}`}>
+                            {docketYearMobileSummary}
+                          </span>
                           <ChevronDown className="size-4 opacity-70" />
                         </span>
                       </Button>
