@@ -1260,11 +1260,11 @@ export default function CasesPage() {
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden p-4 pt-16 md:p-8">
         <div className="mx-auto flex min-h-0 w-full max-w-[1400px] flex-1 flex-col gap-6">
           <div className="shrink-0">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-center justify-between gap-3 sm:items-start">
               <div>
-                <h1 className="text-3xl font-bold text-foreground">Cases</h1>
+                <h1 className="text-2xl font-bold text-foreground sm:text-3xl">Cases</h1>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 {canShowExcelExport ? (
                   <ExportCasesDialog
                     caseIds={sortedCases.map((caseDetail) => caseDetail.id)}
@@ -1277,15 +1277,24 @@ export default function CasesPage() {
                 <Button
                   type="button"
                   variant="outline"
+                  className="size-9 px-0 sm:h-9 sm:w-auto sm:px-3"
                   onClick={handlePrintPdf}
                   disabled={isLoading || isLoadingAllCases || isGeneratingPdf || sortedCases.length === 0}
+                  aria-label={isGeneratingPdf ? 'Generating PDF' : 'Print PDF'}
                 >
-                  <Printer className="mr-2 size-4" />
-                  {isGeneratingPdf ? 'Generating PDF…' : 'Print PDF'}
+                  <Printer className="size-4" />
+                  <span className="hidden sm:inline">{isGeneratingPdf ? 'Generating PDF…' : 'Print PDF'}</span>
                 </Button>
-                <Button type="button" variant="outline" onClick={refreshCases} disabled={isLoading || isLoadingAllCases || isRefreshing || isGeneratingPdf}>
-                  <RefreshCw className={`mr-2 size-4 ${(isLoading || isLoadingAllCases || isRefreshing) ? 'animate-spin' : ''}`} />
-                  Refresh
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="size-9 px-0 sm:h-9 sm:w-auto sm:px-3"
+                  onClick={refreshCases}
+                  disabled={isLoading || isLoadingAllCases || isRefreshing || isGeneratingPdf}
+                  aria-label="Refresh cases"
+                >
+                  <RefreshCw className={`size-4 ${(isLoading || isLoadingAllCases || isRefreshing) ? 'animate-spin' : ''}`} />
+                  <span className="hidden sm:inline">Refresh</span>
                 </Button>
               </div>
             </div>
@@ -1307,16 +1316,16 @@ export default function CasesPage() {
 
           <Card aria-busy={isLoading || isLoadingAllCases || isRefreshing} className="min-h-0 flex-1 gap-4 overflow-hidden py-4">
             <CardHeader className="shrink-0 px-4 md:px-6">
-              <div className="grid gap-4 sm:max-w-xl sm:grid-cols-2">
-                <div className="flex flex-col gap-2 sm:col-span-2">
-                  <label className="text-sm font-medium text-foreground" htmlFor="case-search">
+              <div className="grid grid-cols-2 gap-3 sm:max-w-xl sm:gap-4">
+                <div className="col-span-2 flex flex-col gap-2">
+                  <label className="sr-only text-sm font-medium text-foreground sm:not-sr-only" htmlFor="case-search">
                     Search Cases
                   </label>
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <div className="relative sm:flex-1">
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
                       <Input
                         id="case-search"
-                        className="pr-10"
+                        className="pr-44 sm:pr-10"
                         placeholder={`Search ${searchColumnSummary.toLowerCase()}`}
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
@@ -1324,17 +1333,45 @@ export default function CasesPage() {
                       {searchTerm ? (
                         <button
                           type="button"
-                          className="absolute right-2 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          className="absolute right-36 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:right-2"
                           aria-label="Clear case search"
                           onClick={clearSearch}
                         >
                           <X className="size-4" />
                         </button>
                       ) : null}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button type="button" variant="ghost" className="absolute right-1 top-1/2 h-8 w-32 -translate-y-1/2 justify-between px-2 text-muted-foreground sm:hidden">
+                            <span className="truncate">{searchColumnSummary}</span>
+                            <ChevronDown className="size-4 opacity-70" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-56">
+                          <DropdownMenuLabel>Search columns</DropdownMenuLabel>
+                          <DropdownMenuCheckboxItem
+                            checked={allOptionsSelected(selectedSearchColumns, DEFAULT_SEARCH_COLUMNS)}
+                            onCheckedChange={toggleSearchAllColumns}
+                            onSelect={(event) => event.preventDefault()}
+                          >
+                            Search all columns
+                          </DropdownMenuCheckboxItem>
+                          {SEARCH_COLUMN_OPTIONS.map((column) => (
+                            <DropdownMenuCheckboxItem
+                              key={column.key}
+                              checked={selectedSearchColumns.includes(column.key)}
+                              onCheckedChange={() => toggleSearchColumn(column.key)}
+                              onSelect={(event) => event.preventDefault()}
+                            >
+                              {column.label}
+                            </DropdownMenuCheckboxItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button type="button" variant="outline" className="justify-between sm:w-56">
+                        <Button type="button" variant="outline" className="hidden justify-between sm:flex sm:w-56">
                           {searchColumnSummary}
                           <ChevronDown className="size-4 opacity-70" />
                         </Button>
@@ -1364,14 +1401,18 @@ export default function CasesPage() {
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <label className="text-sm font-medium text-foreground" htmlFor="docket-type-filter">
+                  <label className="sr-only text-sm font-medium text-foreground sm:not-sr-only" htmlFor="docket-type-filter">
                     Docket Type
                   </label>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button id="docket-type-filter" type="button" variant="outline" className="justify-between">
-                        {docketTypeSummary}
-                        <ChevronDown className="size-4 opacity-70" />
+                      <Button id="docket-type-filter" type="button" variant="outline" className="w-full min-w-0 justify-between px-2 sm:px-4">
+                        <span className="sm:hidden">Docket Type</span>
+                        <span className="hidden sm:inline">{docketTypeSummary}</span>
+                        <span className="flex min-w-0 items-center gap-1">
+                          <span className="truncate text-muted-foreground italic sm:hidden">{docketTypeSummary}</span>
+                          <ChevronDown className="size-4 opacity-70" />
+                        </span>
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="w-56">
@@ -1398,14 +1439,18 @@ export default function CasesPage() {
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <label className="text-sm font-medium text-foreground" htmlFor="docket-year-filter">
+                  <label className="sr-only text-sm font-medium text-foreground sm:not-sr-only" htmlFor="docket-year-filter">
                     Docket Year
                   </label>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button id="docket-year-filter" type="button" variant="outline" className="justify-between">
-                        {docketYearSummary}
-                        <ChevronDown className="size-4 opacity-70" />
+                      <Button id="docket-year-filter" type="button" variant="outline" className="w-full min-w-0 justify-between px-2 sm:px-4">
+                        <span className="sm:hidden">Docket Year</span>
+                        <span className="hidden sm:inline">{docketYearSummary}</span>
+                        <span className="flex min-w-0 items-center gap-1">
+                          <span className="truncate text-muted-foreground italic sm:hidden">{docketYearSummary}</span>
+                          <ChevronDown className="size-4 opacity-70" />
+                        </span>
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="w-56">

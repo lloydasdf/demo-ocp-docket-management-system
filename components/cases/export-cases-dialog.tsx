@@ -55,9 +55,16 @@ export function ExportCasesDialog({
   }
 
   return (
-    <Button type="button" variant="outline" onClick={handleExport} disabled={disabled || isExporting || caseIds.length === 0}>
-      <FileSpreadsheet className="mr-2 size-4" />
-      {isExporting ? 'Preparing Excel…' : 'Export to Excel'}
+    <Button
+      type="button"
+      variant="outline"
+      className="size-9 px-0 sm:h-9 sm:w-auto sm:px-3"
+      onClick={handleExport}
+      disabled={disabled || isExporting || caseIds.length === 0}
+      aria-label={isExporting ? 'Preparing Excel' : 'Export to Excel'}
+    >
+      <FileSpreadsheet className="size-4" />
+      <span className="hidden sm:inline">{isExporting ? 'Preparing Excel…' : 'Export to Excel'}</span>
     </Button>
   );
 }
