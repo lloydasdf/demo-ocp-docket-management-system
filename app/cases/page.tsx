@@ -1280,7 +1280,7 @@ export default function CasesPage() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-[100dvh] overflow-hidden bg-background">
       <Sidebar />
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden p-4 pt-3 md:p-8">
         <div className="mx-auto flex min-h-0 w-full max-w-[1400px] flex-1 flex-col gap-6">
@@ -1351,7 +1351,7 @@ export default function CasesPage() {
                       <Input
                         id="case-search"
                         className="pr-44 sm:pr-10"
-                        placeholder={`Search ${searchColumnSummary.toLowerCase()}`}
+                        placeholder="Search"
                         value={searchTerm}
                         onChange={(event) => setSearchTerm(event.target.value)}
                       />
