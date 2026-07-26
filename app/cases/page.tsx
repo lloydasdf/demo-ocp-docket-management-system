@@ -39,7 +39,7 @@ import type { CasesReportFilters, CasesReportRow } from '@/lib/pdf/cases-report'
 type CompactCase = CasesDisplayRecord;
 type DocketTypeFilter = string;
 type DocketYearFilter = string;
-type DocketMonthFilter = string;
+type DocketMonthsByYear = Record<DocketYearFilter, string[]>;
 
 const DEFAULT_DOCKET_TYPE = 'All';
 const DOCKET_MONTH_NAMES = [
@@ -87,7 +87,7 @@ type CasesPageCache = {
   selectedSearchColumns?: CaseSearchColumnKey[];
   selectedDocketTypes?: DocketTypeFilter[];
   selectedDocketYears?: DocketYearFilter[];
-  selectedDocketMonths?: DocketMonthFilter[];
+  selectedDocketMonthsByYear?: DocketMonthsByYear;
   selectedColumnFilters?: Partial<ColumnFilters>;
   showColumnFilters?: boolean;
 };
@@ -97,7 +97,7 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v20';
+const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v21';
 const casesPageMemoryCache = new Map<string, CasesPageCache>();
 
 function getCasesPageCacheKey(userId: string) {
@@ -113,6 +113,7 @@ function clearLegacyCasesPageCaches() {
   window.sessionStorage.removeItem('ocp-cases-page-cache-v17');
   window.sessionStorage.removeItem('ocp-cases-page-cache-v18');
   window.sessionStorage.removeItem('ocp-cases-page-cache-v19');
+  window.sessionStorage.removeItem('ocp-cases-page-cache-v20');
 }
 
 function docketMonthName(monthCode: string) {
@@ -441,10 +442,9 @@ export default function CasesPage() {
   const [cachedInitialState, setCachedInitialState] = useState<CasesPageCache | null>(null);
   const [cases, setCases] = useState<CompactCase[]>([]);
   const docketFiltersTouchedRef = useRef(false);
-  const docketMonthFilterTouchedRef = useRef(false);
   const [selectedDocketTypes, setSelectedDocketTypes] = useState<DocketTypeFilter[]>([]);
   const [selectedDocketYears, setSelectedDocketYears] = useState<DocketYearFilter[]>([]);
-  const [selectedDocketMonths, setSelectedDocketMonths] = useState<DocketMonthFilter[]>([]);
+  const [selectedDocketMonthsByYear, setSelectedDocketMonthsByYear] = useState<DocketMonthsByYear>({});
   const columnFilterTouchedRef = useRef<ColumnFilterTouched>(
     getInitialColumnFilterTouched(undefined),
   );
@@ -490,7 +490,7 @@ export default function CasesPage() {
     selectedSearchColumns,
     selectedDocketTypes,
     selectedDocketYears,
-    selectedDocketMonths,
+    selectedDocketMonthsByYear,
     selectedColumnFilters,
     showColumnFilters,
   });
@@ -500,7 +500,7 @@ export default function CasesPage() {
     selectedSearchColumns,
     selectedDocketTypes,
     selectedDocketYears,
-    selectedDocketMonths,
+    selectedDocketMonthsByYear,
     selectedColumnFilters,
     showColumnFilters,
   };
@@ -515,11 +515,10 @@ export default function CasesPage() {
     setSelectedSearchColumns(cache.selectedSearchColumns ?? [...DEFAULT_SEARCH_COLUMNS]);
     setSelectedDocketTypes(cache.selectedDocketTypes ?? []);
     setSelectedDocketYears(cache.selectedDocketYears ?? []);
-    setSelectedDocketMonths(cache.selectedDocketMonths ?? []);
+    setSelectedDocketMonthsByYear(cache.selectedDocketMonthsByYear ?? {});
     setSelectedColumnFilters(getInitialColumnFilters(cache.selectedColumnFilters));
     setShowColumnFilters(cache.showColumnFilters ?? false);
     docketFiltersTouchedRef.current = Array.isArray(cache.selectedDocketTypes) || Array.isArray(cache.selectedDocketYears);
-    docketMonthFilterTouchedRef.current = Array.isArray(cache.selectedDocketMonths);
     columnFilterTouchedRef.current = getInitialColumnFilterTouched(cache.selectedColumnFilters);
   }, []);
 
@@ -549,7 +548,7 @@ export default function CasesPage() {
       selectedSearchColumns: currentCache?.selectedSearchColumns ?? latestCacheableState.selectedSearchColumns,
       selectedDocketTypes: currentCache?.selectedDocketTypes ?? latestCacheableState.selectedDocketTypes,
       selectedDocketYears: currentCache?.selectedDocketYears ?? latestCacheableState.selectedDocketYears,
-      selectedDocketMonths: currentCache?.selectedDocketMonths ?? latestCacheableState.selectedDocketMonths,
+      selectedDocketMonthsByYear: currentCache?.selectedDocketMonthsByYear ?? latestCacheableState.selectedDocketMonthsByYear,
       selectedColumnFilters: currentCache?.selectedColumnFilters ?? latestCacheableState.selectedColumnFilters,
       showColumnFilters: currentCache?.showColumnFilters ?? latestCacheableState.showColumnFilters,
     });
@@ -727,7 +726,7 @@ export default function CasesPage() {
       selectedSearchColumns,
       selectedDocketTypes,
       selectedDocketYears,
-      selectedDocketMonths,
+      selectedDocketMonthsByYear,
       selectedColumnFilters,
       showColumnFilters,
     });
@@ -737,7 +736,7 @@ export default function CasesPage() {
     selectedColumnFilters,
     selectedDocketTypes,
     selectedDocketYears,
-    selectedDocketMonths,
+    selectedDocketMonthsByYear,
     selectedSearchColumns,
     showColumnFilters,
   ]);
@@ -770,7 +769,7 @@ export default function CasesPage() {
     const normalizedSearch = searchTerm.trim().toLowerCase();
 
     return cases.filter((caseDetail) => {
-      if (selectedDocketTypes.length === 0 || selectedDocketYears.length === 0 || selectedDocketMonths.length === 0 || selectedSearchColumns.length === 0) {
+      if (selectedDocketTypes.length === 0 || selectedDocketYears.length === 0 || selectedSearchColumns.length === 0) {
         return false;
       }
 
@@ -782,7 +781,8 @@ export default function CasesPage() {
         return false;
       }
 
-      if (!caseDetail.docket_month_code || !selectedDocketMonths.includes(caseDetail.docket_month_code.toUpperCase())) {
+      const selectedMonthsForYear = selectedDocketMonthsByYear[String(caseDetail.docket_year)] ?? [];
+      if (!caseDetail.docket_month_code || !selectedMonthsForYear.includes(caseDetail.docket_month_code.trim().toUpperCase())) {
         return false;
       }
 
@@ -820,7 +820,7 @@ export default function CasesPage() {
     selectedColumnFilters,
     selectedDocketTypes,
     selectedDocketYears,
-    selectedDocketMonths,
+    selectedDocketMonthsByYear,
     selectedSearchColumns,
     showColumnFilters,
   ]);
@@ -849,13 +849,19 @@ export default function CasesPage() {
     return values.map(String);
   }, [cases]);
 
-  const docketMonthFilters = useMemo(() => (
-    Array.from(new Set(
-      cases
-        .map((caseDetail) => caseDetail.docket_month_code?.trim().toUpperCase())
-        .filter((value): value is string => Boolean(value)),
-    )).sort((left, right) => left.localeCompare(right))
-  ), [cases]);
+  const docketMonthFiltersByYear = useMemo(() => {
+    const monthsByYear = cases.reduce<DocketMonthsByYear>((result, caseDetail) => {
+      const year = String(caseDetail.docket_year);
+      const month = caseDetail.docket_month_code?.trim().toUpperCase();
+      if (!Number.isFinite(caseDetail.docket_year) || !month) return result;
+      result[year] = result[year] ?? [];
+      if (!result[year].includes(month)) result[year].push(month);
+      return result;
+    }, {});
+
+    for (const months of Object.values(monthsByYear)) months.sort((left, right) => left.localeCompare(right));
+    return monthsByYear;
+  }, [cases]);
 
   const columnFilterOptions = useMemo(() => (
     CASE_TABLE_COLUMNS.reduce((options, column) => {
@@ -891,10 +897,8 @@ export default function CasesPage() {
   }, [docketYearFilters]);
 
   useEffect(() => {
-    if (!docketMonthFilterTouchedRef.current) {
-      setSelectedDocketMonths(docketMonthFilters);
-    }
-  }, [docketMonthFilters]);
+    if (!docketFiltersTouchedRef.current) setSelectedDocketMonthsByYear(docketMonthFiltersByYear);
+  }, [docketMonthFiltersByYear]);
 
   useEffect(() => {
     setSelectedColumnFilters((currentFilters) => {
@@ -958,7 +962,11 @@ export default function CasesPage() {
       return 'No years';
     }
 
-    if (allOptionsSelected(selectedDocketYears, docketYearFilters)) {
+    const hasEveryMonth = docketYearFilters.every((year) => allOptionsSelected(
+      selectedDocketMonthsByYear[year] ?? [],
+      docketMonthFiltersByYear[year] ?? [],
+    ));
+    if (allOptionsSelected(selectedDocketYears, docketYearFilters) && hasEveryMonth) {
       return 'All years';
     }
 
@@ -966,18 +974,13 @@ export default function CasesPage() {
       return selectedDocketYears[0];
     }
 
-    return `${selectedDocketYears.length} years`;
-  }, [docketYearFilters, selectedDocketYears]);
-
-  const docketMonthSummary = useMemo(() => {
-    if (selectedDocketMonths.length === 0) return 'No months';
-    if (allOptionsSelected(selectedDocketMonths, docketMonthFilters)) return 'All months';
-    if (selectedDocketMonths.length === 1) return docketMonthName(selectedDocketMonths[0]);
-    return `${selectedDocketMonths.length} months`;
-  }, [docketMonthFilters, selectedDocketMonths]);
+    return `${selectedDocketYears.length} years/months`;
+  }, [docketMonthFiltersByYear, docketYearFilters, selectedDocketMonthsByYear, selectedDocketYears]);
 
   const allDocketTypesSelected = allOptionsSelected(selectedDocketTypes, docketTypeFilters);
-  const allDocketYearsSelected = allOptionsSelected(selectedDocketYears, docketYearFilters);
+  const allDocketYearsSelected = allOptionsSelected(selectedDocketYears, docketYearFilters) && docketYearFilters.every((year) =>
+    allOptionsSelected(selectedDocketMonthsByYear[year] ?? [], docketMonthFiltersByYear[year] ?? []),
+  );
   const docketTypeMobileSummary = selectedDocketTypes.length === 0
     ? 'None'
     : allDocketTypesSelected
@@ -1093,34 +1096,41 @@ export default function CasesPage() {
 
   function toggleDocketYear(docketYear: DocketYearFilter) {
     docketFiltersTouchedRef.current = true;
+    const isSelected = selectedDocketYears.includes(docketYear);
     setSelectedDocketYears((currentYears) => {
-      if (currentYears.includes(docketYear)) {
+      if (isSelected) {
         return currentYears.filter((currentYear) => currentYear !== docketYear);
       }
 
       return [...currentYears, docketYear];
     });
+    setSelectedDocketMonthsByYear((current) => ({
+      ...current,
+      [docketYear]: isSelected ? [] : [...(docketMonthFiltersByYear[docketYear] ?? [])],
+    }));
   }
 
   function toggleAllDocketYears() {
     docketFiltersTouchedRef.current = true;
-    setSelectedDocketYears((currentYears) =>
-      allOptionsSelected(currentYears, docketYearFilters) ? [] : [...docketYearFilters],
-    );
+    const hasEveryMonth = docketYearFilters.every((year) => allOptionsSelected(
+      selectedDocketMonthsByYear[year] ?? [],
+      docketMonthFiltersByYear[year] ?? [],
+    ));
+    const selectAll = !(allOptionsSelected(selectedDocketYears, docketYearFilters) && hasEveryMonth);
+    setSelectedDocketYears(selectAll ? [...docketYearFilters] : []);
+    setSelectedDocketMonthsByYear(selectAll ? docketMonthFiltersByYear : {});
   }
 
-  function toggleDocketMonth(docketMonth: DocketMonthFilter) {
-    docketMonthFilterTouchedRef.current = true;
-    setSelectedDocketMonths((currentMonths) => currentMonths.includes(docketMonth)
+  function toggleDocketMonth(docketYear: DocketYearFilter, docketMonth: string) {
+    docketFiltersTouchedRef.current = true;
+    const currentMonths = selectedDocketMonthsByYear[docketYear] ?? [];
+    const nextMonths = currentMonths.includes(docketMonth)
       ? currentMonths.filter((currentMonth) => currentMonth !== docketMonth)
-      : [...currentMonths, docketMonth]);
-  }
-
-  function toggleAllDocketMonths() {
-    docketMonthFilterTouchedRef.current = true;
-    setSelectedDocketMonths((currentMonths) =>
-      allOptionsSelected(currentMonths, docketMonthFilters) ? [] : [...docketMonthFilters],
-    );
+      : [...currentMonths, docketMonth];
+    setSelectedDocketMonthsByYear((current) => ({ ...current, [docketYear]: nextMonths }));
+    setSelectedDocketYears((currentYears) => nextMonths.length > 0
+      ? Array.from(new Set([...currentYears, docketYear]))
+      : currentYears.filter((currentYear) => currentYear !== docketYear));
   }
 
   function clearSearch() {
@@ -1318,7 +1328,9 @@ export default function CasesPage() {
         searchColumns: selectedSearchColumns.map(searchColumnLabel),
         docketTypes: selectedDocketTypes,
         docketYears: selectedDocketYears,
-        docketMonths: selectedDocketMonths.map(docketMonthName),
+        docketMonths: selectedDocketYears.flatMap((year) =>
+          (selectedDocketMonthsByYear[year] ?? []).map((month) => `${year} — ${docketMonthName(month)}`),
+        ),
         activeColumnFilters: buildActiveColumnFilters(),
         sortOrder: 'Docket Number ascending',
       };
@@ -1544,62 +1556,42 @@ export default function CasesPage() {
                         </span>
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-56">
+                    <DropdownMenuContent align="start" className="max-h-80 w-56 overflow-y-auto">
                       <DropdownMenuLabel>Docket years</DropdownMenuLabel>
                       <DropdownMenuCheckboxItem
-                        checked={allOptionsSelected(selectedDocketYears, docketYearFilters)}
+                        checked={allOptionsSelected(selectedDocketYears, docketYearFilters) && docketYearFilters.every((year) =>
+                          allOptionsSelected(selectedDocketMonthsByYear[year] ?? [], docketMonthFiltersByYear[year] ?? []),
+                        )}
                         onCheckedChange={toggleAllDocketYears}
                         onSelect={(event) => event.preventDefault()}
                       >
                         All years
                       </DropdownMenuCheckboxItem>
                       {docketYearFilters.map((docketYear) => (
-                        <DropdownMenuCheckboxItem
-                          key={docketYear}
-                          checked={selectedDocketYears.includes(docketYear)}
-                          onCheckedChange={() => toggleDocketYear(docketYear)}
-                          onSelect={(event) => event.preventDefault()}
-                        >
-                          {docketYear}
-                        </DropdownMenuCheckboxItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-
-                <div className="col-start-2 flex flex-col gap-2">
-                  <label className="sr-only text-sm font-medium text-foreground sm:not-sr-only" htmlFor="docket-month-filter">
-                    Docket Month
-                  </label>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button id="docket-month-filter" type="button" variant="outline" className="h-auto min-h-9 w-full min-w-0 justify-between px-2 py-1 sm:h-9 sm:px-4 sm:py-2">
-                        <span className="text-xs sm:hidden">Docket Month</span>
-                        <span className="hidden sm:inline">{docketMonthSummary}</span>
-                        <span className="flex min-w-0 items-center gap-1">
-                          <span className="min-w-0 truncate text-xs text-muted-foreground italic sm:hidden">{docketMonthSummary}</span>
-                          <ChevronDown className="size-4 opacity-70" />
-                        </span>
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="max-h-80 w-56 overflow-y-auto">
-                      <DropdownMenuLabel>Docket months</DropdownMenuLabel>
-                      <DropdownMenuCheckboxItem
-                        checked={allOptionsSelected(selectedDocketMonths, docketMonthFilters)}
-                        onCheckedChange={toggleAllDocketMonths}
-                        onSelect={(event) => event.preventDefault()}
-                      >
-                        All months
-                      </DropdownMenuCheckboxItem>
-                      {docketMonthFilters.map((docketMonth) => (
-                        <DropdownMenuCheckboxItem
-                          key={docketMonth}
-                          checked={selectedDocketMonths.includes(docketMonth)}
-                          onCheckedChange={() => toggleDocketMonth(docketMonth)}
-                          onSelect={(event) => event.preventDefault()}
-                        >
-                          {docketMonthName(docketMonth)}
-                        </DropdownMenuCheckboxItem>
+                        <div key={docketYear}>
+                          <DropdownMenuCheckboxItem
+                            checked={allOptionsSelected(
+                              selectedDocketMonthsByYear[docketYear] ?? [],
+                              docketMonthFiltersByYear[docketYear] ?? [],
+                            )}
+                            onCheckedChange={() => toggleDocketYear(docketYear)}
+                            onSelect={(event) => event.preventDefault()}
+                            className="font-medium"
+                          >
+                            {docketYear}
+                          </DropdownMenuCheckboxItem>
+                          {(docketMonthFiltersByYear[docketYear] ?? []).map((docketMonth) => (
+                            <DropdownMenuCheckboxItem
+                              key={`${docketYear}-${docketMonth}`}
+                              checked={(selectedDocketMonthsByYear[docketYear] ?? []).includes(docketMonth)}
+                              onCheckedChange={() => toggleDocketMonth(docketYear, docketMonth)}
+                              onSelect={(event) => event.preventDefault()}
+                              className="pl-12"
+                            >
+                              {docketMonthName(docketMonth)}
+                            </DropdownMenuCheckboxItem>
+                          ))}
+                        </div>
                       ))}
                     </DropdownMenuContent>
                   </DropdownMenu>
