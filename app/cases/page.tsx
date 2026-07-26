@@ -1570,8 +1570,11 @@ export default function CasesPage() {
                         </span>
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="max-h-80 w-56 overflow-y-auto">
-                      <DropdownMenuLabel>Docket years</DropdownMenuLabel>
+                    <DropdownMenuContent
+                      align="start"
+                      className="flex w-56 flex-col overflow-hidden"
+                      style={{ maxHeight: 'min(20rem, var(--radix-dropdown-menu-content-available-height))' }}
+                    >
                       <DropdownMenuCheckboxItem
                         checked={allOptionsSelected(selectedDocketYears, docketYearFilters) && docketYearFilters.every((year) =>
                           allOptionsSelected(selectedDocketMonthsByYear[year] ?? [], docketMonthFiltersByYear[year] ?? []),
@@ -1581,64 +1584,66 @@ export default function CasesPage() {
                       >
                         All years
                       </DropdownMenuCheckboxItem>
-                      {docketYearFilters.map((docketYear) => (
-                        <div key={docketYear}>
-                          <div className="flex items-center">
-                            <button
-                              type="button"
-                              className="ml-1 flex size-7 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              aria-label={`${expandedDocketYears.includes(docketYear) ? 'Collapse' : 'Expand'} ${docketYear} months`}
-                              aria-expanded={expandedDocketYears.includes(docketYear)}
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                toggleDocketYearExpanded(docketYear);
-                              }}
-                            >
-                              {expandedDocketYears.includes(docketYear)
-                                ? <ChevronDown className="size-4" />
-                                : <ChevronRight className="size-4" />}
-                            </button>
-                            <DropdownMenuCheckboxItem
-                              checked={allOptionsSelected(
-                                selectedDocketMonthsByYear[docketYear] ?? [],
-                                docketMonthFiltersByYear[docketYear] ?? [],
-                              )}
-                              onCheckedChange={() => toggleDocketYear(docketYear)}
-                              onSelect={(event) => event.preventDefault()}
-                              className="min-w-0 flex-1 pl-8 font-medium"
-                            >
-                              {docketYear}
-                            </DropdownMenuCheckboxItem>
-                          </div>
-                          {expandedDocketYears.includes(docketYear) ? (
-                            <div className="border-l border-border/70 pl-4 ml-4">
+                      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+                        {docketYearFilters.map((docketYear) => (
+                          <div key={docketYear}>
+                            <div className="flex items-center">
+                              <button
+                                type="button"
+                                className="ml-1 flex size-7 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                aria-label={`${expandedDocketYears.includes(docketYear) ? 'Collapse' : 'Expand'} ${docketYear} months`}
+                                aria-expanded={expandedDocketYears.includes(docketYear)}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  toggleDocketYearExpanded(docketYear);
+                                }}
+                              >
+                                {expandedDocketYears.includes(docketYear)
+                                  ? <ChevronDown className="size-4" />
+                                  : <ChevronRight className="size-4" />}
+                              </button>
                               <DropdownMenuCheckboxItem
                                 checked={allOptionsSelected(
                                   selectedDocketMonthsByYear[docketYear] ?? [],
                                   docketMonthFiltersByYear[docketYear] ?? [],
                                 )}
-                                onCheckedChange={() => toggleAllDocketMonthsForYear(docketYear)}
+                                onCheckedChange={() => toggleDocketYear(docketYear)}
                                 onSelect={(event) => event.preventDefault()}
-                                className="pl-8 italic"
+                                className="min-w-0 flex-1 pl-8 font-medium"
                               >
-                                Select all months
+                                {docketYear}
                               </DropdownMenuCheckboxItem>
-                              {(docketMonthFiltersByYear[docketYear] ?? []).map((docketMonth) => (
-                                <DropdownMenuCheckboxItem
-                                  key={`${docketYear}-${docketMonth}`}
-                                  checked={(selectedDocketMonthsByYear[docketYear] ?? []).includes(docketMonth)}
-                                  onCheckedChange={() => toggleDocketMonth(docketYear, docketMonth)}
-                                  onSelect={(event) => event.preventDefault()}
-                                  className="pl-8"
-                                >
-                                  {docketMonthName(docketMonth)}
-                                </DropdownMenuCheckboxItem>
-                              ))}
                             </div>
-                          ) : null}
-                        </div>
-                      ))}
+                            {expandedDocketYears.includes(docketYear) ? (
+                              <div className="ml-4 border-l border-border/70 pl-4">
+                                <DropdownMenuCheckboxItem
+                                  checked={allOptionsSelected(
+                                    selectedDocketMonthsByYear[docketYear] ?? [],
+                                    docketMonthFiltersByYear[docketYear] ?? [],
+                                  )}
+                                  onCheckedChange={() => toggleAllDocketMonthsForYear(docketYear)}
+                                  onSelect={(event) => event.preventDefault()}
+                                  className="pl-8 italic"
+                                >
+                                  Select all months
+                                </DropdownMenuCheckboxItem>
+                                {(docketMonthFiltersByYear[docketYear] ?? []).map((docketMonth) => (
+                                  <DropdownMenuCheckboxItem
+                                    key={`${docketYear}-${docketMonth}`}
+                                    checked={(selectedDocketMonthsByYear[docketYear] ?? []).includes(docketMonth)}
+                                    onCheckedChange={() => toggleDocketMonth(docketYear, docketMonth)}
+                                    onSelect={(event) => event.preventDefault()}
+                                    className="pl-8"
+                                  >
+                                    {docketMonthName(docketMonth)}
+                                  </DropdownMenuCheckboxItem>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
