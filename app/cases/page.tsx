@@ -16,7 +16,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ChevronDown, Printer, RefreshCw, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Printer, RefreshCw, X } from 'lucide-react';
 import { ExportCasesDialog } from '@/components/cases/export-cases-dialog';
 import { useCurrentUserRole } from '@/hooks/use-current-user-role';
 import { canExportCasesToExcel, canViewLinkedDocket } from '@/lib/auth/ui-permissions';
@@ -445,6 +445,7 @@ export default function CasesPage() {
   const [selectedDocketTypes, setSelectedDocketTypes] = useState<DocketTypeFilter[]>([]);
   const [selectedDocketYears, setSelectedDocketYears] = useState<DocketYearFilter[]>([]);
   const [selectedDocketMonthsByYear, setSelectedDocketMonthsByYear] = useState<DocketMonthsByYear>({});
+  const [expandedDocketYears, setExpandedDocketYears] = useState<DocketYearFilter[]>([]);
   const columnFilterTouchedRef = useRef<ColumnFilterTouched>(
     getInitialColumnFilterTouched(undefined),
   );
@@ -1096,7 +1097,10 @@ export default function CasesPage() {
 
   function toggleDocketYear(docketYear: DocketYearFilter) {
     docketFiltersTouchedRef.current = true;
-    const isSelected = selectedDocketYears.includes(docketYear);
+    const isSelected = allOptionsSelected(
+      selectedDocketMonthsByYear[docketYear] ?? [],
+      docketMonthFiltersByYear[docketYear] ?? [],
+    );
     setSelectedDocketYears((currentYears) => {
       if (isSelected) {
         return currentYears.filter((currentYear) => currentYear !== docketYear);
@@ -1131,6 +1135,16 @@ export default function CasesPage() {
     setSelectedDocketYears((currentYears) => nextMonths.length > 0
       ? Array.from(new Set([...currentYears, docketYear]))
       : currentYears.filter((currentYear) => currentYear !== docketYear));
+  }
+
+  function toggleAllDocketMonthsForYear(docketYear: DocketYearFilter) {
+    toggleDocketYear(docketYear);
+  }
+
+  function toggleDocketYearExpanded(docketYear: DocketYearFilter) {
+    setExpandedDocketYears((currentYears) => currentYears.includes(docketYear)
+      ? currentYears.filter((currentYear) => currentYear !== docketYear)
+      : [...currentYears, docketYear]);
   }
 
   function clearSearch() {
@@ -1569,28 +1583,60 @@ export default function CasesPage() {
                       </DropdownMenuCheckboxItem>
                       {docketYearFilters.map((docketYear) => (
                         <div key={docketYear}>
-                          <DropdownMenuCheckboxItem
-                            checked={allOptionsSelected(
-                              selectedDocketMonthsByYear[docketYear] ?? [],
-                              docketMonthFiltersByYear[docketYear] ?? [],
-                            )}
-                            onCheckedChange={() => toggleDocketYear(docketYear)}
-                            onSelect={(event) => event.preventDefault()}
-                            className="font-medium"
-                          >
-                            {docketYear}
-                          </DropdownMenuCheckboxItem>
-                          {(docketMonthFiltersByYear[docketYear] ?? []).map((docketMonth) => (
-                            <DropdownMenuCheckboxItem
-                              key={`${docketYear}-${docketMonth}`}
-                              checked={(selectedDocketMonthsByYear[docketYear] ?? []).includes(docketMonth)}
-                              onCheckedChange={() => toggleDocketMonth(docketYear, docketMonth)}
-                              onSelect={(event) => event.preventDefault()}
-                              className="pl-12"
+                          <div className="flex items-center">
+                            <button
+                              type="button"
+                              className="ml-1 flex size-7 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              aria-label={`${expandedDocketYears.includes(docketYear) ? 'Collapse' : 'Expand'} ${docketYear} months`}
+                              aria-expanded={expandedDocketYears.includes(docketYear)}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                toggleDocketYearExpanded(docketYear);
+                              }}
                             >
-                              {docketMonthName(docketMonth)}
+                              {expandedDocketYears.includes(docketYear)
+                                ? <ChevronDown className="size-4" />
+                                : <ChevronRight className="size-4" />}
+                            </button>
+                            <DropdownMenuCheckboxItem
+                              checked={allOptionsSelected(
+                                selectedDocketMonthsByYear[docketYear] ?? [],
+                                docketMonthFiltersByYear[docketYear] ?? [],
+                              )}
+                              onCheckedChange={() => toggleDocketYear(docketYear)}
+                              onSelect={(event) => event.preventDefault()}
+                              className="min-w-0 flex-1 pl-8 font-medium"
+                            >
+                              {docketYear}
                             </DropdownMenuCheckboxItem>
-                          ))}
+                          </div>
+                          {expandedDocketYears.includes(docketYear) ? (
+                            <div className="border-l border-border/70 pl-4 ml-4">
+                              <DropdownMenuCheckboxItem
+                                checked={allOptionsSelected(
+                                  selectedDocketMonthsByYear[docketYear] ?? [],
+                                  docketMonthFiltersByYear[docketYear] ?? [],
+                                )}
+                                onCheckedChange={() => toggleAllDocketMonthsForYear(docketYear)}
+                                onSelect={(event) => event.preventDefault()}
+                                className="pl-8 italic"
+                              >
+                                Select all months
+                              </DropdownMenuCheckboxItem>
+                              {(docketMonthFiltersByYear[docketYear] ?? []).map((docketMonth) => (
+                                <DropdownMenuCheckboxItem
+                                  key={`${docketYear}-${docketMonth}`}
+                                  checked={(selectedDocketMonthsByYear[docketYear] ?? []).includes(docketMonth)}
+                                  onCheckedChange={() => toggleDocketMonth(docketYear, docketMonth)}
+                                  onSelect={(event) => event.preventDefault()}
+                                  className="pl-8"
+                                >
+                                  {docketMonthName(docketMonth)}
+                                </DropdownMenuCheckboxItem>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       ))}
                     </DropdownMenuContent>
