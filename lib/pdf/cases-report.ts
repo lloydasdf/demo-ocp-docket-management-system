@@ -13,6 +13,7 @@ export type CasesReportFilters = {
   searchColumns: string[];
   docketTypes: string[];
   docketYears: string[];
+  docketMonths: string[];
   activeColumnFilters: Array<{ column: string; values: string[] }>;
   sortOrder: string;
 };
@@ -56,6 +57,7 @@ function buildFilterLines(filters: CasesReportFilters) {
     ['Search columns', printableValue(filters.searchColumns)],
     ['Docket types', printableValue(filters.docketTypes)],
     ['Docket years', printableValue(filters.docketYears)],
+    ['Docket months', printableValue(filters.docketMonths)],
     ['Active column filters', columnFilterLines],
     ['Sort order', filters.sortOrder],
   ];
