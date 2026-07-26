@@ -57,7 +57,7 @@ function buildFilterLines(filters: CasesReportFilters) {
     ['Search columns', printableValue(filters.searchColumns)],
     ['Docket types', printableValue(filters.docketTypes)],
     ['Docket years', printableValue(filters.docketYears)],
-    ['Docket months', printableValue(filters.docketMonths)],
+    ['Docket months', filters.docketMonths.length > 0 ? filters.docketMonths.join('\n') : 'None'],
     ['Active column filters', columnFilterLines],
     ['Sort order', filters.sortOrder],
   ];

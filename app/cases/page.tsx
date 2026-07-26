@@ -46,6 +46,10 @@ const DOCKET_MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ] as const;
+const DOCKET_MONTH_SHORT_NAMES = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+] as const;
 const CASE_ROW_HEIGHT = 49;
 const EXPANDED_CASE_ROW_HEIGHT = 96;
 const VIRTUAL_ROW_OVERSCAN = 12;
@@ -119,6 +123,11 @@ function clearLegacyCasesPageCaches() {
 function docketMonthName(monthCode: string) {
   const monthIndex = monthCode.trim().toUpperCase().charCodeAt(0) - 65;
   return DOCKET_MONTH_NAMES[monthIndex] ?? monthCode;
+}
+
+function docketMonthShortName(monthCode: string) {
+  const monthIndex = monthCode.trim().toUpperCase().charCodeAt(0) - 65;
+  return DOCKET_MONTH_SHORT_NAMES[monthIndex] ?? monthCode;
 }
 
 function readCasesPageCache(userId: string) {
@@ -1342,8 +1351,8 @@ export default function CasesPage() {
         searchColumns: selectedSearchColumns.map(searchColumnLabel),
         docketTypes: selectedDocketTypes,
         docketYears: selectedDocketYears,
-        docketMonths: selectedDocketYears.flatMap((year) =>
-          (selectedDocketMonthsByYear[year] ?? []).map((month) => `${year} — ${docketMonthName(month)}`),
+        docketMonths: selectedDocketYears.map((year) =>
+          `${year} - ${(selectedDocketMonthsByYear[year] ?? []).map(docketMonthShortName).join(', ')}`,
         ),
         activeColumnFilters: buildActiveColumnFilters(),
         sortOrder: 'Docket Number ascending',
