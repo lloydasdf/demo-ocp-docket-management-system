@@ -1184,7 +1184,7 @@ export default function NewDocket() {
       return;
     }
     const result = response ? await response.json() as {
-      data?: { caseId: number; docketDisplayNumber: string; drive: { status: string } };
+      data?: { caseId: number; docketDisplayNumber: string; drive: { status: string }; driveProvision?: { stage?: string; operation?: string; code?: string; message?: string } };
       error?: { message?: string };
     } : { error: { message: 'Your session has expired. Please sign in again.' } };
     setIsSubmitting(false);
@@ -1197,7 +1197,10 @@ export default function NewDocket() {
     const created = result.data;
     window.localStorage.removeItem(newDocketDraftStorageKey);
     window.localStorage.removeItem(idempotencyStorageKey);
-    const driveWarning = created.drive.status === 'READY' ? '' : ' The docket was saved, but its Google Drive folder could not be created. You can safely continue without submitting it again.';
+    const diagnostic = created.driveProvision
+      ? ` Stage: ${created.driveProvision.stage ?? 'UNKNOWN'}; operation: ${created.driveProvision.operation ?? 'unknown'}; code: ${created.driveProvision.code ?? 'unknown'}; message: ${created.driveProvision.message ?? 'unknown'}.`
+      : '';
+    const driveWarning = created.drive.status === 'READY' ? '' : ` The docket was saved, but its Google Drive folder could not be created.${diagnostic} You can safely continue without submitting it again.`;
     setMessage({ type: 'success', text: `Docket ${created.docketDisplayNumber} created as case #${created.caseId}.${driveWarning}`, caseId: created.caseId });
     if (created.drive.status === 'READY') router.push(`/cases/${created.caseId}`);
     else window.setTimeout(() => router.push(`/cases/${created.caseId}`), 3000);

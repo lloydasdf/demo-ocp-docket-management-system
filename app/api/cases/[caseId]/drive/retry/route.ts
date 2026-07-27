@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { provisionDriveFolder, safeError, type DocketResult } from '@/lib/docket-drive';
+import { DriveProvisionError, provisionDriveFolder, safeError, type DocketResult } from '@/lib/docket-drive';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getAuthenticatedSupabase } from '@/lib/supabase/server-user';
 
@@ -30,9 +30,12 @@ export async function POST(request: Request, context: { params: Promise<{ caseId
     const drive = await provisionDriveFolder(docket);
     return NextResponse.json({ data: { caseId, drive } });
   } catch (driveError) {
+    console.error('[Drive] Provisioning retry FAILED', driveError instanceof DriveProvisionError ? driveError.diagnostic() : { message: safeError(driveError) });
     const message = safeError(driveError);
-    await getSupabaseAdminClient().from('case_drive_folders' as never)
+    const failedUpdate = await getSupabaseAdminClient().from('case_drive_folders' as never)
       .update({ status: 'FAILED', last_error: message, updated_at: new Date().toISOString() } as never).eq('case_id', caseId);
-    return NextResponse.json({ data: { caseId, drive: { status: 'FAILED', folderCreated: false } } }, { status: 200 });
+    if (failedUpdate.error) console.error('[Drive] Failed to persist FAILED case status', { table: 'case_drive_folders', operation: 'update', code: failedUpdate.error.code, message: safeError(failedUpdate.error) });
+    const driveProvision = process.env.NODE_ENV === 'development' && driveError instanceof DriveProvisionError ? driveError.diagnostic() : undefined;
+    return NextResponse.json({ data: { caseId, drive: { status: 'FAILED', folderCreated: false }, driveProvision } }, { status: 200 });
   }
 }

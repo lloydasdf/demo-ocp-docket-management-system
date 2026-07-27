@@ -24,6 +24,8 @@ export class GoogleDriveError extends Error {
     public readonly stage: 'CONFIGURATION' | 'OAUTH' | 'DRIVE',
     public readonly code?: string,
     public readonly description?: string,
+    public readonly httpStatus?: number,
+    public readonly endpoint?: string,
   ) {
     super(message);
     this.name = 'GoogleDriveError';
@@ -76,7 +78,7 @@ async function accessToken() {
     const description = process.env.NODE_ENV === 'development'
       ? sanitizedGoogleErrorDescription(body.error_description)
       : undefined;
-    throw new GoogleDriveError(`Google OAuth request failed (${response.status}).`, 'OAUTH', code, description);
+    throw new GoogleDriveError(`Google OAuth request failed (${response.status}).`, 'OAUTH', code, description, response.status, 'https://oauth2.googleapis.com/token');
   }
   if (!body.access_token) throw new GoogleDriveError('Google OAuth response did not contain an access token.', 'OAUTH', 'missing_access_token');
   return body.access_token;
@@ -92,7 +94,7 @@ async function driveFetch(path: string, init?: RequestInit) {
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: { status?: string; message?: string; errors?: Array<{ reason?: string }> } };
     const code = sanitizedGoogleErrorCode(body.error?.errors?.[0]?.reason || body.error?.status, `http_${response.status}`);
-    throw new GoogleDriveError(`Google Drive request failed (${response.status}).`, 'DRIVE', code);
+    throw new GoogleDriveError(`Google Drive request failed (${response.status}).`, 'DRIVE', code, undefined, response.status, `/drive/v3/${path.split('?')[0]}`);
   }
   return response;
 }
