@@ -36,7 +36,7 @@ export async function GET(request: Request, context: { params: Promise<{ caseId:
     const caseMapping = await admin.from('case_drive_folders' as never).upsert({ case_id: caseId, docket_year: docket.docket_year, folder_id: folderId, parent_folder_id: typeFolderId, folder_name: docket.docket_display_number, status: 'READY', last_error: null, updated_at: mappedAt } as never, { onConflict: 'case_id' });
     if (caseMapping.error) return NextResponse.json({ error: { code: caseMapping.error.code, message: 'The existing Drive docket folder could not be mapped.' } }, { status: 500 });
     const folder = await getFolderMetadata(folderId);
-    const files = await listFolderFiles(folderId);
+    const files = (await listFolderFiles(folderId)).filter((file) => file.mimeType !== 'application/vnd.google-apps.folder');
     const scannedAt = new Date().toISOString();
     const ids = files.map((file) => file.id);
     if (ids.length) {

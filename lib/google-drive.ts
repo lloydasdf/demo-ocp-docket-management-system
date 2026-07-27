@@ -171,6 +171,29 @@ export async function getDriveItemMetadata(itemId: string) {
   return response.json() as Promise<DriveChildMetadata & { parents?: string[]; trashed?: boolean }>;
 }
 
+const GOOGLE_EXPORTS: Record<string, { mimeType: string; extension: string }> = {
+  'application/vnd.google-apps.document': { mimeType: 'application/pdf', extension: '.pdf' },
+  'application/vnd.google-apps.spreadsheet': { mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', extension: '.xlsx' },
+  'application/vnd.google-apps.presentation': { mimeType: 'application/pdf', extension: '.pdf' },
+  'application/vnd.google-apps.drawing': { mimeType: 'application/pdf', extension: '.pdf' },
+};
+
+export async function downloadDriveFile(fileId: string, expectedParentId: string) {
+  const metadata = await getDriveItemMetadata(fileId);
+  if (!(metadata.parents ?? []).includes(expectedParentId)) throw new Error('The requested file is outside the trusted case folder.');
+  const googleExport = metadata.mimeType ? GOOGLE_EXPORTS[metadata.mimeType] : undefined;
+  const response = googleExport
+    ? await driveFetch(`files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(googleExport.mimeType)}`)
+    : await driveFetch(`files/${encodeURIComponent(fileId)}?alt=media`);
+  const hasExtension = /\.[a-z0-9]{1,10}$/i.test(metadata.name);
+  return {
+    body: await response.arrayBuffer(),
+    contentType: googleExport?.mimeType ?? response.headers.get('content-type') ?? metadata.mimeType ?? 'application/octet-stream',
+    fileName: `${metadata.name}${googleExport && !hasExtension ? googleExport.extension : ''}`,
+    parents: metadata.parents ?? [],
+  };
+}
+
 export async function renameDriveItem(itemId: string, name: string) {
   const response = await driveFetch(`files/${encodeURIComponent(itemId)}?fields=id,name,mimeType,webViewLink`, {
     method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }),

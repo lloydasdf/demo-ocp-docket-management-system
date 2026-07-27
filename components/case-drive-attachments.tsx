@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, FolderPlus, Loader2, RefreshCw } from "lucide-react";
+import { Download, ExternalLink, FolderPlus, Loader2, RefreshCw } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
   const [canCreate, setCanCreate] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -76,6 +77,28 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     finally { setCreating(false); }
   }
 
+  async function downloadFile(file: DriveFile) {
+    setDownloadingId(file.id); setError(null);
+    try {
+      const supabase = await getSupabaseBrowserClient();
+      const { data } = await supabase.auth.getSession();
+      if (!data.session?.access_token) throw new Error("Your session has expired.");
+      const response = await fetch(`/api/cases/${caseId}/drive/files/${encodeURIComponent(file.id)}/download`, { headers: { Authorization: `Bearer ${data.session.access_token}` } });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+        throw new Error(body?.error?.message ?? "Unable to download the file.");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+      const downloadName = encodedName ? decodeURIComponent(encodedName) : file.name;
+      const anchor = document.createElement("a");
+      anchor.href = url; anchor.download = downloadName; document.body.appendChild(anchor); anchor.click(); anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (downloadError) { setError(downloadError instanceof Error ? downloadError.message : "Unable to download the file."); }
+    finally { setDownloadingId(null); }
+  }
+
   return <div className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <p className="text-sm text-muted-foreground">Expected location: <strong>{docketYear ?? "Unknown year"}</strong> / <strong>{docketType ?? "Unknown type"}</strong> / <strong>{docketNumber ?? "Unknown docket"}</strong></p>
@@ -86,6 +109,6 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     </div>
     {loading && !drive ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Finding the docket folder and loading files…</div> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />{creating ? "Creating year, type, and docket folders…" : "Create GDrive folder"}</Button> : null}</AlertDescription></Alert> : null}
-    {drive && !loading ? drive.files.length ? <div className="divide-y rounded-lg border">{drive.files.map((file) => <div key={file.id} className="flex items-center justify-between gap-3 p-3"><div className="min-w-0"><p className="truncate font-medium">{file.name}</p><p className="text-xs text-muted-foreground">{fileSize(file.size)}{file.modifiedTime ? ` • Updated ${new Date(file.modifiedTime).toLocaleString()}` : ""}</p></div>{file.webViewLink ? <Button variant="ghost" size="sm" asChild><a href={file.webViewLink} target="_blank" rel="noreferrer" aria-label={`Open ${file.name}`}><ExternalLink className="h-4 w-4" /></a></Button> : null}</div>)}</div> : <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">The Google Drive docket folder is connected and currently empty.</div> : null}
+    {drive && !loading ? drive.files.length ? <div className="divide-y rounded-lg border">{drive.files.map((file) => <div key={file.id} className="flex items-center justify-between gap-3 p-3"><div className="min-w-0"><p className="truncate font-medium">{file.name}</p><p className="text-xs text-muted-foreground">{fileSize(file.size)}{file.modifiedTime ? ` • Updated ${new Date(file.modifiedTime).toLocaleString()}` : ""}</p></div><div className="flex gap-1"><Button variant="ghost" size="sm" onClick={() => void downloadFile(file)} disabled={downloadingId === file.id} aria-label={`Download ${file.name}`}>{downloadingId === file.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</Button>{file.webViewLink ? <Button variant="ghost" size="sm" asChild><a href={file.webViewLink} target="_blank" rel="noreferrer" aria-label={`Open ${file.name}`}><ExternalLink className="h-4 w-4" /></a></Button> : null}</div></div>)}</div> : <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">The Google Drive docket folder is connected and currently empty.</div> : null}
   </div>;
 }
