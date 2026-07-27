@@ -1,5 +1,23 @@
 -- Make the docket RPC and its retry record one transaction. The existing docket RPCs
 -- remain unchanged and are called by this wrapper.
+-- Keep this recovery migration independently runnable from the Supabase SQL editor:
+-- some deployments applied this hotfix before the preceding Drive schema migration.
+CREATE TABLE IF NOT EXISTS public.docket_creation_requests (
+  auth_user_id uuid NOT NULL,
+  idempotency_key uuid NOT NULL,
+  status varchar(30) NOT NULL,
+  case_id bigint UNIQUE REFERENCES public.cases(id) ON DELETE SET NULL,
+  result jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (auth_user_id, idempotency_key),
+  CONSTRAINT docket_creation_request_status CHECK (status IN ('CREATING','CREATED'))
+);
+
+ALTER TABLE public.docket_creation_requests ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.docket_creation_requests FROM anon, authenticated;
+GRANT ALL ON TABLE public.docket_creation_requests TO service_role;
+
 CREATE OR REPLACE FUNCTION public.create_docket_entry_idempotent(
   p_payload jsonb,
   p_idempotency_key uuid,
