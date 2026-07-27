@@ -44,7 +44,7 @@ async function authenticatedRequest(caseId: number, path: "files" | "retry", met
   return { response, body };
 }
 
-export function CaseDriveAttachments({ caseId, docketYear, docketNumber }: { caseId: number; docketYear: number | null; docketNumber: string | null }) {
+export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNumber }: { caseId: number; docketYear: number | null; docketType: string | null; docketNumber: string | null }) {
   const [drive, setDrive] = useState<DriveState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [canCreate, setCanCreate] = useState(false);
@@ -78,14 +78,14 @@ export function CaseDriveAttachments({ caseId, docketYear, docketNumber }: { cas
 
   return <div className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <p className="text-sm text-muted-foreground">Expected location: <strong>{docketYear ?? "Unknown year"}</strong> / <strong>{docketNumber ?? "Unknown docket"}</strong></p>
+      <p className="text-sm text-muted-foreground">Expected location: <strong>{docketYear ?? "Unknown year"}</strong> / <strong>{docketType ?? "Unknown type"}</strong> / <strong>{docketNumber ?? "Unknown docket"}</strong></p>
       <div className="flex gap-2">
         {drive?.folder.webViewLink ? <Button variant="outline" asChild><a href={drive.folder.webViewLink} target="_blank" rel="noreferrer">Open folder<ExternalLink className="ml-2 h-4 w-4" /></a></Button> : null}
         <Button variant="outline" onClick={() => void load()} disabled={loading || creating}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</Button>
       </div>
     </div>
     {loading && !drive ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Finding the docket folder and loading files…</div> : null}
-    {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />{creating ? "Creating year and docket folders…" : "Create GDrive folder"}</Button> : null}</AlertDescription></Alert> : null}
+    {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />{creating ? "Creating year, type, and docket folders…" : "Create GDrive folder"}</Button> : null}</AlertDescription></Alert> : null}
     {drive && !loading ? drive.files.length ? <div className="divide-y rounded-lg border">{drive.files.map((file) => <div key={file.id} className="flex items-center justify-between gap-3 p-3"><div className="min-w-0"><p className="truncate font-medium">{file.name}</p><p className="text-xs text-muted-foreground">{fileSize(file.size)}{file.modifiedTime ? ` • Updated ${new Date(file.modifiedTime).toLocaleString()}` : ""}</p></div>{file.webViewLink ? <Button variant="ghost" size="sm" asChild><a href={file.webViewLink} target="_blank" rel="noreferrer" aria-label={`Open ${file.name}`}><ExternalLink className="h-4 w-4" /></a></Button> : null}</div>)}</div> : <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">The Google Drive docket folder is connected and currently empty.</div> : null}
   </div>;
 }

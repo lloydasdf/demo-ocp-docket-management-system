@@ -21,7 +21,7 @@ export async function POST(request: Request, context: { params: Promise<{ caseId
   }
 
   const { data, error } = await auth.client.from('v_case_details_page' as never)
-    .select('id,docket_year,docket_display_number').eq('id', caseId).maybeSingle();
+    .select('id,docket_year,docket_display_number,docket_type_prefix').eq('id', caseId).maybeSingle();
   if (error || !data) return NextResponse.json({ error: { code: 'not_found', message: 'Case not found.' } }, { status: 404 });
   const row = data as unknown as { id: number; docket_year: number; docket_display_number: string };
   const docket: DocketResult = { caseId: row.id, docketYear: row.docket_year, docketDisplayNumber: row.docket_display_number };

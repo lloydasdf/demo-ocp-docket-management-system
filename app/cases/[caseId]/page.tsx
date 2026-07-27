@@ -2346,7 +2346,7 @@ export default function CaseDetailsPage() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <CaseDriveAttachments caseId={caseId} docketYear={data.details.docket_year} docketNumber={data.details.docket_display_number} />
+                    <CaseDriveAttachments caseId={caseId} docketYear={data.details.docket_year} docketType={data.details.docket_type_prefix} docketNumber={data.details.docket_display_number} />
                   </CardContent>
                 </Card>
               </div>

@@ -7,7 +7,7 @@ export type DocketResult = { caseId: number; docketYear: number; docketDisplayNu
 export type DriveProvisionStage =
   | 'VALIDATE_CONFIGURATION' | 'CREATE_ADMIN_CLIENT' | 'LOAD_CASE' | 'LOAD_YEAR_FOLDER'
   | 'UPSERT_YEAR_FOLDER' | 'CREATE_GOOGLE_YEAR_FOLDER' | 'UPDATE_YEAR_FOLDER'
-  | 'UPSERT_CASE_FOLDER' | 'CREATE_GOOGLE_CASE_FOLDER' | 'UPDATE_CASE_FOLDER' | 'COMPLETE';
+  | 'CREATE_GOOGLE_TYPE_FOLDER' | 'UPSERT_CASE_FOLDER' | 'CREATE_GOOGLE_CASE_FOLDER' | 'UPDATE_CASE_FOLDER' | 'COMPLETE';
 
 type ProvisionErrorDetails = {
   stage: DriveProvisionStage;
@@ -106,6 +106,10 @@ export async function provisionDriveFolder(result: DocketResult) {
   catch (cause) { throw new DriveProvisionError({ stage: 'CREATE_ADMIN_CLIENT', operation: 'create Supabase admin client', cause }); }
 
   logStage('LOAD_CASE', 'Starting');
+  const caseDetails = await admin.from('v_case_details_page' as never).select('docket_type_prefix').eq('id', result.caseId).maybeSingle();
+  if (caseDetails.error) throw dbFailure('LOAD_CASE', 'load case docket type', 'v_case_details_page', 'select', caseDetails.error);
+  const docketTypeFolder = String((caseDetails.data as unknown as { docket_type_prefix?: string } | null)?.docket_type_prefix ?? '').trim().toUpperCase();
+  if (!docketTypeFolder) throw new DriveProvisionError({ stage: 'LOAD_CASE', operation: 'resolve docket type folder', table: 'v_case_details_page', databaseOperation: 'select', originalMessage: 'The case docket type prefix is missing.' });
   const existing = await admin.from('case_drive_folders' as never).select('folder_id,status').eq('case_id', result.caseId).maybeSingle();
   if (existing.error) throw dbFailure('LOAD_CASE', 'load existing case folder mapping', 'case_drive_folders', 'select', existing.error);
   logStage('LOAD_CASE', 'Success');
@@ -142,13 +146,16 @@ export async function provisionDriveFolder(result: DocketResult) {
     logStage('UPSERT_YEAR_FOLDER', 'Success');
   }
 
+  const typeFolderId = await googleStage('CREATE_GOOGLE_TYPE_FOLDER', 'find or create Google docket type folder', () => findOrCreateFolder(yearFolderId!, docketTypeFolder));
+  logStage('CREATE_GOOGLE_TYPE_FOLDER', `Google folder id = ${typeFolderId}`);
+
   logStage('UPDATE_CASE_FOLDER', 'Starting');
-  const creating = await admin.from('case_drive_folders' as never).update({ parent_folder_id: yearFolderId, status: 'CREATING', last_error: null } as never).eq('case_id', result.caseId);
+  const creating = await admin.from('case_drive_folders' as never).update({ parent_folder_id: typeFolderId, status: 'CREATING', last_error: null } as never).eq('case_id', result.caseId);
   if (creating.error) throw dbFailure('UPDATE_CASE_FOLDER', 'mark case folder creating', 'case_drive_folders', 'update', creating.error);
   logStage('UPDATE_CASE_FOLDER', 'Success');
-  const folderId = await googleStage('CREATE_GOOGLE_CASE_FOLDER', 'find or create Google case folder', () => findOrCreateFolder(yearFolderId!, result.docketDisplayNumber));
+  const folderId = await googleStage('CREATE_GOOGLE_CASE_FOLDER', 'find or create Google case folder', () => findOrCreateFolder(typeFolderId, result.docketDisplayNumber));
   logStage('CREATE_GOOGLE_CASE_FOLDER', `Google folder id = ${folderId}`);
-  const ready = await admin.from('case_drive_folders' as never).update({ folder_id: folderId, parent_folder_id: yearFolderId, status: 'READY', last_error: null, updated_at: new Date().toISOString() } as never).eq('case_id', result.caseId);
+  const ready = await admin.from('case_drive_folders' as never).update({ folder_id: folderId, parent_folder_id: typeFolderId, status: 'READY', last_error: null, updated_at: new Date().toISOString() } as never).eq('case_id', result.caseId);
   if (ready.error) throw dbFailure('UPDATE_CASE_FOLDER', 'mark case folder ready', 'case_drive_folders', 'update', ready.error);
   logStage('COMPLETE', 'Success');
   return { status: 'READY', folderCreated: true };
