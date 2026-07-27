@@ -5,11 +5,15 @@ import {
   getDocketRootFolderId,
   getConnectedDriveAccount,
   getFolderMetadata,
+  getDriveItemMetadata,
   getGoogleDriveEnvironmentStatus,
   GoogleDriveError,
   listFolderChildren,
+  renameDriveItem,
   renameFolder,
   trashFolder,
+  trashDriveItem,
+  uploadDriveFile,
   uploadDiagnosticTextFile,
 } from '@/lib/google-drive';
 import { getAuthenticatedSupabase } from '@/lib/supabase/server-user';
@@ -20,6 +24,31 @@ const DIAGNOSTIC_PREFIX = '.ocpgentri-diagnostic-';
 function maskedId(value: string) {
   if (value.length <= 8) return '••••••••';
   return `${value.slice(0, 5)}...${value.slice(-4)}`;
+}
+
+function validName(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const name = value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 200);
+  return name && name !== '.' && name !== '..' ? name : null;
+}
+
+async function assertInsideConfiguredRoot(itemId: string, allowRoot = true) {
+  const rootId = getDocketRootFolderId();
+  if (itemId === rootId) {
+    if (allowRoot) return await getDriveItemMetadata(itemId);
+    throw new Error('The configured root folder cannot be changed.');
+  }
+  let current = await getDriveItemMetadata(itemId);
+  const visited = new Set<string>([itemId]);
+  for (let depth = 0; depth < 100; depth += 1) {
+    const parentId = current.parents?.[0];
+    if (!parentId) break;
+    if (parentId === rootId) return current;
+    if (visited.has(parentId)) break;
+    visited.add(parentId);
+    current = await getDriveItemMetadata(parentId);
+  }
+  throw new Error('The selected item is outside the configured Drive root.');
 }
 
 function connectionFailure(error: unknown) {
@@ -67,9 +96,12 @@ export async function GET(request: Request) {
   try {
     const rootId = getDocketRootFolderId();
     const [root, account] = await Promise.all([getFolderMetadata(rootId), getConnectedDriveAccount()]);
-    const includeContents = new URL(request.url).searchParams.get('listRoot') === '1';
-    const rootContents = includeContents ? await listFolderChildren(rootId) : undefined;
-    return NextResponse.json({ data: { environment: getGoogleDriveEnvironmentStatus(), connection: { status: 'CONNECTED', account, rootName: root.name, maskedRootId: maskedId(rootId), rootContents } } });
+    const requestedFolderId = new URL(request.url).searchParams.get('folderId');
+    const includeContents = new URL(request.url).searchParams.get('listRoot') === '1' || Boolean(requestedFolderId);
+    const currentFolder = requestedFolderId ? await assertInsideConfiguredRoot(requestedFolderId) : root;
+    if ('mimeType' in currentFolder && currentFolder.mimeType !== 'application/vnd.google-apps.folder') throw new Error('The selected item is not a folder.');
+    const rootContents = includeContents ? await listFolderChildren(currentFolder.id) : undefined;
+    return NextResponse.json({ data: { environment: getGoogleDriveEnvironmentStatus(), connection: { status: 'CONNECTED', account, rootName: root.name, maskedRootId: maskedId(rootId), currentFolder: { id: currentFolder.id, name: currentFolder.name, isRoot: currentFolder.id === rootId }, rootContents } } });
   } catch (error) {
     return NextResponse.json({ data: { environment: getGoogleDriveEnvironmentStatus(), connection: connectionFailure(error) } });
   }
@@ -79,7 +111,24 @@ export async function POST(request: Request) {
   const authorization = await authorize(request);
   if ('error' in authorization) return authorization.error;
   try {
-    const body = await request.json().catch(() => ({})) as { action?: string; folderId?: string };
+    if (request.headers.get('content-type')?.includes('multipart/form-data')) {
+      const form = await request.formData();
+      const parentId = String(form.get('parentId') ?? '');
+      const file = form.get('file');
+      if (!(file instanceof File) || !parentId) return NextResponse.json({ error: { message: 'A file and parent folder are required.' } }, { status: 400 });
+      if (file.size > 5 * 1024 * 1024) return NextResponse.json({ error: { message: 'Diagnostic uploads are limited to 5 MB.' } }, { status: 413 });
+      await assertInsideConfiguredRoot(parentId);
+      const uploaded = await uploadDriveFile(parentId, validName(file.name) ?? 'upload', file.type || 'application/octet-stream', file);
+      return NextResponse.json({ data: { file: uploaded } }, { status: 201 });
+    }
+    const body = await request.json().catch(() => ({})) as { action?: string; folderId?: string; parentId?: string; name?: string };
+    if (body.action === 'createFolder') {
+      const name = validName(body.name);
+      if (!body.parentId || !name) return NextResponse.json({ error: { message: 'A parent folder and valid name are required.' } }, { status: 400 });
+      await assertInsideConfiguredRoot(body.parentId);
+      const id = await createFolder(body.parentId, name);
+      return NextResponse.json({ data: { folder: await getFolderMetadata(id) } }, { status: 201 });
+    }
     if (body.action === 'upload') {
       if (!body.folderId) return NextResponse.json({ error: { message: 'Diagnostic folder ID is required.' } }, { status: 400 });
       const folder = await readDiagnosticFolder(body.folderId);
@@ -97,7 +146,13 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   const authorization = await authorize(request);
   if ('error' in authorization) return authorization.error;
-  const body = await request.json().catch(() => null) as { folderId?: string } | null;
+  const body = await request.json().catch(() => null) as { folderId?: string; itemId?: string; name?: string } | null;
+  if (body?.itemId) {
+    const name = validName(body.name);
+    if (!name) return NextResponse.json({ error: { message: 'A valid name is required.' } }, { status: 400 });
+    try { await assertInsideConfiguredRoot(body.itemId, false); return NextResponse.json({ data: { item: await renameDriveItem(body.itemId, name) } }); }
+    catch (error) { return NextResponse.json({ error: { message: error instanceof Error ? error.message : 'Unable to rename item.' } }, { status: 400 }); }
+  }
   if (!body?.folderId) return NextResponse.json({ error: { message: 'Diagnostic folder ID is required.' } }, { status: 400 });
   try {
     const folder = await readDiagnosticFolder(body.folderId);
@@ -112,6 +167,11 @@ export async function DELETE(request: Request) {
   const authorization = await authorize(request);
   if ('error' in authorization) return authorization.error;
   const folderId = new URL(request.url).searchParams.get('folderId');
+  const itemId = new URL(request.url).searchParams.get('itemId');
+  if (itemId) {
+    try { await assertInsideConfiguredRoot(itemId, false); await trashDriveItem(itemId); return NextResponse.json({ data: { deleted: true } }); }
+    catch (error) { return NextResponse.json({ error: { message: error instanceof Error ? error.message : 'Unable to trash item.' } }, { status: 400 }); }
+  }
   if (!folderId) return NextResponse.json({ error: { message: 'Diagnostic folder ID is required.' } }, { status: 400 });
   try {
     const folder = await readDiagnosticFolder(folderId);

@@ -138,10 +138,13 @@ export async function listFolderChildren(folderId: string): Promise<DriveChildMe
   return body.files ?? [];
 }
 
-export async function uploadDiagnosticTextFile(folderId: string, name: string, contents: string) {
+export async function uploadDriveFile(folderId: string, name: string, mimeType: string, contents: Blob | string) {
   const boundary = `ocpgentri-${crypto.randomUUID()}`;
-  const metadata = JSON.stringify({ name, mimeType: 'text/plain', parents: [folderId] });
-  const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n${contents}\r\n--${boundary}--`;
+  const metadata = JSON.stringify({ name, mimeType, parents: [folderId] });
+  const body = new Blob([
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n`,
+    `--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`, contents, `\r\n--${boundary}--`,
+  ]);
   const token = await accessToken();
   const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink', {
     method: 'POST',
@@ -155,6 +158,28 @@ export async function uploadDiagnosticTextFile(folderId: string, name: string, c
     throw new GoogleDriveError(`Google Drive upload failed (${response.status}).`, 'DRIVE', code);
   }
   return response.json() as Promise<DriveChildMetadata>;
+}
+
+export async function uploadDiagnosticTextFile(folderId: string, name: string, contents: string) {
+  return uploadDriveFile(folderId, name, 'text/plain', contents);
+}
+
+export async function getDriveItemMetadata(itemId: string) {
+  const response = await driveFetch(`files/${encodeURIComponent(itemId)}?fields=id,name,mimeType,webViewLink,parents,trashed`);
+  return response.json() as Promise<DriveChildMetadata & { parents?: string[]; trashed?: boolean }>;
+}
+
+export async function renameDriveItem(itemId: string, name: string) {
+  const response = await driveFetch(`files/${encodeURIComponent(itemId)}?fields=id,name,mimeType,webViewLink`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }),
+  });
+  return response.json() as Promise<DriveChildMetadata>;
+}
+
+export async function trashDriveItem(itemId: string) {
+  await driveFetch(`files/${encodeURIComponent(itemId)}?fields=id`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ trashed: true }),
+  });
 }
 
 export async function renameFolder(folderId: string, name: string) {
