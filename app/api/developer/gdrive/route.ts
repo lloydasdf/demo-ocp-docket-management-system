@@ -3,16 +3,24 @@ import { NextResponse } from 'next/server';
 import {
   createFolder,
   getDocketRootFolderId,
+  getConnectedDriveAccount,
   getFolderMetadata,
   getGoogleDriveEnvironmentStatus,
   GoogleDriveError,
+  listFolderChildren,
   renameFolder,
   trashFolder,
+  uploadDiagnosticTextFile,
 } from '@/lib/google-drive';
 import { getAuthenticatedSupabase } from '@/lib/supabase/server-user';
 
 export const runtime = 'nodejs';
 const DIAGNOSTIC_PREFIX = '.ocpgentri-diagnostic-';
+
+function maskedId(value: string) {
+  if (value.length <= 8) return '••••••••';
+  return `${value.slice(0, 5)}...${value.slice(-4)}`;
+}
 
 function connectionFailure(error: unknown) {
   if (error instanceof GoogleDriveError) {
@@ -57,8 +65,11 @@ export async function GET(request: Request) {
   const authorization = await authorize(request);
   if ('error' in authorization) return authorization.error;
   try {
-    const root = await getFolderMetadata(getDocketRootFolderId());
-    return NextResponse.json({ data: { environment: getGoogleDriveEnvironmentStatus(), connection: { status: 'CONNECTED', rootName: root.name } } });
+    const rootId = getDocketRootFolderId();
+    const [root, account] = await Promise.all([getFolderMetadata(rootId), getConnectedDriveAccount()]);
+    const includeContents = new URL(request.url).searchParams.get('listRoot') === '1';
+    const rootContents = includeContents ? await listFolderChildren(rootId) : undefined;
+    return NextResponse.json({ data: { environment: getGoogleDriveEnvironmentStatus(), connection: { status: 'CONNECTED', account, rootName: root.name, maskedRootId: maskedId(rootId), rootContents } } });
   } catch (error) {
     return NextResponse.json({ data: { environment: getGoogleDriveEnvironmentStatus(), connection: connectionFailure(error) } });
   }
@@ -68,6 +79,13 @@ export async function POST(request: Request) {
   const authorization = await authorize(request);
   if ('error' in authorization) return authorization.error;
   try {
+    const body = await request.json().catch(() => ({})) as { action?: string; folderId?: string };
+    if (body.action === 'upload') {
+      if (!body.folderId) return NextResponse.json({ error: { message: 'Diagnostic folder ID is required.' } }, { status: 400 });
+      const folder = await readDiagnosticFolder(body.folderId);
+      const file = await uploadDiagnosticTextFile(folder.id, `ocpgentri-upload-test-${Date.now()}.txt`, 'OCPGenTri Google Drive upload diagnostic succeeded.');
+      return NextResponse.json({ data: { file } }, { status: 201 });
+    }
     const name = `${DIAGNOSTIC_PREFIX}${new Date().toISOString().replace(/[:.]/g, '-')}`;
     const id = await createFolder(getDocketRootFolderId(), name);
     return NextResponse.json({ data: { folder: await getFolderMetadata(id) } }, { status: 201 });

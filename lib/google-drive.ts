@@ -15,6 +15,8 @@ export interface DriveFile {
 }
 
 export type DriveFolderMetadata = { id: string; name: string; webViewLink: string | null; parents: string[] };
+export type DriveChildMetadata = { id: string; name: string; mimeType: string | null; webViewLink: string | null };
+export type DriveAccount = { emailAddress: string; displayName: string | null };
 
 export class GoogleDriveError extends Error {
   constructor(
@@ -113,6 +115,46 @@ export async function getFolderMetadata(folderId: string): Promise<DriveFolderMe
   const folder = await response.json() as Partial<DriveFolderMetadata>;
   if (!folder.id || !folder.name) throw new Error('Google Drive did not return folder metadata.');
   return { id: folder.id, name: folder.name, webViewLink: folder.webViewLink ?? null, parents: folder.parents ?? [] };
+}
+
+export async function getConnectedDriveAccount(): Promise<DriveAccount> {
+  const response = await driveFetch('about?fields=user(displayName,emailAddress)');
+  const body = await response.json() as { user?: { displayName?: string; emailAddress?: string } };
+  if (!body.user?.emailAddress) throw new Error('Google Drive did not return the connected account email.');
+  return { emailAddress: body.user.emailAddress, displayName: body.user.displayName ?? null };
+}
+
+export async function listFolderChildren(folderId: string): Promise<DriveChildMetadata[]> {
+  const query = `'${escapeQuery(folderId)}' in parents and trashed = false`;
+  const params = new URLSearchParams({
+    q: query,
+    fields: 'files(id,name,mimeType,webViewLink)',
+    orderBy: 'folder,name',
+    pageSize: '100',
+    spaces: 'drive',
+  });
+  const response = await driveFetch(`files?${params}`);
+  const body = await response.json() as { files?: DriveChildMetadata[] };
+  return body.files ?? [];
+}
+
+export async function uploadDiagnosticTextFile(folderId: string, name: string, contents: string) {
+  const boundary = `ocpgentri-${crypto.randomUUID()}`;
+  const metadata = JSON.stringify({ name, mimeType: 'text/plain', parents: [folderId] });
+  const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n--${boundary}\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n${contents}\r\n--${boundary}--`;
+  const token = await accessToken();
+  const response = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,webViewLink', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/related; boundary=${boundary}` },
+    body,
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    const responseBody = await response.json().catch(() => ({})) as { error?: { status?: string; errors?: Array<{ reason?: string }> } };
+    const code = sanitizedGoogleErrorCode(responseBody.error?.errors?.[0]?.reason || responseBody.error?.status, `http_${response.status}`);
+    throw new GoogleDriveError(`Google Drive upload failed (${response.status}).`, 'DRIVE', code);
+  }
+  return response.json() as Promise<DriveChildMetadata>;
 }
 
 export async function renameFolder(folderId: string, name: string) {
