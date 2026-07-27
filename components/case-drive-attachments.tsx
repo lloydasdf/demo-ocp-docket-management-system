@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Download, Folder, FolderPlus, Loader2, RefreshCw } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Download, Folder, FolderPlus, Loader2, RefreshCw } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -53,9 +53,10 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
   const [creating, setCreating] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [folderStack, setFolderStack] = useState<Array<{ id: string; name: string }>>([]);
+  const [folderCreated, setFolderCreated] = useState(false);
 
   const load = useCallback(async (folderId?: string) => {
-    setLoading(true); setError(null);
+    setLoading(true); setError(null); setFolderCreated(false);
     try {
       const { response, body } = await authenticatedRequest(caseId, folderId ? `files?folderId=${encodeURIComponent(folderId)}` : "files");
       if (!response.ok || !body.data) {
@@ -74,7 +75,12 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     try {
       const { response, body } = await authenticatedRequest(caseId, "retry", "POST");
       if (!response.ok || body.data?.drive?.status !== "READY") throw new Error(body.error?.message ?? "Google Drive folder creation failed.");
-      await load();
+      // A newly provisioned docket folder is empty by definition. Avoid an
+      // immediate redundant Drive listing; Refresh remains available on demand.
+      setCanCreate(false);
+      setDrive(null);
+      setFolderStack([]);
+      setFolderCreated(true);
     } catch (createError) { setError(createError instanceof Error ? createError.message : "Google Drive folder creation failed."); }
     finally { setCreating(false); }
   }
@@ -128,6 +134,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     </div>
     {loading && !drive ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Finding the docket folder and loading files…</div> : null}
     {creating ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Creating folder</div> : null}
+    {folderCreated ? <div className="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800"><CheckCircle2 className="h-6 w-6 motion-safe:animate-[bounce_600ms_ease-out_1]" /><div><p className="font-medium">Folder created</p><p className="text-sm">The new Google Drive docket folder is empty.</p></div></div> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />Create GDrive folder</Button> : null}</AlertDescription></Alert> : null}
     {drive && !loading ? drive.files.length ? <div className="divide-y rounded-lg border">{drive.files.map((file) => { const isFolder = file.mimeType === "application/vnd.google-apps.folder"; return <div key={file.id} className="flex items-center justify-between gap-3 p-3"><div className="min-w-0"><p className="flex items-center gap-2 truncate font-medium">{isFolder ? <Folder className="h-4 w-4 shrink-0" /> : null}{file.name}</p><p className="text-xs text-muted-foreground">{isFolder ? "Folder" : fileSize(file.size)}{file.modifiedTime ? ` • Updated ${new Date(file.modifiedTime).toLocaleString()}` : ""}</p></div><div className="flex shrink-0 gap-1">{isFolder ? <Button variant="outline" size="sm" onClick={() => browseFolder(file)}>Browse</Button> : <Button variant="ghost" size="sm" onClick={() => void downloadFile(file)} disabled={downloadingId === file.id} aria-label={`Download ${file.name}`}>{downloadingId === file.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</Button>}</div></div>; })}</div> : <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">This Google Drive folder is currently empty.</div> : null}
   </div>;
