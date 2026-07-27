@@ -21,7 +21,6 @@ import {
   addAddressType,
   addCaseClassification,
   addParticipantRole,
-  createNewDocketEntry,
   getAddressTypes,
   getCaseStatuses,
   getCaseClassifications,
@@ -47,6 +46,7 @@ import {
   type OrganizationDetailsSearchRow,
   type PersonDetailsSearchRow,
 } from '@/lib/supabase/queries';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { TableRow } from '@/lib/supabase/types';
 
 type LookupState = {
@@ -1165,17 +1165,42 @@ export default function NewDocket() {
       })),
     };
 
-    const result = await createNewDocketEntry(payload);
+    const supabase = await getSupabaseBrowserClient();
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    const idempotencyStorageKey = `${newDocketDraftStorageKey}:submission-id`;
+    const idempotencyKey = window.localStorage.getItem(idempotencyStorageKey) ?? crypto.randomUUID();
+    window.localStorage.setItem(idempotencyStorageKey, idempotencyKey);
+    let response: Response | null = null;
+    try {
+      response = accessToken ? await fetch('/api/dockets', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ payload, idempotencyKey }),
+      }) : null;
+    } catch {
+      setIsSubmitting(false);
+      setMessage({ type: 'error', text: 'The server response could not be confirmed. Select Save again to safely retry this same submission.' });
+      return;
+    }
+    const result = response ? await response.json() as {
+      data?: { caseId: number; docketDisplayNumber: string; drive: { status: string } };
+      error?: { message?: string };
+    } : { error: { message: 'Your session has expired. Please sign in again.' } };
     setIsSubmitting(false);
 
-    if (result.error) {
-      setMessage({ type: 'error', text: result.error.message });
+    if (!response?.ok || !result.data) {
+      setMessage({ type: 'error', text: result.error?.message ?? 'Unable to create the docket.' });
       return;
     }
 
+    const created = result.data;
     window.localStorage.removeItem(newDocketDraftStorageKey);
-    setMessage({ type: 'success', text: `Docket ${result.data.docketDisplayNumber} created as case #${result.data.caseId}.`, caseId: result.data.caseId });
-    router.push(`/cases/${result.data.caseId}`);
+    window.localStorage.removeItem(idempotencyStorageKey);
+    const driveWarning = created.drive.status === 'READY' ? '' : ' The docket was saved, but its Google Drive folder could not be created. You can safely continue without submitting it again.';
+    setMessage({ type: 'success', text: `Docket ${created.docketDisplayNumber} created as case #${created.caseId}.${driveWarning}`, caseId: created.caseId });
+    if (created.drive.status === 'READY') router.push(`/cases/${created.caseId}`);
+    else window.setTimeout(() => router.push(`/cases/${created.caseId}`), 3000);
   };
 
 
