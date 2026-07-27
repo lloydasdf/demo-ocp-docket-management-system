@@ -171,6 +171,22 @@ export async function getDriveItemMetadata(itemId: string) {
   return response.json() as Promise<DriveChildMetadata & { parents?: string[]; trashed?: boolean }>;
 }
 
+export async function isDriveItemInsideFolder(itemId: string, trustedFolderId: string) {
+  if (itemId === trustedFolderId) return true;
+  let currentId = itemId;
+  const visited = new Set<string>();
+  for (let depth = 0; depth < 100; depth += 1) {
+    if (visited.has(currentId)) return false;
+    visited.add(currentId);
+    const metadata = await getDriveItemMetadata(currentId);
+    const parents = metadata.parents ?? [];
+    if (parents.includes(trustedFolderId)) return true;
+    if (parents.length !== 1) return false;
+    currentId = parents[0];
+  }
+  return false;
+}
+
 const GOOGLE_EXPORTS: Record<string, { mimeType: string; extension: string }> = {
   'application/vnd.google-apps.document': { mimeType: 'application/pdf', extension: '.pdf' },
   'application/vnd.google-apps.spreadsheet': { mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', extension: '.xlsx' },
@@ -180,7 +196,7 @@ const GOOGLE_EXPORTS: Record<string, { mimeType: string; extension: string }> = 
 
 export async function downloadDriveFile(fileId: string, expectedParentId: string) {
   const metadata = await getDriveItemMetadata(fileId);
-  if (!(metadata.parents ?? []).includes(expectedParentId)) throw new Error('The requested file is outside the trusted case folder.');
+  if (!(await isDriveItemInsideFolder(fileId, expectedParentId))) throw new Error('The requested file is outside the trusted case folder.');
   const googleExport = metadata.mimeType ? GOOGLE_EXPORTS[metadata.mimeType] : undefined;
   const response = googleExport
     ? await driveFetch(`files/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(googleExport.mimeType)}`)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Download, ExternalLink, FolderPlus, Loader2, RefreshCw } from "lucide-react";
+import { ArrowLeft, Download, ExternalLink, Folder, FolderPlus, Loader2, RefreshCw } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,8 @@ type DriveFile = {
 type DriveState = {
   files: DriveFile[];
   scannedAt: string;
-  folder: { name: string; webViewLink: string | null };
+  folder: { id: string; name: string; webViewLink: string | null };
+  currentFolder: { id: string; name: string; webViewLink: string | null };
 };
 
 function fileSize(value: string | null) {
@@ -31,7 +32,7 @@ function fileSize(value: string | null) {
   return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 }
 
-async function authenticatedRequest(caseId: number, path: "files" | "retry", method = "GET") {
+async function authenticatedRequest(caseId: number, path: string, method = "GET") {
   const supabase = await getSupabaseBrowserClient();
   const { data } = await supabase.auth.getSession();
   if (!data.session?.access_token) throw new Error("Your session has expired.");
@@ -51,11 +52,12 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [folderStack, setFolderStack] = useState<Array<{ id: string; name: string }>>([]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (folderId?: string) => {
     setLoading(true); setError(null);
     try {
-      const { response, body } = await authenticatedRequest(caseId, "files");
+      const { response, body } = await authenticatedRequest(caseId, folderId ? `files?folderId=${encodeURIComponent(folderId)}` : "files");
       if (!response.ok || !body.data) {
         setCanCreate(Boolean(body.error?.canCreate));
         throw new Error(body.error?.message ?? "Unable to read Google Drive attachments.");
@@ -99,16 +101,35 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     finally { setDownloadingId(null); }
   }
 
+  function browseFolder(folder: DriveFile) {
+    if (!drive) return;
+    setFolderStack((items) => [...items, { id: drive.currentFolder.id, name: drive.currentFolder.name }]);
+    void load(folder.id);
+  }
+
+  function browseBack() {
+    const parent = folderStack[folderStack.length - 1];
+    if (!parent) return;
+    setFolderStack((items) => items.slice(0, -1));
+    void load(parent.id);
+  }
+
+  const nestedLocation = drive && drive.currentFolder.id !== drive.folder.id
+    ? [...folderStack.slice(1).map((folder) => folder.name), drive.currentFolder.name]
+    : [];
+
   return <div className="space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <p className="text-sm text-muted-foreground">Location: <strong>{docketYear ?? "Unknown year"}</strong> / <strong>{docketType ?? "Unknown type"}</strong> / <strong>{docketNumber ?? "Unknown docket"}</strong></p>
+      <p className="text-sm text-muted-foreground">Location: <strong>{docketYear ?? "Unknown year"}</strong> / <strong>{docketType ?? "Unknown type"}</strong> / <strong>{docketNumber ?? "Unknown docket"}</strong>{nestedLocation.map((name, index) => <span key={`${name}-${index}`}> / <strong>{name}</strong></span>)}</p>
       <div className="flex gap-2">
-        {drive?.folder.webViewLink ? <Button variant="outline" asChild><a href={drive.folder.webViewLink} target="_blank" rel="noreferrer">Open folder<ExternalLink className="ml-2 h-4 w-4" /></a></Button> : null}
-        <Button variant="outline" onClick={() => void load()} disabled={loading || creating}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</Button>
+        {folderStack.length ? <Button variant="outline" onClick={browseBack} disabled={loading}><ArrowLeft className="mr-2 h-4 w-4" />Back</Button> : null}
+        {drive?.currentFolder.webViewLink ? <Button variant="outline" asChild><a href={drive.currentFolder.webViewLink} target="_blank" rel="noreferrer">Open folder<ExternalLink className="ml-2 h-4 w-4" /></a></Button> : null}
+        <Button variant="outline" onClick={() => void load(drive?.currentFolder.id)} disabled={loading || creating}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</Button>
       </div>
     </div>
     {loading && !drive ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Finding the docket folder and loading files…</div> : null}
-    {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />{creating ? "Creating year, type, and docket folders…" : "Create GDrive folder"}</Button> : null}</AlertDescription></Alert> : null}
-    {drive && !loading ? drive.files.length ? <div className="divide-y rounded-lg border">{drive.files.map((file) => <div key={file.id} className="flex items-center justify-between gap-3 p-3"><div className="min-w-0"><p className="truncate font-medium">{file.name}</p><p className="text-xs text-muted-foreground">{fileSize(file.size)}{file.modifiedTime ? ` • Updated ${new Date(file.modifiedTime).toLocaleString()}` : ""}</p></div><div className="flex shrink-0 gap-1"><Button variant="ghost" size="sm" onClick={() => void downloadFile(file)} disabled={downloadingId === file.id} aria-label={`Download ${file.name}`}>{downloadingId === file.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</Button>{file.webViewLink ? <Button variant="outline" size="sm" asChild><a href={file.webViewLink} target="_blank" rel="noreferrer">Open file<ExternalLink className="ml-2 h-4 w-4" /></a></Button> : null}</div></div>)}</div> : <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">The Google Drive docket folder is connected and currently empty.</div> : null}
+    {creating ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Creating folder</div> : null}
+    {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />Create GDrive folder</Button> : null}</AlertDescription></Alert> : null}
+    {drive && !loading ? drive.files.length ? <div className="divide-y rounded-lg border">{drive.files.map((file) => { const isFolder = file.mimeType === "application/vnd.google-apps.folder"; return <div key={file.id} className="flex items-center justify-between gap-3 p-3"><div className="min-w-0"><p className="flex items-center gap-2 truncate font-medium">{isFolder ? <Folder className="h-4 w-4 shrink-0" /> : null}{file.name}</p><p className="text-xs text-muted-foreground">{isFolder ? "Folder" : fileSize(file.size)}{file.modifiedTime ? ` • Updated ${new Date(file.modifiedTime).toLocaleString()}` : ""}</p></div><div className="flex shrink-0 gap-1">{isFolder ? <Button variant="outline" size="sm" onClick={() => browseFolder(file)}>Open folder</Button> : <><Button variant="ghost" size="sm" onClick={() => void downloadFile(file)} disabled={downloadingId === file.id} aria-label={`Download ${file.name}`}>{downloadingId === file.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</Button>{file.webViewLink ? <Button variant="outline" size="sm" asChild><a href={file.webViewLink} target="_blank" rel="noreferrer">Open file<ExternalLink className="ml-2 h-4 w-4" /></a></Button> : null}</>}</div></div>; })}</div> : <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">This Google Drive folder is currently empty.</div> : null}
   </div>;
 }
