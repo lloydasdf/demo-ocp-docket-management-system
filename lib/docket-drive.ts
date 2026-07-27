@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { findOrCreateFolder, getDocketRootFolderId, GoogleDriveError } from '@/lib/google-drive';
+import { findFolder, findOrCreateFolder, getDocketRootFolderId, GoogleDriveError } from '@/lib/google-drive';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 
 export type DocketResult = { caseId: number; docketYear: number; docketDisplayNumber: string } & Record<string, unknown>;
@@ -121,7 +121,9 @@ export async function provisionDriveFolder(result: DocketResult) {
   const loadedYear = await admin.from('docket_year_drive_folders' as never).select('folder_id,status').eq('docket_year', result.docketYear).eq('root_folder_id', rootFolderId).maybeSingle();
   if (loadedYear.error) throw dbFailure('LOAD_YEAR_FOLDER', 'load year folder mapping', 'docket_year_drive_folders', 'select', loadedYear.error);
   logStage('LOAD_YEAR_FOLDER', 'Success');
-  let yearFolderId = (loadedYear.data as unknown as { folder_id?: string; status?: string } | null)?.folder_id ?? null;
+  const mappedYearFolderId = (loadedYear.data as unknown as { folder_id?: string; status?: string } | null)?.folder_id ?? null;
+  let yearFolderId = await googleStage('LOAD_YEAR_FOLDER', 'find Google year folder inside configured root', () => findFolder(rootFolderId, String(result.docketYear)));
+  if (mappedYearFolderId && !yearFolderId) logStage('LOAD_YEAR_FOLDER', 'Database mapping is stale; Google year folder was not found');
 
   if (!yearFolderId) {
     logStage('UPSERT_YEAR_FOLDER', 'Starting');
@@ -133,6 +135,11 @@ export async function provisionDriveFolder(result: DocketResult) {
     const yearReady = await admin.from('docket_year_drive_folders' as never).update({ folder_id: yearFolderId, status: 'READY', updated_at: new Date().toISOString() } as never).eq('docket_year', result.docketYear).eq('root_folder_id', rootFolderId);
     if (yearReady.error) throw dbFailure('UPDATE_YEAR_FOLDER', 'mark year folder ready', 'docket_year_drive_folders', 'update', yearReady.error);
     logStage('UPDATE_YEAR_FOLDER', 'Success');
+  } else {
+    logStage('UPSERT_YEAR_FOLDER', 'Starting');
+    const yearReady = await admin.from('docket_year_drive_folders' as never).upsert({ docket_year: result.docketYear, root_folder_id: rootFolderId, folder_id: yearFolderId, status: 'READY', updated_at: new Date().toISOString() } as never, { onConflict: 'docket_year,root_folder_id' });
+    if (yearReady.error) throw dbFailure('UPSERT_YEAR_FOLDER', 'map existing Google year folder', 'docket_year_drive_folders', 'upsert', yearReady.error);
+    logStage('UPSERT_YEAR_FOLDER', 'Success');
   }
 
   logStage('UPDATE_CASE_FOLDER', 'Starting');

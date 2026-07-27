@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ExternalLink, Printer } from "lucide-react";
 
 import { CaseTimeline } from "@/components/case-timeline";
+import { CaseDriveAttachments } from "@/components/case-drive-attachments";
 import { useCurrentUserRole } from "@/hooks/use-current-user-role";
 import { canShowCaseManagementActions as canShowCaseManagementActionsForRole, canViewLinkedDocket } from "@/lib/auth/ui-permissions";
 import { StageBadge, StatusBadge } from "@/components/status-badge";
@@ -2341,62 +2342,11 @@ export default function CaseDetailsPage() {
                   <CardHeader>
                     <CardTitle>Attachments</CardTitle>
                     <CardDescription>
-                      Google Drive folder and indexed file records, when
-                      available.
+                      Files are loaded directly from this case&apos;s Google Drive docket folder.
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-4">
-                    {data.details.gdrive_folder_link ? (
-                      <Button variant="outline" asChild>
-                        <a
-                          href={data.details.gdrive_folder_link}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Open Google Drive folder
-                          <ExternalLink className="ml-2 h-4 w-4" />
-                        </a>
-                      </Button>
-                    ) : null}
-
-                    {data.attachments.length === 0 ? (
-                      <SectionEmpty>
-                        Attachments integration not yet connected.
-                      </SectionEmpty>
-                    ) : (
-                      <div className="space-y-3">
-                        {data.attachments.map((attachment) => (
-                          <div
-                            key={attachment.id}
-                            className="rounded-lg border p-3 text-sm"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="truncate font-medium">
-                                  {attachment.file_name}
-                                </p>
-                                <p className="text-muted-foreground">
-                                  {formatFileSize(attachment.file_size_bytes)} •{" "}
-                                  {attachment.file_status}
-                                </p>
-                              </div>
-                              {attachment.web_view_link ? (
-                                <Button variant="ghost" size="sm" asChild>
-                                  <a
-                                    href={attachment.web_view_link}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    aria-label={`Open ${attachment.file_name}`}
-                                  >
-                                    <ExternalLink className="h-4 w-4" />
-                                  </a>
-                                </Button>
-                              ) : null}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                  <CardContent>
+                    <CaseDriveAttachments caseId={caseId} docketYear={data.details.docket_year} docketNumber={data.details.docket_display_number} />
                   </CardContent>
                 </Card>
               </div>

@@ -26,6 +26,12 @@ export async function POST(request: Request, context: { params: Promise<{ caseId
   const row = data as unknown as { id: number; docket_year: number; docket_display_number: string };
   const docket: DocketResult = { caseId: row.id, docketYear: row.docket_year, docketDisplayNumber: row.docket_display_number };
 
+  // Force provisioning to verify/recreate the expected year/docket path rather
+  // than short-circuiting on a stale READY database mapping.
+  const reset = await getSupabaseAdminClient().from('case_drive_folders' as never)
+    .update({ status: 'PENDING', last_error: null, updated_at: new Date().toISOString() } as never).eq('case_id', caseId);
+  if (reset.error) return NextResponse.json({ error: { code: reset.error.code, message: 'Unable to prepare the Drive folder mapping for creation.' } }, { status: 500 });
+
   try {
     const drive = await provisionDriveFolder(docket);
     return NextResponse.json({ data: { caseId, drive } });
