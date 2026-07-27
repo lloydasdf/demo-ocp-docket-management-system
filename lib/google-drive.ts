@@ -21,6 +21,7 @@ export class GoogleDriveError extends Error {
     message: string,
     public readonly stage: 'CONFIGURATION' | 'OAUTH' | 'DRIVE',
     public readonly code?: string,
+    public readonly description?: string,
   ) {
     super(message);
     this.name = 'GoogleDriveError';
@@ -31,6 +32,20 @@ function sanitizedGoogleErrorCode(value: unknown, fallback: string) {
   if (typeof value !== 'string') return fallback;
   const code = value.trim().toLowerCase();
   return /^[a-z0-9][a-z0-9_.-]{0,63}$/.test(code) ? code : fallback;
+}
+
+function sanitizedGoogleErrorDescription(value: unknown) {
+  if (typeof value !== 'string') return undefined;
+  let safeValue = value;
+  for (const secret of [process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET, process.env.GOOGLE_REFRESH_TOKEN]) {
+    if (secret) safeValue = safeValue.split(secret).join('[redacted]');
+  }
+  const description = safeValue
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240);
+  return description || undefined;
 }
 
 function required(name: 'GOOGLE_CLIENT_ID' | 'GOOGLE_CLIENT_SECRET' | 'GOOGLE_REFRESH_TOKEN' | 'GOOGLE_DRIVE_DOCKET_ROOT_FOLDER_ID') {
@@ -51,12 +66,15 @@ async function accessToken() {
     }),
     cache: 'no-store',
   });
-  const body = await response.json().catch(() => ({})) as { access_token?: string; error?: string };
+  const body = await response.json().catch(() => ({})) as { access_token?: string; error?: string; error_description?: string };
   if (!response.ok) {
-    // Only Google's short machine-readable code is retained. Never forward the
-    // OAuth response description, request body, client credentials, or token.
+    // Retain only a strict machine-readable code and, in development, a short
+    // sanitized description. Never forward request data, credentials, or tokens.
     const code = sanitizedGoogleErrorCode(body.error, `http_${response.status}`);
-    throw new GoogleDriveError(`Google OAuth request failed (${response.status}).`, 'OAUTH', code);
+    const description = process.env.NODE_ENV === 'development'
+      ? sanitizedGoogleErrorDescription(body.error_description)
+      : undefined;
+    throw new GoogleDriveError(`Google OAuth request failed (${response.status}).`, 'OAUTH', code, description);
   }
   if (!body.access_token) throw new GoogleDriveError('Google OAuth response did not contain an access token.', 'OAUTH', 'missing_access_token');
   return body.access_token;

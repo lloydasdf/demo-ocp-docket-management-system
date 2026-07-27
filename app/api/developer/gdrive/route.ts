@@ -28,6 +28,7 @@ function connectionFailure(error: unknown) {
       // This is a sanitized machine-readable code (for example,
       // "invalid_grant"), never an OAuth response body or credential.
       code: error.code,
+      description: process.env.NODE_ENV === 'development' ? error.description : undefined,
       message: error.message,
       suggestion: (error.code && suggestions[error.code]) || (error.stage === 'OAUTH'
         ? 'Re-authorize Google Drive and replace the refresh token, then restart the Next.js server.'
