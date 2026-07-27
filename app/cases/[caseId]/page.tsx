@@ -2341,9 +2341,6 @@ export default function CaseDetailsPage() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Attachments</CardTitle>
-                    <CardDescription>
-                      Files are loaded directly from this case&apos;s Google Drive docket folder.
-                    </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <CaseDriveAttachments caseId={caseId} docketYear={data.details.docket_year} docketType={data.details.docket_type_prefix} docketNumber={data.details.docket_display_number} />
