@@ -5,6 +5,7 @@ import {
   getDocketRootFolderId,
   getFolderMetadata,
   getGoogleDriveEnvironmentStatus,
+  GoogleDriveError,
   renameFolder,
   trashFolder,
 } from '@/lib/google-drive';
@@ -12,6 +13,27 @@ import { getAuthenticatedSupabase } from '@/lib/supabase/server-user';
 
 export const runtime = 'nodejs';
 const DIAGNOSTIC_PREFIX = '.ocpgentri-diagnostic-';
+
+function connectionFailure(error: unknown) {
+  if (error instanceof GoogleDriveError) {
+    const suggestions: Record<string, string> = {
+      invalid_grant: 'Generate a new refresh token. It may be expired, revoked, issued to a different OAuth client, or invalidated after the Google account password changed.',
+      invalid_client: 'Verify that GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET belong to the same OAuth client used to issue the refresh token.',
+      insufficientPermissions: 'Re-authorize the refresh token with a Google Drive scope that permits folder and file access.',
+      notFound: 'Verify the root folder ID and share that folder with the Google account that authorized the refresh token.',
+    };
+    return {
+      status: 'FAILED',
+      stage: error.stage,
+      code: error.code,
+      message: error.message,
+      suggestion: (error.code && suggestions[error.code]) || (error.stage === 'OAUTH'
+        ? 'Re-authorize Google Drive and replace the refresh token, then restart the Next.js server.'
+        : 'Confirm the Drive API is enabled and the authorized Google account can access the configured root folder.'),
+    };
+  }
+  return { status: 'FAILED', stage: 'UNKNOWN', message: error instanceof Error ? error.message : 'Connection failed.' };
+}
 
 async function authorize(request: Request) {
   const auth = await getAuthenticatedSupabase(request);
@@ -35,7 +57,7 @@ export async function GET(request: Request) {
     const root = await getFolderMetadata(getDocketRootFolderId());
     return NextResponse.json({ data: { environment: getGoogleDriveEnvironmentStatus(), connection: { status: 'CONNECTED', rootName: root.name } } });
   } catch (error) {
-    return NextResponse.json({ data: { environment: getGoogleDriveEnvironmentStatus(), connection: { status: 'FAILED', message: error instanceof Error ? error.message : 'Connection failed.' } } });
+    return NextResponse.json({ data: { environment: getGoogleDriveEnvironmentStatus(), connection: connectionFailure(error) } });
   }
 }
 

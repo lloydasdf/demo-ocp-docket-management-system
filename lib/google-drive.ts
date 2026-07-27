@@ -16,9 +16,20 @@ export interface DriveFile {
 
 export type DriveFolderMetadata = { id: string; name: string; webViewLink: string | null; parents: string[] };
 
+export class GoogleDriveError extends Error {
+  constructor(
+    message: string,
+    public readonly stage: 'CONFIGURATION' | 'OAUTH' | 'DRIVE',
+    public readonly code?: string,
+  ) {
+    super(message);
+    this.name = 'GoogleDriveError';
+  }
+}
+
 function required(name: 'GOOGLE_CLIENT_ID' | 'GOOGLE_CLIENT_SECRET' | 'GOOGLE_REFRESH_TOKEN' | 'GOOGLE_DRIVE_DOCKET_ROOT_FOLDER_ID') {
   const value = process.env[name];
-  if (!value) throw new Error(`Missing server Google Drive configuration: ${name}`);
+  if (!value) throw new GoogleDriveError(`Missing server Google Drive configuration: ${name}`, 'CONFIGURATION', 'missing_configuration');
   return value;
 }
 
@@ -34,9 +45,13 @@ async function accessToken() {
     }),
     cache: 'no-store',
   });
-  if (!response.ok) throw new Error(`Google OAuth request failed (${response.status}).`);
-  const body = await response.json() as { access_token?: string };
-  if (!body.access_token) throw new Error('Google OAuth response did not contain an access token.');
+  const body = await response.json().catch(() => ({})) as { access_token?: string; error?: string; error_description?: string };
+  if (!response.ok) {
+    const code = body.error || `http_${response.status}`;
+    const description = body.error_description ? ` ${body.error_description}` : '';
+    throw new GoogleDriveError(`Google OAuth request failed (${response.status}, ${code}).${description}`, 'OAUTH', code);
+  }
+  if (!body.access_token) throw new GoogleDriveError('Google OAuth response did not contain an access token.', 'OAUTH', 'missing_access_token');
   return body.access_token;
 }
 
@@ -47,7 +62,12 @@ async function driveFetch(path: string, init?: RequestInit) {
     headers: { authorization: `Bearer ${token}`, ...(init?.headers ?? {}) },
     cache: 'no-store',
   });
-  if (!response.ok) throw new Error(`Google Drive request failed (${response.status}).`);
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: { status?: string; message?: string; errors?: Array<{ reason?: string }> } };
+    const code = body.error?.errors?.[0]?.reason || body.error?.status || `http_${response.status}`;
+    const detail = body.error?.message ? ` ${body.error.message}` : '';
+    throw new GoogleDriveError(`Google Drive request failed (${response.status}, ${code}).${detail}`, 'DRIVE', code);
+  }
   return response;
 }
 
