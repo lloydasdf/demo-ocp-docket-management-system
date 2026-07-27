@@ -25,6 +25,8 @@ function connectionFailure(error: unknown) {
     return {
       status: 'FAILED',
       stage: error.stage,
+      // This is a sanitized machine-readable code (for example,
+      // "invalid_grant"), never an OAuth response body or credential.
       code: error.code,
       message: error.message,
       suggestion: (error.code && suggestions[error.code]) || (error.stage === 'OAUTH'

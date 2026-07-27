@@ -27,6 +27,12 @@ export class GoogleDriveError extends Error {
   }
 }
 
+function sanitizedGoogleErrorCode(value: unknown, fallback: string) {
+  if (typeof value !== 'string') return fallback;
+  const code = value.trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_.-]{0,63}$/.test(code) ? code : fallback;
+}
+
 function required(name: 'GOOGLE_CLIENT_ID' | 'GOOGLE_CLIENT_SECRET' | 'GOOGLE_REFRESH_TOKEN' | 'GOOGLE_DRIVE_DOCKET_ROOT_FOLDER_ID') {
   const value = process.env[name];
   if (!value) throw new GoogleDriveError(`Missing server Google Drive configuration: ${name}`, 'CONFIGURATION', 'missing_configuration');
@@ -45,11 +51,12 @@ async function accessToken() {
     }),
     cache: 'no-store',
   });
-  const body = await response.json().catch(() => ({})) as { access_token?: string; error?: string; error_description?: string };
+  const body = await response.json().catch(() => ({})) as { access_token?: string; error?: string };
   if (!response.ok) {
-    const code = body.error || `http_${response.status}`;
-    const description = body.error_description ? ` ${body.error_description}` : '';
-    throw new GoogleDriveError(`Google OAuth request failed (${response.status}, ${code}).${description}`, 'OAUTH', code);
+    // Only Google's short machine-readable code is retained. Never forward the
+    // OAuth response description, request body, client credentials, or token.
+    const code = sanitizedGoogleErrorCode(body.error, `http_${response.status}`);
+    throw new GoogleDriveError(`Google OAuth request failed (${response.status}).`, 'OAUTH', code);
   }
   if (!body.access_token) throw new GoogleDriveError('Google OAuth response did not contain an access token.', 'OAUTH', 'missing_access_token');
   return body.access_token;
@@ -64,9 +71,8 @@ async function driveFetch(path: string, init?: RequestInit) {
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: { status?: string; message?: string; errors?: Array<{ reason?: string }> } };
-    const code = body.error?.errors?.[0]?.reason || body.error?.status || `http_${response.status}`;
-    const detail = body.error?.message ? ` ${body.error.message}` : '';
-    throw new GoogleDriveError(`Google Drive request failed (${response.status}, ${code}).${detail}`, 'DRIVE', code);
+    const code = sanitizedGoogleErrorCode(body.error?.errors?.[0]?.reason || body.error?.status, `http_${response.status}`);
+    throw new GoogleDriveError(`Google Drive request failed (${response.status}).`, 'DRIVE', code);
   }
   return response;
 }
