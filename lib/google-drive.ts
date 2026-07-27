@@ -14,6 +14,8 @@ export interface DriveFile {
   trashed: boolean;
 }
 
+export type DriveFolderMetadata = { id: string; name: string; webViewLink: string | null; parents: string[] };
+
 function required(name: 'GOOGLE_CLIENT_ID' | 'GOOGLE_CLIENT_SECRET' | 'GOOGLE_REFRESH_TOKEN' | 'GOOGLE_DRIVE_DOCKET_ROOT_FOLDER_ID') {
   const value = process.env[name];
   if (!value) throw new Error(`Missing server Google Drive configuration: ${name}`);
@@ -47,6 +49,39 @@ async function driveFetch(path: string, init?: RequestInit) {
   });
   if (!response.ok) throw new Error(`Google Drive request failed (${response.status}).`);
   return response;
+}
+
+export function getGoogleDriveEnvironmentStatus() {
+  const names = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN', 'GOOGLE_DRIVE_DOCKET_ROOT_FOLDER_ID'] as const;
+  return names.map((name) => {
+    const value = process.env[name] ?? '';
+    return {
+      name,
+      configured: Boolean(value),
+      maskedValue: value ? '[configured — value hidden]' : '',
+      source: 'process.env',
+    };
+  });
+}
+
+export async function getFolderMetadata(folderId: string): Promise<DriveFolderMetadata> {
+  const response = await driveFetch(`files/${encodeURIComponent(folderId)}?fields=id,name,webViewLink,parents`);
+  const folder = await response.json() as Partial<DriveFolderMetadata>;
+  if (!folder.id || !folder.name) throw new Error('Google Drive did not return folder metadata.');
+  return { id: folder.id, name: folder.name, webViewLink: folder.webViewLink ?? null, parents: folder.parents ?? [] };
+}
+
+export async function renameFolder(folderId: string, name: string) {
+  const response = await driveFetch(`files/${encodeURIComponent(folderId)}?fields=id,name,webViewLink,parents`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }),
+  });
+  return response.json() as Promise<DriveFolderMetadata>;
+}
+
+export async function trashFolder(folderId: string) {
+  await driveFetch(`files/${encodeURIComponent(folderId)}?fields=id`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ trashed: true }),
+  });
 }
 
 function escapeQuery(value: string) {

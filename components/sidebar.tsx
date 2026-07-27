@@ -12,6 +12,7 @@ import {
   LogOut,
   Users,
   BarChart3,
+  HardDrive,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -49,6 +50,13 @@ const navigation = [
     href: '/user-management',
     icon: Users,
     description: 'Manage application users and roles',
+  },
+  {
+    key: 'gdrive-configuration' as const,
+    name: 'GDrive Configuration',
+    href: '/developer/gdrive-configuration',
+    icon: HardDrive,
+    description: 'Test server Google Drive configuration',
   },
   {
     key: 'admin-reports' as const,
