@@ -1721,6 +1721,7 @@ export default function CaseDetailsPage() {
     useState<OverviewAction | null>(null);
   const [correctionParticipantId, setCorrectionParticipantId] = useState<number | null>(null);
   const [linkedDocketNumber, setLinkedDocketNumber] = useState<string | null>(null);
+  const [isAttachmentPreviewActive, setIsAttachmentPreviewActive] = useState(false);
   const loadCase = useCallback(async () => {
     if (!Number.isFinite(caseId)) {
       setErrorMessage("Invalid case id.");
@@ -1919,7 +1920,7 @@ export default function CaseDetailsPage() {
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
       <main className="min-w-0 flex-1 overflow-y-auto p-3 pt-16 md:p-8">
-        <div className="mx-auto flex w-full max-w-[900px] flex-col gap-4 md:gap-6">
+        <div className={`mx-auto flex w-full flex-col gap-4 transition-[max-width] md:gap-6 ${isAttachmentPreviewActive ? "max-w-[1600px]" : "max-w-[900px]"}`}>
           {isLoading ? (
             <Card>
               <CardContent className="py-10 text-center text-sm text-muted-foreground">
@@ -2343,7 +2344,7 @@ export default function CaseDetailsPage() {
                     <CardTitle>Attachments</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <CaseDriveAttachments caseId={caseId} docketYear={data.details.docket_year} docketType={data.details.docket_type_prefix} docketNumber={data.details.docket_display_number} />
+                    <CaseDriveAttachments caseId={caseId} docketYear={data.details.docket_year} docketType={data.details.docket_type_prefix} docketNumber={data.details.docket_display_number} onPreviewChange={setIsAttachmentPreviewActive} />
                   </CardContent>
                 </Card>
               </div>

@@ -1,21 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle2, Download, Folder, FolderPlus, Loader2, RefreshCw } from "lucide-react";
+import { ArrowLeft, CheckCircle2, FolderPlus, Loader2, RefreshCw } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
+import { AttachmentWorkspace, type PreviewFile } from "@/components/drive-preview";
 
-type DriveFile = {
-  id: string;
-  name: string;
-  mimeType: string | null;
-  webViewLink: string | null;
-  webContentLink: string | null;
-  size: string | null;
-  modifiedTime: string | null;
-};
+type DriveFile = PreviewFile;
 
 type DriveState = {
   files: DriveFile[];
@@ -23,14 +16,6 @@ type DriveState = {
   folder: { id: string; name: string; webViewLink: string | null };
   currentFolder: { id: string; name: string; webViewLink: string | null };
 };
-
-function fileSize(value: string | null) {
-  const bytes = value ? Number(value) : 0;
-  if (!Number.isFinite(bytes) || bytes <= 0) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-}
 
 async function authenticatedRequest(caseId: number, path: string, method = "GET") {
   const supabase = await getSupabaseBrowserClient();
@@ -45,7 +30,7 @@ async function authenticatedRequest(caseId: number, path: string, method = "GET"
   return { response, body };
 }
 
-export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNumber }: { caseId: number; docketYear: number | null; docketType: string | null; docketNumber: string | null }) {
+export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNumber, onPreviewChange }: { caseId: number; docketYear: number | null; docketType: string | null; docketNumber: string | null; onPreviewChange?: (active: boolean) => void }) {
   const [drive, setDrive] = useState<DriveState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [canCreate, setCanCreate] = useState(false);
@@ -85,9 +70,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     finally { setCreating(false); }
   }
 
-  async function downloadFile(file: DriveFile) {
-    setDownloadingId(file.id); setError(null);
-    try {
+  async function fetchFileBlob(file: DriveFile) {
       const supabase = await getSupabaseBrowserClient();
       const { data } = await supabase.auth.getSession();
       if (!data.session?.access_token) throw new Error("Your session has expired.");
@@ -96,8 +79,19 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
         const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
         throw new Error(body?.error?.message ?? "Unable to download the file.");
       }
-      const url = URL.createObjectURL(await response.blob());
-      const disposition = response.headers.get("content-disposition") ?? "";
+      return { blob: await response.blob(), disposition: response.headers.get("content-disposition") ?? "" };
+  }
+
+  async function loadPreviewBlob(file: DriveFile) {
+    return (await fetchFileBlob(file)).blob;
+  }
+
+  async function downloadFile(file: DriveFile) {
+    setDownloadingId(file.id); setError(null);
+    try {
+      const downloaded = await fetchFileBlob(file);
+      const url = URL.createObjectURL(downloaded.blob);
+      const disposition = downloaded.disposition;
       const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
       const downloadName = encodedName ? decodeURIComponent(encodedName) : file.name;
       const anchor = document.createElement("a");
@@ -136,6 +130,6 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     {creating ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Creating folder</div> : null}
     {folderCreated ? <div className="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800"><CheckCircle2 className="h-6 w-6 motion-safe:animate-[bounce_600ms_ease-out_1]" /><div><p className="font-medium">Folder created</p><p className="text-sm">The new Google Drive docket folder is empty.</p></div></div> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />Create GDrive folder</Button> : null}</AlertDescription></Alert> : null}
-    {drive && !loading ? drive.files.length ? <div className="divide-y rounded-lg border">{drive.files.map((file) => { const isFolder = file.mimeType === "application/vnd.google-apps.folder"; return <div key={file.id} className="flex items-center justify-between gap-3 p-3"><div className="min-w-0"><p className="flex items-center gap-2 truncate font-medium">{isFolder ? <Folder className="h-4 w-4 shrink-0" /> : null}{file.name}</p><p className="text-xs text-muted-foreground">{isFolder ? "Folder" : fileSize(file.size)}{file.modifiedTime ? ` • Updated ${new Date(file.modifiedTime).toLocaleString()}` : ""}</p></div><div className="flex shrink-0 gap-1">{isFolder ? <Button variant="outline" size="sm" onClick={() => browseFolder(file)}>Browse</Button> : <Button variant="ghost" size="sm" onClick={() => void downloadFile(file)} disabled={downloadingId === file.id} aria-label={`Download ${file.name}`}>{downloadingId === file.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</Button>}</div></div>; })}</div> : <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">This Google Drive folder is currently empty.</div> : null}
+    {drive && !loading ? <AttachmentWorkspace files={drive.files} downloadingId={downloadingId} onBrowse={browseFolder} onDownload={(file) => void downloadFile(file)} loadBlob={loadPreviewBlob} onPreviewChange={onPreviewChange} onError={setError} /> : null}
   </div>;
 }
