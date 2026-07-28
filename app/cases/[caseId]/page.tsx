@@ -1722,6 +1722,11 @@ export default function CaseDetailsPage() {
   const [correctionParticipantId, setCorrectionParticipantId] = useState<number | null>(null);
   const [linkedDocketNumber, setLinkedDocketNumber] = useState<string | null>(null);
   const [isAttachmentPreviewActive, setIsAttachmentPreviewActive] = useState(false);
+  const [attachmentPreviewWidth, setAttachmentPreviewWidth] = useState(48);
+  const handleAttachmentPreviewChange = useCallback((active: boolean, widthPercent?: number) => {
+    setIsAttachmentPreviewActive(active);
+    if (widthPercent) setAttachmentPreviewWidth(widthPercent);
+  }, []);
   const loadCase = useCallback(async () => {
     if (!Number.isFinite(caseId)) {
       setErrorMessage("Invalid case id.");
@@ -1919,7 +1924,7 @@ export default function CaseDetailsPage() {
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
-      <main className={`min-w-0 flex-1 overflow-y-auto p-3 pt-16 transition-[margin] duration-300 md:p-8 ${isAttachmentPreviewActive ? "lg:mr-[min(48vw,900px)]" : ""}`}>
+      <main style={isAttachmentPreviewActive ? { marginRight: `${attachmentPreviewWidth}vw` } : undefined} className="min-w-0 flex-1 overflow-y-auto p-3 pt-16 transition-[margin] duration-100 md:p-8 max-lg:!mr-0">
         <div className="mx-auto flex w-full max-w-[900px] flex-col gap-4 md:gap-6">
           {isLoading ? (
             <Card>
@@ -2344,7 +2349,7 @@ export default function CaseDetailsPage() {
                     <CardTitle>Attachments</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <CaseDriveAttachments caseId={caseId} docketYear={data.details.docket_year} docketType={data.details.docket_type_prefix} docketNumber={data.details.docket_display_number} onPreviewChange={setIsAttachmentPreviewActive} />
+                    <CaseDriveAttachments caseId={caseId} docketYear={data.details.docket_year} docketType={data.details.docket_type_prefix} docketNumber={data.details.docket_display_number} onPreviewChange={handleAttachmentPreviewChange} />
                   </CardContent>
                 </Card>
               </div>

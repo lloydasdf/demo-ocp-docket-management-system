@@ -30,7 +30,7 @@ async function authenticatedRequest(caseId: number, path: string, method = "GET"
   return { response, body };
 }
 
-export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNumber, onPreviewChange }: { caseId: number; docketYear: number | null; docketType: string | null; docketNumber: string | null; onPreviewChange?: (active: boolean) => void }) {
+export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNumber, onPreviewChange }: { caseId: number; docketYear: number | null; docketType: string | null; docketNumber: string | null; onPreviewChange?: (active: boolean, widthPercent?: number) => void }) {
   const [drive, setDrive] = useState<DriveState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [canCreate, setCanCreate] = useState(false);
