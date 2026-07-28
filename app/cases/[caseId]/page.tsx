@@ -1919,8 +1919,8 @@ export default function CaseDetailsPage() {
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
-      <main className="min-w-0 flex-1 overflow-y-auto p-3 pt-16 md:p-8">
-        <div className={`mx-auto flex w-full flex-col gap-4 transition-[max-width] md:gap-6 ${isAttachmentPreviewActive ? "max-w-[1600px]" : "max-w-[900px]"}`}>
+      <main className={`min-w-0 flex-1 overflow-y-auto p-3 pt-16 transition-[margin] duration-300 md:p-8 ${isAttachmentPreviewActive ? "lg:mr-[min(48vw,900px)]" : ""}`}>
+        <div className="mx-auto flex w-full max-w-[900px] flex-col gap-4 md:gap-6">
           {isLoading ? (
             <Card>
               <CardContent className="py-10 text-center text-sm text-muted-foreground">
