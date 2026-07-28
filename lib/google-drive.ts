@@ -167,8 +167,20 @@ export async function uploadDiagnosticTextFile(folderId: string, name: string, c
 }
 
 export async function getDriveItemMetadata(itemId: string) {
-  const response = await driveFetch(`files/${encodeURIComponent(itemId)}?fields=id,name,mimeType,webViewLink,parents,trashed`);
-  return response.json() as Promise<DriveChildMetadata & { parents?: string[]; trashed?: boolean }>;
+  const response = await driveFetch(`files/${encodeURIComponent(itemId)}?fields=id,name,mimeType,webViewLink,parents,trashed,modifiedTime,size`);
+  return response.json() as Promise<DriveChildMetadata & { parents?: string[]; trashed?: boolean; modifiedTime?: string; size?: string }>;
+}
+
+export async function updateDriveFileContent(fileId: string, contents: ArrayBuffer, mimeType: string) {
+  const token = await accessToken();
+  const endpoint = `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=media&keepRevisionForever=true&fields=id,name,mimeType,modifiedTime,size,md5Checksum`;
+  const response = await fetch(endpoint, { method: 'PATCH', headers: { authorization: `Bearer ${token}`, 'content-type': mimeType }, body: contents, cache: 'no-store' });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: { status?: string; errors?: Array<{ reason?: string }> } };
+    const code = sanitizedGoogleErrorCode(body.error?.errors?.[0]?.reason || body.error?.status, `http_${response.status}`);
+    throw new GoogleDriveError(`Google Drive update failed (${response.status}).`, 'DRIVE', code, undefined, response.status, `/upload/drive/v3/files/${encodeURIComponent(fileId)}`);
+  }
+  return response.json() as Promise<{ id: string; name: string; mimeType: string; modifiedTime?: string; size?: string; md5Checksum?: string }>;
 }
 
 export async function isDriveItemInsideFolder(itemId: string, trustedFolderId: string) {

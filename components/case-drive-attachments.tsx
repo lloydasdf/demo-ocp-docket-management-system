@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { AttachmentWorkspace, type PreviewFile } from "@/components/drive-preview";
+import type { OnlyOfficeSession } from "@/components/drive-preview/onlyoffice-editor";
 
 type DriveFile = PreviewFile;
 
@@ -86,6 +87,31 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     return (await fetchFileBlob(file)).blob;
   }
 
+  async function startDocumentEdit(file: DriveFile): Promise<OnlyOfficeSession> {
+    const supabase = await getSupabaseBrowserClient();
+    const { data } = await supabase.auth.getSession();
+    if (!data.session?.access_token) throw new Error("Your session has expired.");
+    const response = await fetch(`/api/cases/${caseId}/drive/edit/start`, { method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ fileId: file.id }) });
+    const body = await response.json() as { data?: OnlyOfficeSession; error?: { message?: string } };
+    if (!response.ok || !body.data) throw new Error(body.error?.message ?? "Unable to start the document editor.");
+    return body.data;
+  }
+
+  async function checkDocumentEditStatus(sessionId: string) {
+    const supabase = await getSupabaseBrowserClient(); const { data } = await supabase.auth.getSession();
+    if (!data.session?.access_token) throw new Error("Your session has expired.");
+    const response = await fetch(`/api/cases/${caseId}/drive/edit/${sessionId}/status`, { headers: { Authorization: `Bearer ${data.session.access_token}` }, cache: "no-store" });
+    const body = await response.json() as { data?: { status: string; last_error?: string | null }; error?: { message?: string } };
+    if (!response.ok || !body.data) throw new Error(body.error?.message ?? "Unable to read edit status.");
+    return body.data;
+  }
+
+  async function cancelDocumentEditSession(sessionId: string) {
+    const supabase = await getSupabaseBrowserClient(); const { data } = await supabase.auth.getSession();
+    if (!data.session?.access_token) return;
+    await fetch(`/api/cases/${caseId}/drive/edit/${sessionId}/status`, { method: "DELETE", headers: { Authorization: `Bearer ${data.session.access_token}` } });
+  }
+
   async function downloadFile(file: DriveFile) {
     setDownloadingId(file.id); setError(null);
     try {
@@ -130,6 +156,6 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     {creating ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Creating folder</div> : null}
     {folderCreated ? <div className="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800"><CheckCircle2 className="h-6 w-6 motion-safe:animate-[bounce_600ms_ease-out_1]" /><div><p className="font-medium">Folder created</p><p className="text-sm">The new Google Drive docket folder is empty.</p></div></div> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />Create GDrive folder</Button> : null}</AlertDescription></Alert> : null}
-    {drive && !loading ? <AttachmentWorkspace files={drive.files} downloadingId={downloadingId} onBrowse={browseFolder} onDownload={(file) => void downloadFile(file)} loadBlob={loadPreviewBlob} onPreviewChange={onPreviewChange} onError={setError} /> : null}
+    {drive && !loading ? <AttachmentWorkspace files={drive.files} downloadingId={downloadingId} onBrowse={browseFolder} onDownload={(file) => void downloadFile(file)} loadBlob={loadPreviewBlob} startEdit={startDocumentEdit} checkEditStatus={checkDocumentEditStatus} cancelEditSession={cancelDocumentEditSession} onDocumentSaved={() => void load(drive.currentFolder.id)} onPreviewChange={onPreviewChange} onError={setError} /> : null}
   </div>;
 }
