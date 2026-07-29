@@ -14,7 +14,7 @@ export interface DriveFile {
   trashed: boolean;
 }
 
-export type DriveFolderMetadata = { id: string; name: string; webViewLink: string | null; parents: string[] };
+export type DriveFolderMetadata = { id: string; name: string; webViewLink: string | null; parents: string[]; mimeType: string; trashed: boolean };
 export type DriveChildMetadata = { id: string; name: string; mimeType: string | null; webViewLink: string | null };
 export type DriveAccount = { emailAddress: string; displayName: string | null };
 
@@ -113,10 +113,12 @@ export function getGoogleDriveEnvironmentStatus() {
 }
 
 export async function getFolderMetadata(folderId: string): Promise<DriveFolderMetadata> {
-  const response = await driveFetch(`files/${encodeURIComponent(folderId)}?fields=id,name,webViewLink,parents`);
+  const response = await driveFetch(`files/${encodeURIComponent(folderId)}?fields=id,name,webViewLink,parents,mimeType,trashed`);
   const folder = await response.json() as Partial<DriveFolderMetadata>;
-  if (!folder.id || !folder.name) throw new Error('Google Drive did not return folder metadata.');
-  return { id: folder.id, name: folder.name, webViewLink: folder.webViewLink ?? null, parents: folder.parents ?? [] };
+  if (!folder.id || !folder.name || folder.mimeType !== FOLDER_MIME_TYPE || folder.trashed) {
+    throw new GoogleDriveError('The mapped Google Drive folder does not exist.', 'DRIVE', 'notFound', undefined, 404);
+  }
+  return { id: folder.id, name: folder.name, webViewLink: folder.webViewLink ?? null, parents: folder.parents ?? [], mimeType: folder.mimeType, trashed: false };
 }
 
 export async function getConnectedDriveAccount(): Promise<DriveAccount> {
