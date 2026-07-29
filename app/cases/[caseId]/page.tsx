@@ -1462,6 +1462,16 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
   ];
 
   const roleField = <FieldSelect label="Role" value={String(formData.roleId ?? "")} onChange={(value) => setValue("roleId", value)} options={participantRoles} optionLabel={(option) => option.display_label ?? option.code ?? String(option.id)} />;
+  const toggleNoMiddleName = (checked: boolean | "indeterminate") => {
+    const noMiddleName = checked === true;
+    setFormData((current) => {
+      if (noMiddleName) {
+        const previousMiddleName = current.middleName === "NMN" ? current.previousMiddleName : current.middleName;
+        return { ...current, noMiddleName: true, previousMiddleName: String(previousMiddleName ?? ""), middleName: "NMN" };
+      }
+      return { ...current, noMiddleName: false, middleName: String(current.previousMiddleName ?? "") };
+    });
+  };
   const renderEditor = () => mode ? <div className="space-y-3 rounded-lg border p-4">
     <h3 className="font-semibold">{mode === "main" ? "Participant name and details" : mode === "alias" ? "Alias" : mode === "address" ? "Address" : "Contact info"}</h3>
     {selected?.participant_kind !== "ORGANIZATION" && mode === "main" && legacyFullNameOnly ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.useStructuredName)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("useStructuredName", checked === true)} /> Convert legacy full name to structured name</label> : null}
@@ -1477,7 +1487,7 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
       {mode === "main" && selected?.participant_kind !== "ORGANIZATION" ? <>
         {formData.useStructuredName ? <>
           <FieldInput label="First Name" value={String(formData.firstName ?? "")} onChange={(v) => setValue("firstName", v)} />
-          <div><Label>Middle Name</Label><div className="relative"><Input className="pr-24" value={String(formData.middleName ?? "")} disabled={Boolean(formData.noMiddleName)} onChange={(event) => setValue("middleName", event.target.value)} /><label className="absolute inset-y-0 right-3 flex items-center gap-2 text-sm italic text-muted-foreground"><Checkbox checked={Boolean(formData.noMiddleName)} onCheckedChange={(checked: boolean | "indeterminate") => { const noMiddleName = checked === true; setFormData((current) => ({ ...current, noMiddleName, middleName: noMiddleName ? "NMN" : "" })); }} /><span>NMN</span></label></div></div>
+          <div><Label>Middle Name</Label><div className="relative"><Input className="pr-24" value={String(formData.middleName ?? "")} disabled={Boolean(formData.noMiddleName)} onChange={(event) => setValue("middleName", event.target.value)} /><label className="absolute inset-y-0 right-3 flex items-center gap-2 text-sm italic text-muted-foreground"><Checkbox checked={Boolean(formData.noMiddleName)} onCheckedChange={toggleNoMiddleName} /><span>NMN</span></label></div></div>
           <FieldInput label="Last Name" value={String(formData.lastName ?? "")} onChange={(v) => setValue("lastName", v)} />
           <FieldInput label="Suffix" value={String(formData.suffix ?? "")} onChange={(v) => setValue("suffix", v)} />
         </> : <FieldInput label="Full Name" value={String(formData.fullName ?? "")} onChange={(v) => setValue("fullName", v)} className="sm:col-span-2" />}
