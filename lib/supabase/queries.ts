@@ -1577,7 +1577,7 @@ export type ManageCaseViolationAction = "add" | "edit" | "remove" | "restore";
 export interface ManageCaseViolationsInput {
   caseId: number;
   action: ManageCaseViolationAction;
-  reason: string;
+  reason?: string;
   violation: Record<string, unknown>;
 }
 

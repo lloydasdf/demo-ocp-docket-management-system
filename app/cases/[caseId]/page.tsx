@@ -1103,7 +1103,7 @@ function ManagePlacesDialog({ caseId, refs, open, onOpenChange, onSaved }: { cas
 
 
 function violationLabel(violation: CaseViolationManagementRecord) {
-  return violation.raw_violation_text || violation.violations?.short_label || violation.violations?.title || `Violation #${violation.violation_id}`;
+  return violation.violations?.short_label || violation.violations?.title || `Violation #${violation.violation_id}`;
 }
 
 function ManageViolationsDialog({ caseId, open, onOpenChange, onSaved }: { caseId: number; open: boolean; onOpenChange: (open: boolean) => void; onSaved: () => Promise<void> }) {
@@ -1111,13 +1111,11 @@ function ManageViolationsDialog({ caseId, open, onOpenChange, onSaved }: { caseI
   const [violationOptions, setViolationOptions] = useState<SupabaseTableRow<"violations">[]>([]);
   const [showRemoved, setShowRemoved] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [isAdding, setIsAdding] = useState(false);
   const [violationId, setViolationId] = useState("");
-  const [violationOrder, setViolationOrder] = useState("");
-  const [rawViolationText, setRawViolationText] = useState("");
-  const [reason, setReason] = useState("");
+  const [violationSearch, setViolationSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [actionReasons, setActionReasons] = useState<Record<number, string>>({});
   const [pendingAction, setPendingAction] = useState<{ id: number; action: "remove" | "restore" } | null>(null);
 
   const loadViolations = useCallback(async () => {
@@ -1129,24 +1127,19 @@ function ManageViolationsDialog({ caseId, open, onOpenChange, onSaved }: { caseI
   }, [caseId, showRemoved]);
 
   useEffect(() => { if (open) void loadViolations(); }, [loadViolations, open]);
-  const resetForm = () => { setEditingId(null); setViolationId(""); setViolationOrder(""); setRawViolationText(""); setReason(""); setError(null); };
+  const optionLabel = (option: SupabaseTableRow<"violations">) => option.short_label ?? option.title ?? `Violation #${option.id}`;
+  const resetForm = () => { setEditingId(null); setIsAdding(false); setViolationId(""); setViolationSearch(""); setError(null); };
   async function save(action: "add" | "edit" | "remove" | "restore", violation?: CaseViolationManagementRecord) {
-    const actionReason = violation ? (actionReasons[violation.id] ?? "") : reason;
-    if (!actionReason.trim()) { setError(action === "remove" || action === "restore" ? "Remove/restore reason is required." : "Reason is required."); return; }
-    if ((action === "add" || action === "edit") && !violationId) { setError("Violation is required."); return; }
+    if ((action === "add" || action === "edit") && !violationSearch.trim()) { setError("Violation is required."); return; }
     setIsSaving(true); setError(null);
     const result = await manageCaseViolations({
       caseId,
       action,
-      reason: actionReason.trim(),
-      violation: violation ? { id: violation.id } : { id: editingId, violationId, violationOrder, rawViolationText },
+      violation: violation ? { id: violation.id } : { id: editingId, violationId, violationTitle: violationSearch.trim() },
     });
     setIsSaving(false);
     if (result.error) { setError(result.error.message); return; }
-    if (violation) {
-      setActionReasons((current) => { const next = { ...current }; delete next[violation.id]; return next; });
-      setPendingAction(null);
-    }
+    if (violation) setPendingAction(null);
     resetForm(); await loadViolations(); await onSaved();
   }
 
@@ -1161,18 +1154,18 @@ function ManageViolationsDialog({ caseId, open, onOpenChange, onSaved }: { caseI
             const currentAction = isPendingAction ? pendingAction.action : null;
             return <div key={violation.id} className="rounded-lg border p-3 text-sm">
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
-                <div className="min-w-0"><p className="font-medium">{violationLabel(violation)}</p><div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground"><span>Order {violation.violation_order ?? "—"}</span>{violation.violations?.law_reference ? <span>{violation.violations.law_reference}</span> : null}{violation.is_deleted ? <Badge variant="destructive">REMOVED</Badge> : null}</div>{violation.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Removed {formatDate(violation.deleted_at)} — {violation.delete_reason ?? "No reason recorded"}</p> : null}</div>
+                <div className="min-w-0"><p className="font-medium">{violationLabel(violation)}</p><div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">{violation.violations?.law_reference ? <span>{violation.violations.law_reference}</span> : null}{violation.is_deleted ? <Badge variant="destructive">REMOVED</Badge> : null}</div>{violation.is_deleted ? <p className="mt-2 text-xs text-muted-foreground">Removed {formatDate(violation.deleted_at)}</p> : null}</div>
                 <div className="flex min-w-56 flex-col items-stretch gap-2 sm:items-end">
-                  {currentAction ? null : <div className="flex justify-end gap-2">{violation.is_deleted ? <Button size="sm" variant="outline" onClick={() => setPendingAction({ id: violation.id, action: "restore" })}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setEditingId(violation.id); setViolationId(String(violation.violation_id)); setViolationOrder(violation.violation_order == null ? "" : String(violation.violation_order)); setRawViolationText(violation.raw_violation_text ?? ""); setReason(""); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => setPendingAction({ id: violation.id, action: "remove" })}>Remove</Button></>}</div>}
-                  {currentAction ? <div className="w-full space-y-2"><Input placeholder={currentAction === "restore" ? "Restore reason" : "Remove reason"} value={actionReasons[violation.id] ?? ""} onChange={(event) => setActionReasons((current) => ({ ...current, [violation.id]: event.target.value }))} /><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => setPendingAction(null)}>Cancel</Button><Button size="sm" onClick={() => save(currentAction, violation)}>{currentAction === "restore" ? "Restore" : "Remove"}</Button></div></div> : null}
+                  {currentAction ? null : <div className="flex justify-end gap-2">{violation.is_deleted ? <Button size="sm" variant="outline" onClick={() => setPendingAction({ id: violation.id, action: "restore" })}>Restore</Button> : <><Button size="sm" variant="outline" onClick={() => { setEditingId(violation.id); setIsAdding(false); setViolationId(String(violation.violation_id)); setViolationSearch(violationLabel(violation)); setError(null); }}>Edit</Button><Button size="sm" variant="outline" onClick={() => setPendingAction({ id: violation.id, action: "remove" })}>Remove</Button></>}</div>}
+                  {currentAction ? <div className="w-full space-y-2"><p className="text-xs text-muted-foreground">Confirm {currentAction === "restore" ? "restoring" : "removing"} this violation.</p><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => setPendingAction(null)}>Cancel</Button><Button size="sm" onClick={() => save(currentAction, violation)}>{currentAction === "restore" ? "Restore" : "Remove"}</Button></div></div> : null}
                 </div>
               </div>
             </div>;
           })}
         </div>
-        <div className="grid gap-4 rounded-lg border p-4 sm:grid-cols-2"><h3 className="font-semibold sm:col-span-2">{editingId ? "Edit Violation" : "Add Violation"}</h3><FieldSelect label="Violation" value={violationId} onChange={setViolationId} options={violationOptions} optionLabel={(option) => (option as SupabaseTableRow<"violations">).short_label ?? (option as SupabaseTableRow<"violations">).title ?? String(option.id)} allowEmpty /><FieldInput label="Order" value={violationOrder} onChange={setViolationOrder} /><FieldTextarea label="Raw/display text" value={rawViolationText} onChange={setRawViolationText} className="sm:col-span-2" /><FieldTextarea label="Reason for edit" value={reason} onChange={setReason} className="sm:col-span-2" /></div>
+        {editingId || isAdding ? <div className="rounded-lg border p-4"><h3 className="mb-4 font-semibold">{editingId ? "Edit Violation" : "Add Violation"}</h3><div><Label htmlFor="violation-search">Violation</Label><Input id="violation-search" type="search" list="existing-violations" placeholder="Type or search violations" value={violationSearch} onChange={(event) => { const value = event.target.value; setViolationSearch(value); const match = violationOptions.find((option) => optionLabel(option) === value); setViolationId(match ? String(match.id) : ""); }} /><datalist id="existing-violations">{violationOptions.map((option) => <option key={option.id} value={optionLabel(option)} />)}</datalist><p className="mt-1 text-xs text-muted-foreground">Choose a suggestion, or enter a new violation to add it to the database.</p></div></div> : null}
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
-        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>{editingId ? <Button variant="outline" onClick={resetForm}>Cancel edit</Button> : null}<Button disabled={isSaving} onClick={() => save(editingId ? "edit" : "add")}>{isSaving ? "Saving..." : editingId ? "Save violation" : "Add violation"}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>{editingId || isAdding ? <><Button variant="outline" onClick={resetForm}>Cancel</Button><Button disabled={isSaving} onClick={() => save(editingId ? "edit" : "add")}>{isSaving ? "Saving..." : editingId ? "Save violation" : "Add violation"}</Button></> : <Button onClick={() => { setIsAdding(true); setError(null); }}>Add violation</Button>}</DialogFooter>
       </DialogContent>
     </Dialog>
   );
