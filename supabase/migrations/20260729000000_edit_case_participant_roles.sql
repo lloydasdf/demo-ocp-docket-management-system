@@ -17,6 +17,13 @@ DECLARE
   v_old_role_id bigint;
 BEGIN
   IF lower(btrim(p_payload->>'action')) = 'edit_main_details' THEN
+    -- Identity corrections may be saved without a user-entered reason. The
+    -- legacy implementation still expects a non-empty audit description, so
+    -- provide a neutral system description rather than rejecting the request.
+    IF nullif(btrim(p_payload->>'reason'), '') IS NULL THEN
+      p_payload := jsonb_set(p_payload, '{reason}', to_jsonb('Identity details updated'::text));
+    END IF;
+
     IF v_role_id IS NULL OR NOT EXISTS (
       SELECT 1 FROM public.participant_roles
       WHERE id = v_role_id AND is_active = true

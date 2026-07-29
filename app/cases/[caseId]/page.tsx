@@ -1391,7 +1391,7 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
     const nextAction = action ?? (mode === "main" ? "edit_main_details" : mode === "alias" ? (editingRecord ? "edit_alias" : "add_alias") : mode === "address" ? (editingRecord ? "edit_address" : "add_address") : mode === "contact" ? (editingRecord ? "edit_contact" : "add_contact") : null);
     if (!nextAction) return;
     const effectiveReason = reasonOverride ?? (mode === "main" ? reason : nextAction.replace(/_/g, " "));
-    if ((mode === "main" || action) && !effectiveReason.trim()) { setReasonError("Reason is required."); return; }
+    if (action && !effectiveReason.trim()) { setReasonError("Reason is required."); return; }
     setIsSaving(true);
     setError(null);
     setReasonError(null);
@@ -1450,24 +1450,18 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
   }
 
   function participantButton(participant: CaseParticipantRecord) {
-    return <button key={participant.id} type="button" className={`rounded-lg border p-3 text-left text-sm ${selectedId === participant.id ? "border-primary bg-primary/5" : "hover:bg-muted"}`} onClick={() => setSelectedId(participant.id)}><span className="font-medium">{participantName(participant)}</span><span className="mt-1 block text-xs text-muted-foreground">{roleLabel(participant)}</span></button>;
+    return <button key={participant.id} type="button" className={`rounded-lg border p-3 text-left text-sm ${selectedId === participant.id ? "border-primary bg-primary/5" : "hover:bg-muted"}`} onClick={() => { setSelectedId(participant.id); setMode(null); setEditingRecord(null); setPendingDelete(null); }}><span className="font-medium">{participantName(participant)}</span><span className="mt-1 block text-xs text-muted-foreground">{roleLabel(participant)}</span></button>;
   }
 
   const detailListMaxHeight = mode ? "max-h-40" : "max-h-72";
   const genderOptions: RefOption[] = [
     { id: 1, code: "Male", display_label: "Male" },
     { id: 2, code: "Female", display_label: "Female" },
-    { id: 3, code: "Unspecified", display_label: "Unspecified" },
+    { id: 3, code: "Others", display_label: "Others" },
+    { id: 4, code: "Unspecified", display_label: "Unspecified" },
   ];
 
   const roleField = <FieldSelect label="Role" value={String(formData.roleId ?? "")} onChange={(value) => setValue("roleId", value)} options={participantRoles} optionLabel={(option) => option.display_label ?? option.code ?? String(option.id)} />;
-  const caseFlags = <div className="flex flex-wrap items-end gap-4 pb-2">
-    <span className="text-sm font-medium">Case flags</span>
-    <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isMinorAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isMinorAtCase", checked === true)} /> Minor</label>
-    <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isSeniorAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isSeniorAtCase", checked === true)} /> Senior</label>
-    <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isPwdAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isPwdAtCase", checked === true)} /> PWD</label>
-  </div>;
-
   const renderEditor = () => mode ? <div className="space-y-3 rounded-lg border p-4">
     <h3 className="font-semibold">{mode === "main" ? "Participant name and details" : mode === "alias" ? "Alias" : mode === "address" ? "Address" : "Contact info"}</h3>
     {selected?.participant_kind !== "ORGANIZATION" && mode === "main" && legacyFullNameOnly ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.useStructuredName)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("useStructuredName", checked === true)} /> Convert legacy full name to structured name</label> : null}
@@ -1483,7 +1477,7 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
       {mode === "main" && selected?.participant_kind !== "ORGANIZATION" ? <>
         {formData.useStructuredName ? <>
           <FieldInput label="First Name" value={String(formData.firstName ?? "")} onChange={(v) => setValue("firstName", v)} />
-          <div><div className="flex items-center justify-between gap-3"><Label>Middle Name</Label><label className="flex items-center gap-2 text-sm italic text-muted-foreground"><Checkbox checked={Boolean(formData.noMiddleName)} onCheckedChange={(checked: boolean | "indeterminate") => { const noMiddleName = checked === true; setFormData((current) => ({ ...current, noMiddleName, middleName: noMiddleName ? "NMN" : "" })); }} /><span>(/) NMN</span></label></div><Input value={String(formData.middleName ?? "")} disabled={Boolean(formData.noMiddleName)} onChange={(event) => setValue("middleName", event.target.value)} /></div>
+          <div><Label>Middle Name</Label><div className="relative"><Input className="pr-24" value={String(formData.middleName ?? "")} disabled={Boolean(formData.noMiddleName)} onChange={(event) => setValue("middleName", event.target.value)} /><label className="absolute inset-y-0 right-3 flex items-center gap-2 text-sm italic text-muted-foreground"><Checkbox checked={Boolean(formData.noMiddleName)} onCheckedChange={(checked: boolean | "indeterminate") => { const noMiddleName = checked === true; setFormData((current) => ({ ...current, noMiddleName, middleName: noMiddleName ? "NMN" : "" })); }} /><span>NMN</span></label></div></div>
           <FieldInput label="Last Name" value={String(formData.lastName ?? "")} onChange={(v) => setValue("lastName", v)} />
           <FieldInput label="Suffix" value={String(formData.suffix ?? "")} onChange={(v) => setValue("suffix", v)} />
         </> : <FieldInput label="Full Name" value={String(formData.fullName ?? "")} onChange={(v) => setValue("fullName", v)} className="sm:col-span-2" />}
@@ -1491,12 +1485,12 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
         <FieldInput label="Birthdate" type="date" value={String(formData.birthDate ?? "")} onChange={(v) => setValue("birthDate", v)} />
         <FieldInput label="Age" value={String(formData.age ?? "")} onChange={(v) => setValue("age", v)} />
         <FieldInput label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} />
-        <div>{roleField}</div><div>{caseFlags}</div>
+        <div className="sm:col-span-2 sm:max-w-[calc(50%-0.375rem)]">{roleField}</div>
       </> : null}
       {mode === "alias" ? <FieldInput label="Alias" value={String(formData.aliasName ?? "")} onChange={(v) => setValue("aliasName", v)} className="sm:col-span-2" /> : null}
       {mode === "address" ? <><FieldSelect label="Address type" value={String(formData.addressTypeId ?? "")} onChange={(v) => setValue("addressTypeId", v)} options={addressTypes} optionLabel={(option) => option.display_label ?? option.code ?? String(option.id)} /><FieldInput label="Line 1" value={String(formData.line1 ?? "")} onChange={(v) => setValue("line1", v)} /><FieldInput label="Line 2" value={String(formData.line2 ?? "")} onChange={(v) => setValue("line2", v)} /><FieldInput label="Barangay" value={String(formData.barangay ?? "")} onChange={(v) => setValue("barangay", v)} /><FieldInput label="City" value={String(formData.city ?? "")} onChange={(v) => setValue("city", v)} /><FieldInput label="Province" value={String(formData.province ?? "")} onChange={(v) => setValue("province", v)} /><FieldInput label="Country" value={String(formData.country ?? "")} onChange={(v) => setValue("country", v)} /></> : null}
       {mode === "contact" ? <><FieldSelect label="Type" value={String(formData.contactType ?? "PHONE")} onChange={(v) => setValue("contactType", v)} options={[{id:1,code:"PHONE",display_label:"Phone"},{id:2,code:"EMAIL",display_label:"Email"},{id:3,code:"OTHER",display_label:"Other"}]} valueKey="code" optionLabel={(option) => option.display_label ?? String(option.id)} /><FieldInput label="Value" value={String(formData.contactValue ?? "")} onChange={(v) => setValue("contactValue", v)} /><FieldInput label="Label" value={String(formData.label ?? "")} onChange={(v) => setValue("label", v)} /></> : null}
-      {mode === "main" ? <div className="sm:col-span-2"><Label>Reason</Label><Textarea value={reason} onChange={(event) => { setReason(event.target.value); setReasonError(null); }} className={reasonError ? "border-destructive" : undefined} />{reasonError ? <p className="mt-1 text-sm text-destructive">{reasonError}</p> : null}</div> : null}
+      {mode === "main" ? <div className="sm:col-span-2"><Label>Reason <span className="font-normal text-muted-foreground">(optional)</span></Label><Textarea value={reason} onChange={(event) => { setReason(event.target.value); setReasonError(null); }} className={reasonError ? "border-destructive" : undefined} />{reasonError ? <p className="mt-1 text-sm text-destructive">{reasonError}</p> : null}</div> : null}
     </div>
     {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
     <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setMode(null)}>Cancel</Button><Button type="button" onClick={() => save()} disabled={isSaving}>{isSaving ? "Saving..." : "Save"}</Button></div>
@@ -1514,7 +1508,7 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
         <div className={`flex ${detailListMaxHeight} min-h-0 flex-col rounded-md border p-3`}><div className="mb-2 flex shrink-0 items-center justify-between gap-2"><p className="font-medium">Contacts</p><Button type="button" size="sm" variant="outline" onClick={() => openEditor("contact")}>Add</Button></div>{contacts.length ? <div className="min-h-0 flex-1 divide-y overflow-y-auto pr-1">{contacts.map((contact) => <div key={String(contact.participant_contact_information_id ?? contact.id)} className="space-y-2 py-2"><p className="text-xs font-medium uppercase text-muted-foreground">{String(contact.contact_type)}</p>{contactHref(contact as never) ? <a className="block break-all text-sm text-primary hover:underline" href={contactHref(contact as never)}>{String(contact.contact_value)}</a> : <p className="break-all text-sm">{String(contact.contact_value)}</p>}<div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="ghost" onClick={() => openEditor("contact", contact as never)}>Edit</Button><Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => { setMode("contact"); setEditingRecord(contact as never); openDelete("remove_contact", contact as never, "contact info") }}>Remove</Button></div></div>)}</div> : <p className="text-sm text-muted-foreground">No contacts.</p>}</div></div>{pendingDelete ? <div className="space-y-3 rounded-lg border p-4"><h3 className="font-semibold">Remove {pendingDelete.label}</h3><p className="text-sm text-muted-foreground">Enter a reason before removing this {pendingDelete.label}.</p><div><Label>Reason</Label><Textarea value={reason} onChange={(event) => { setReason(event.target.value); setReasonError(null); }} className={reasonError ? "border-destructive" : undefined} />{reasonError ? <p className="mt-1 text-sm text-destructive">{reasonError}</p> : null}</div><div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => { setPendingDelete(null); setReason(""); setReasonError(null); }}>Cancel</Button><Button type="button" variant="destructive" onClick={confirmDelete} disabled={isSaving}>{isSaving ? "Removing..." : "Remove"}</Button></div></div> : renderEditor()}</> : <SectionEmpty>No participant selected.</SectionEmpty>}
       </div>
     </div>
-    <DialogFooter className="shrink-0"><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Close</Button></DialogFooter></DialogContent>
+    </DialogContent>
     <Dialog open={correctionHistoryOpen} onOpenChange={setCorrectionHistoryOpen}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader><DialogTitle>Correction History</DialogTitle><DialogDescription>Prior voided person details are shown only in this correction history.</DialogDescription></DialogHeader>
