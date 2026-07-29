@@ -1,13 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, CheckCircle2, FolderPlus, Loader2, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeft, CheckCircle2, FolderPlus, Loader2, RefreshCw, UploadCloud } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { AttachmentWorkspace, type PreviewFile } from "@/components/drive-preview";
 import type { OnlyOfficeSession } from "@/components/drive-preview/onlyoffice-editor";
+import { DriveUploadManager, type UploadItem } from "@/components/drive-upload-manager";
 
 type DriveFile = PreviewFile;
 
@@ -40,6 +41,12 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [folderStack, setFolderStack] = useState<Array<{ id: string; name: string }>>([]);
   const [folderCreated, setFolderCreated] = useState(false);
+  const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const uploadRequests = useRef(new Map<string, XMLHttpRequest>());
+  const currentFolderId = useRef<string | null>(null);
+
+  useEffect(() => () => { uploadRequests.current.forEach((request) => request.abort()); }, []);
 
   const load = useCallback(async (folderId?: string) => {
     setLoading(true); setError(null); setFolderCreated(false);
@@ -49,7 +56,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
         setCanCreate(Boolean(body.error?.canCreate));
         throw new Error(body.error?.message ?? "Unable to read Google Drive attachments.");
       }
-      setDrive(body.data); setCanCreate(false);
+      setDrive(body.data); currentFolderId.current = body.data.currentFolder.id; setCanCreate(false);
     } catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Unable to read Google Drive attachments."); }
     finally { setLoading(false); }
   }, [caseId]);
@@ -127,6 +134,35 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     finally { setDownloadingId(null); }
   }
 
+  async function uploadOne(item: UploadItem) {
+    const supabase = await getSupabaseBrowserClient(); const { data } = await supabase.auth.getSession();
+    if (!data.session?.access_token) { setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, status: "failed", error: "Your session has expired." } : upload)); return; }
+    const request = new XMLHttpRequest(); uploadRequests.current.set(item.id, request);
+    setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, status: "uploading", progress: 0, error: undefined } : upload));
+    request.upload.onprogress = (event) => { if (event.lengthComputable) setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, progress: Math.min(99, Math.round(event.loaded / event.total * 100)) } : upload)); };
+    request.onload = () => {
+      uploadRequests.current.delete(item.id);
+      if (request.status >= 200 && request.status < 300) { setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, status: "complete", progress: 100 } : upload)); if (currentFolderId.current === item.destinationId) void load(item.destinationId); return; }
+      let message = "The file could not be uploaded."; try { message = (JSON.parse(request.responseText) as { error?: { message?: string } }).error?.message ?? message; } catch { /* Non-JSON error response. */ }
+      setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, status: "failed", error: message } : upload));
+    };
+    request.onerror = () => { uploadRequests.current.delete(item.id); setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, status: "failed", error: "A network error interrupted the upload." } : upload)); };
+    request.onabort = () => { uploadRequests.current.delete(item.id); setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, status: "cancelled", error: undefined } : upload)); };
+    const form = new FormData(); form.append("parentId", item.destinationId); form.append("file", item.file);
+    request.open("POST", `/api/cases/${caseId}/drive/upload`); request.setRequestHeader("Authorization", `Bearer ${data.session.access_token}`); request.send(form);
+  }
+
+  function addUploads(files: File[]) {
+    if (!drive || !files.length) return;
+    const destinationName = [...folderStack.map((folder) => folder.name), drive.currentFolder.name].join(" / ");
+    const items = files.map<UploadItem>((file) => ({ id: crypto.randomUUID(), file, destinationId: drive.currentFolder.id, destinationName, progress: 0, status: "queued" }));
+    const valid: UploadItem[] = []; const rejected: UploadItem[] = [];
+    items.forEach((item) => { if (!item.file.name.trim()) rejected.push({ ...item, status: "failed", error: "The file name is invalid." }); else if (!item.file.size) rejected.push({ ...item, status: "failed", error: "Empty files cannot be uploaded." }); else if (item.file.size > 100 * 1024 * 1024) rejected.push({ ...item, status: "failed", error: "Each upload is limited to 100 MB." }); else valid.push(item); });
+    setUploads((current) => [...valid, ...rejected, ...current].slice(0, 50)); valid.forEach((item) => void uploadOne(item));
+  }
+
+  function retryUpload(id: string) { const item = uploads.find((upload) => upload.id === id); if (item) void uploadOne(item); }
+
   function browseFolder(folder: DriveFile) {
     if (!drive) return;
     setFolderStack((items) => [...items, { id: drive.currentFolder.id, name: drive.currentFolder.name }]);
@@ -144,7 +180,10 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     ? [...folderStack.slice(1).map((folder) => folder.name), drive.currentFolder.name]
     : [];
 
-  return <div className="space-y-4">
+  const destination = `${docketYear ?? "Unknown year"} / ${docketType ?? "Unknown type"} / ${docketNumber ?? "Unknown docket"}${nestedLocation.length ? ` / ${nestedLocation.join(" / ")}` : ""}`;
+
+  return <div className={`relative space-y-4 rounded-lg transition-colors ${dragging ? "bg-primary/5 ring-2 ring-primary ring-offset-4" : ""}`} onDragEnter={(event) => { event.preventDefault(); if (drive && event.dataTransfer.types.includes("Files")) setDragging(true); }} onDragOver={(event) => { event.preventDefault(); if (drive) event.dataTransfer.dropEffect = "copy"; }} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false); }} onDrop={(event) => { event.preventDefault(); setDragging(false); addUploads(Array.from(event.dataTransfer.files)); }}>
+    {dragging ? <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-background/90"><div className="text-center"><UploadCloud className="mx-auto mb-2 h-10 w-10 text-primary" /><p className="font-semibold">Drop files to upload</p><p className="text-sm text-muted-foreground">Destination: {destination}</p></div></div> : null}
     <div className="flex flex-wrap items-center justify-between gap-3">
       <p className="text-sm text-muted-foreground">Location: <strong>{docketYear ?? "Unknown year"}</strong> / <strong>{docketType ?? "Unknown type"}</strong> / <strong>{docketNumber ?? "Unknown docket"}</strong>{nestedLocation.map((name, index) => <span key={`${name}-${index}`}> / <strong>{name}</strong></span>)}</p>
       <div className="flex gap-2">
@@ -156,6 +195,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     {creating ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Creating folder</div> : null}
     {folderCreated ? <div className="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800"><CheckCircle2 className="h-6 w-6 motion-safe:animate-[bounce_600ms_ease-out_1]" /><div><p className="font-medium">Folder created</p><p className="text-sm">The new Google Drive docket folder is empty.</p></div></div> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />Create GDrive folder</Button> : null}</AlertDescription></Alert> : null}
+    {drive ? <DriveUploadManager uploads={uploads} destination={destination} disabled={loading || creating} onChoose={addUploads} onCancel={(id) => uploadRequests.current.get(id)?.abort()} onRetry={retryUpload} /> : null}
     {drive && !loading ? <AttachmentWorkspace files={drive.files} downloadingId={downloadingId} onBrowse={browseFolder} onDownload={(file) => void downloadFile(file)} loadBlob={loadPreviewBlob} startEdit={startDocumentEdit} checkEditStatus={checkDocumentEditStatus} cancelEditSession={cancelDocumentEditSession} onDocumentSaved={() => void load(drive.currentFolder.id)} onPreviewChange={onPreviewChange} onError={setError} /> : null}
   </div>;
 }
