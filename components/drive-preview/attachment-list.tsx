@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowDownAZ, Download, Eye, File, Folder, Loader2 } from "lucide-react";
+import { ArrowDownAZ, Download, Eye, File, Folder, Loader2, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -23,7 +23,7 @@ function numericValue(value: string | null) {
   return Number.isFinite(number) ? number : 0;
 }
 
-export function AttachmentList({ files, selectedId, downloadingId, onSelect, onDownload, onBrowse }: { files: PreviewFile[]; selectedId?: string; downloadingId: string | null; onSelect: (file: PreviewFile) => void; onDownload: (file: PreviewFile) => void; onBrowse: (file: PreviewFile) => void }) {
+export function AttachmentList({ files, selectedId, downloadingId, managingFolderId, onSelect, onDownload, onBrowse, onRenameFolder, onTrashFolder }: { files: PreviewFile[]; selectedId?: string; downloadingId: string | null; managingFolderId?: string | null; onSelect: (file: PreviewFile) => void; onDownload: (file: PreviewFile) => void; onBrowse: (file: PreviewFile) => void; onRenameFolder: (file: PreviewFile) => void; onTrashFolder: (file: PreviewFile) => void }) {
   const [sort, setSort] = useState<SortOption>("modified-asc");
   const [foldersFirst, setFoldersFirst] = useState(true);
   const sortedFiles = useMemo(() => [...files].sort((left, right) => {
@@ -63,7 +63,7 @@ export function AttachmentList({ files, selectedId, downloadingId, onSelect, onD
           {folder ? <Folder className="h-5 w-5 shrink-0 text-amber-600" /> : <File className="h-5 w-5 shrink-0 text-muted-foreground" />}
           <span className="min-w-0"><span className="block truncate font-medium">{file.name}</span><span className="block text-xs text-muted-foreground">{fileType(file)}{folder ? "" : ` • ${formattedFileSize(file.size)}`}{file.modifiedTime ? ` • Updated ${new Date(file.modifiedTime).toLocaleString()}` : ""}</span></span>
         </button>
-        <div className="flex shrink-0 gap-1">{folder ? <Button variant="outline" size="sm" onClick={() => onBrowse(file)}>Browse</Button> : <><Button variant="outline" size="sm" onClick={() => onSelect(file)}><Eye className="mr-2 h-4 w-4" />Preview</Button><Button variant="ghost" size="sm" onClick={() => onDownload(file)} disabled={downloadingId === file.id} aria-label={`Download ${file.name}`}>{downloadingId === file.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</Button></>}</div>
+        <div className="flex shrink-0 gap-1">{folder ? <><Button variant="outline" size="sm" onClick={() => onBrowse(file)} disabled={managingFolderId === file.id}>Browse</Button><Button variant="ghost" size="icon" onClick={() => onRenameFolder(file)} disabled={managingFolderId === file.id} aria-label={`Rename ${file.name}`}>{managingFolderId === file.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}</Button><Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => onTrashFolder(file)} disabled={managingFolderId === file.id} aria-label={`Trash ${file.name}`}><Trash2 className="h-4 w-4" /></Button></> : <><Button variant="outline" size="sm" onClick={() => onSelect(file)}><Eye className="mr-2 h-4 w-4" />Preview</Button><Button variant="ghost" size="sm" onClick={() => onDownload(file)} disabled={downloadingId === file.id} aria-label={`Download ${file.name}`}>{downloadingId === file.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</Button></>}</div>
       </div>;
     })}</div>
   </div>;
