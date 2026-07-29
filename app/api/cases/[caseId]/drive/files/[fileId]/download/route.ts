@@ -6,9 +6,9 @@ import { getAuthenticatedSupabase } from '@/lib/supabase/server-user';
 
 export const runtime = 'nodejs';
 
-function contentDisposition(name: string) {
+function contentDisposition(name: string, inline = false) {
   const safeAscii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_').slice(0, 180) || 'download';
-  return `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(name.slice(0, 240))}`;
+  return `${inline ? 'inline' : 'attachment'}; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(name.slice(0, 240))}`;
 }
 
 export async function GET(request: Request, context: { params: Promise<{ caseId: string; fileId: string }> }) {
@@ -32,7 +32,7 @@ export async function GET(request: Request, context: { params: Promise<{ caseId:
     return new Response(file.body, {
       headers: {
         'content-type': file.contentType,
-        'content-disposition': contentDisposition(file.fileName),
+        'content-disposition': contentDisposition(file.fileName, new URL(request.url).searchParams.get('disposition') === 'inline'),
         'cache-control': 'private, no-store',
         'x-content-type-options': 'nosniff',
       },
