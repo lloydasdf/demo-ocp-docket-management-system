@@ -24,6 +24,7 @@ function numericValue(value: string | null) {
 
 export function AttachmentList({ files, sort, selectedId, downloadingId, managingFolderId, managingFileId, canShare, onSelect, onDownload, onShare, onRenameFile, onMoveFile, onTrashFile, onBrowse, onRenameFolder, onTrashFolder }: { files: PreviewFile[]; sort: AttachmentSortOption; selectedId?: string; downloadingId: string | null; managingFolderId?: string | null; managingFileId?: string | null; canShare?: boolean; onSelect: (file: PreviewFile) => void; onDownload: (file: PreviewFile) => void; onShare: (file: PreviewFile) => void; onRenameFile: (file: PreviewFile) => void; onMoveFile: (file: PreviewFile) => void; onTrashFile: (file: PreviewFile) => void; onBrowse: (file: PreviewFile) => void; onRenameFolder: (file: PreviewFile) => void; onTrashFolder: (file: PreviewFile) => void }) {
   const sortedFiles = useMemo(() => [...files].sort((left, right) => {
+    if (isFolder(left) !== isFolder(right)) return isFolder(left) ? -1 : 1;
     let result = 0;
     if (sort === "name-asc" || sort === "name-desc") result = collator.compare(left.name, right.name) * (sort === "name-desc" ? -1 : 1);
     else if (sort === "modified-asc" || sort === "modified-desc") result = (numericValue(left.modifiedTime ? String(Date.parse(left.modifiedTime)) : null) - numericValue(right.modifiedTime ? String(Date.parse(right.modifiedTime)) : null)) * (sort === "modified-desc" ? -1 : 1);
