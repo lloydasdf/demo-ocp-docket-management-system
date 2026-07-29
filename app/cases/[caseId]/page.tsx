@@ -1462,6 +1462,14 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
   ];
 
   const roleField = <FieldSelect label="Role" value={String(formData.roleId ?? "")} onChange={(value) => setValue("roleId", value)} options={participantRoles} optionLabel={(option) => option.display_label ?? option.code ?? String(option.id)} />;
+  const caseFlags = <fieldset>
+    <legend className="text-sm font-medium">Case Flags</legend>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pt-3">
+      <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isMinorAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isMinorAtCase", checked === true)} /> Minor</label>
+      <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isSeniorAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isSeniorAtCase", checked === true)} /> Senior</label>
+      <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isPwdAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isPwdAtCase", checked === true)} /> PWD</label>
+    </div>
+  </fieldset>;
   const toggleNoMiddleName = (checked: boolean | "indeterminate") => {
     const noMiddleName = checked === true;
     setFormData((current) => {
@@ -1495,7 +1503,8 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
         <FieldInput label="Birthdate" type="date" value={String(formData.birthDate ?? "")} onChange={(v) => setValue("birthDate", v)} />
         <FieldInput label="Age" value={String(formData.age ?? "")} onChange={(v) => setValue("age", v)} />
         <FieldInput label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} />
-        <div className="sm:col-span-2 sm:max-w-[calc(50%-0.375rem)]">{roleField}</div>
+        <div>{roleField}</div>
+        <div>{caseFlags}</div>
       </> : null}
       {mode === "alias" ? <FieldInput label="Alias" value={String(formData.aliasName ?? "")} onChange={(v) => setValue("aliasName", v)} className="sm:col-span-2" /> : null}
       {mode === "address" ? <><FieldSelect label="Address type" value={String(formData.addressTypeId ?? "")} onChange={(v) => setValue("addressTypeId", v)} options={addressTypes} optionLabel={(option) => option.display_label ?? option.code ?? String(option.id)} /><FieldInput label="Line 1" value={String(formData.line1 ?? "")} onChange={(v) => setValue("line1", v)} /><FieldInput label="Line 2" value={String(formData.line2 ?? "")} onChange={(v) => setValue("line2", v)} /><FieldInput label="Barangay" value={String(formData.barangay ?? "")} onChange={(v) => setValue("barangay", v)} /><FieldInput label="City" value={String(formData.city ?? "")} onChange={(v) => setValue("city", v)} /><FieldInput label="Province" value={String(formData.province ?? "")} onChange={(v) => setValue("province", v)} /><FieldInput label="Country" value={String(formData.country ?? "")} onChange={(v) => setValue("country", v)} /></> : null}
