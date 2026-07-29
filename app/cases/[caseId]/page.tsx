@@ -43,6 +43,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import {
   getAddressTypes,
+  getParticipantRoles,
   getCaseAttachmentsIndex,
   getCaseCourtDetails,
   editCaseOverviewSection,
@@ -667,7 +668,7 @@ function getOverviewInitialData(
 type OverviewAction = CaseOverviewEditSection | "participants" | "history";
 
 type RefOption = { id: number; display_label?: string | null; name?: string | null; prefix?: string | null; code?: string | null; full_name?: string | null; short_name?: string | null };
-type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; stages: RefOption[]; addressTypes: RefOption[] };
+type OverviewRefs = { docketTypes: RefOption[]; classifications: RefOption[]; statuses: RefOption[]; stages: RefOption[]; addressTypes: RefOption[]; participantRoles: RefOption[] };
 
 type OverviewEditorProps = {
   title: string;
@@ -1278,7 +1279,7 @@ function participantAddressRows(participant: CaseParticipantRecord) {
     : participantArray(participant.persons?.person_addresses);
 }
 
-function ManageParticipantsDialog({ addressTypes, caseId, onOpenChange, onSaved, open, participants }: { addressTypes: RefOption[]; caseId: number; onOpenChange: (open: boolean) => void; onSaved: () => Promise<void>; open: boolean; participants: CaseParticipantRecord[] }) {
+function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOpenChange, onSaved, open, participants }: { addressTypes: RefOption[]; participantRoles: RefOption[]; caseId: number; onOpenChange: (open: boolean) => void; onSaved: () => Promise<void>; open: boolean; participants: CaseParticipantRecord[] }) {
   const complainants = participants.filter((participant) => roleLabel(participant).toLowerCase().includes("complainant"));
   const respondents = participants.filter((participant) => roleLabel(participant).toLowerCase().includes("respondent"));
   const others = participants.filter((participant) => !complainants.includes(participant) && !respondents.includes(participant));
@@ -1342,6 +1343,7 @@ function ManageParticipantsDialog({ addressTypes, caseId, onOpenChange, onSaved,
     setReasonError(null);
     if (nextMode === "main") {
       setFormData(selected.participant_kind === "ORGANIZATION" ? {
+        roleId: String(selected.role_id ?? ""),
         organizationName: selected.organizations?.organization_name ?? "",
         contactPerson: selected.organizations?.contact_person ?? "",
         contactNumber: selected.organizations?.contact_number ?? "",
@@ -1352,10 +1354,12 @@ function ManageParticipantsDialog({ addressTypes, caseId, onOpenChange, onSaved,
         remarks: selected.remarks ?? "",
         sourceDetail: selected.case_participant_private_details?.source_detail ?? "",
       } : {
+        roleId: String(selected.role_id ?? ""),
         useStructuredName: !legacyFullNameOnly,
         fullName: selected.persons?.full_name ?? selected.display_name_snapshot ?? "",
         firstName: selected.persons?.first_name ?? "",
         middleName: selected.persons?.middle_name ?? "",
+        noMiddleName: selected.persons?.middle_name === "NMN",
         lastName: selected.persons?.last_name ?? "",
         suffix: selected.persons?.suffix ?? "",
         gender: selected.persons?.gender ?? selected.case_participant_attributes?.gender_text ?? "",
@@ -1450,7 +1454,53 @@ function ManageParticipantsDialog({ addressTypes, caseId, onOpenChange, onSaved,
   }
 
   const detailListMaxHeight = mode ? "max-h-40" : "max-h-72";
-  const renderEditor = () => mode ? <div className="space-y-3 rounded-lg border p-4"><h3 className="font-semibold">{mode === "main" ? "Participant name and details" : mode === "alias" ? "Alias" : mode === "address" ? "Address" : "Contact info"}</h3>{selected?.participant_kind !== "ORGANIZATION" && mode === "main" && legacyFullNameOnly ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.useStructuredName)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("useStructuredName", checked === true)} /> Convert legacy full name to structured name</label> : null}<div className="grid gap-3 sm:grid-cols-2">{mode === "main" && selected?.participant_kind === "ORGANIZATION" ? <><FieldInput label="Organization Name" value={String(formData.organizationName ?? "")} onChange={(v) => setValue("organizationName", v)} /><FieldInput label="Contact Person" value={String(formData.contactPerson ?? "")} onChange={(v) => setValue("contactPerson", v)} /><FieldInput label="Contact Number" value={String(formData.contactNumber ?? "")} onChange={(v) => setValue("contactNumber", v)} /><FieldInput label="Email" value={String(formData.email ?? "")} onChange={(v) => setValue("email", v)} /></> : null}{mode === "main" && selected?.participant_kind !== "ORGANIZATION" ? (formData.useStructuredName ? <><FieldInput label="First Name" value={String(formData.firstName ?? "")} onChange={(v) => setValue("firstName", v)} /><FieldInput label="Middle Name" value={String(formData.middleName ?? "")} onChange={(v) => setValue("middleName", v)} /><FieldInput label="Last Name" value={String(formData.lastName ?? "")} onChange={(v) => setValue("lastName", v)} /><FieldInput label="Suffix" value={String(formData.suffix ?? "")} onChange={(v) => setValue("suffix", v)} /></> : <FieldInput label="Full Name" value={String(formData.fullName ?? "")} onChange={(v) => setValue("fullName", v)} className="sm:col-span-2" />) : null}{mode === "main" ? <><FieldInput label="Gender" value={String(formData.gender ?? "")} onChange={(v) => setValue("gender", v)} /><FieldInput label="Birthdate" type="date" value={String(formData.birthDate ?? "")} onChange={(v) => setValue("birthDate", v)} /><FieldInput label="Age" value={String(formData.age ?? "")} onChange={(v) => setValue("age", v)} /><FieldInput label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} /><div className="flex flex-wrap items-center gap-4 pt-2 sm:col-span-2"><label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isMinorAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isMinorAtCase", checked === true)} /> Minor</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isSeniorAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isSeniorAtCase", checked === true)} /> Senior</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isPwdAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isPwdAtCase", checked === true)} /> PWD</label></div></> : null}{mode === "alias" ? <FieldInput label="Alias" value={String(formData.aliasName ?? "")} onChange={(v) => setValue("aliasName", v)} className="sm:col-span-2" /> : null}{mode === "address" ? <><FieldSelect label="Address type" value={String(formData.addressTypeId ?? "")} onChange={(v) => setValue("addressTypeId", v)} options={addressTypes} optionLabel={(option) => option.display_label ?? option.code ?? String(option.id)} /><FieldInput label="Line 1" value={String(formData.line1 ?? "")} onChange={(v) => setValue("line1", v)} /><FieldInput label="Line 2" value={String(formData.line2 ?? "")} onChange={(v) => setValue("line2", v)} /><FieldInput label="Barangay" value={String(formData.barangay ?? "")} onChange={(v) => setValue("barangay", v)} /><FieldInput label="City" value={String(formData.city ?? "")} onChange={(v) => setValue("city", v)} /><FieldInput label="Province" value={String(formData.province ?? "")} onChange={(v) => setValue("province", v)} /><FieldInput label="Country" value={String(formData.country ?? "")} onChange={(v) => setValue("country", v)} /></> : null}{mode === "contact" ? <><FieldSelect label="Type" value={String(formData.contactType ?? "PHONE")} onChange={(v) => setValue("contactType", v)} options={[{id:1,code:"PHONE",display_label:"Phone"},{id:2,code:"EMAIL",display_label:"Email"},{id:3,code:"OTHER",display_label:"Other"}]} valueKey="code" optionLabel={(option) => option.display_label ?? String(option.id)} /><FieldInput label="Value" value={String(formData.contactValue ?? "")} onChange={(v) => setValue("contactValue", v)} /><FieldInput label="Label" value={String(formData.label ?? "")} onChange={(v) => setValue("label", v)} /></> : null}{mode === "main" ? <div className="sm:col-span-2"><Label>Reason</Label><Textarea value={reason} onChange={(event) => { setReason(event.target.value); setReasonError(null); }} className={reasonError ? "border-destructive" : undefined} />{reasonError ? <p className="mt-1 text-sm text-destructive">{reasonError}</p> : null}</div> : null}</div>{error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}<div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setMode(null)}>Cancel</Button><Button type="button" onClick={() => save()} disabled={isSaving}>{isSaving ? "Saving..." : "Save"}</Button></div></div> : null;
+  const genderOptions: RefOption[] = [
+    { id: 1, code: "Male", display_label: "Male" },
+    { id: 2, code: "Female", display_label: "Female" },
+    { id: 3, code: "Unspecified", display_label: "Unspecified" },
+  ];
+
+  const roleField = <FieldSelect label="Role" value={String(formData.roleId ?? "")} onChange={(value) => setValue("roleId", value)} options={participantRoles} optionLabel={(option) => option.display_label ?? option.code ?? String(option.id)} />;
+  const caseFlags = <div className="flex flex-wrap items-end gap-4 pb-2">
+    <span className="text-sm font-medium">Case flags</span>
+    <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isMinorAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isMinorAtCase", checked === true)} /> Minor</label>
+    <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isSeniorAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isSeniorAtCase", checked === true)} /> Senior</label>
+    <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.isPwdAtCase)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("isPwdAtCase", checked === true)} /> PWD</label>
+  </div>;
+
+  const renderEditor = () => mode ? <div className="space-y-3 rounded-lg border p-4">
+    <h3 className="font-semibold">{mode === "main" ? "Participant name and details" : mode === "alias" ? "Alias" : mode === "address" ? "Address" : "Contact info"}</h3>
+    {selected?.participant_kind !== "ORGANIZATION" && mode === "main" && legacyFullNameOnly ? <label className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData.useStructuredName)} onCheckedChange={(checked: boolean | "indeterminate") => setValue("useStructuredName", checked === true)} /> Convert legacy full name to structured name</label> : null}
+    <div className="grid gap-3 sm:grid-cols-2">
+      {mode === "main" && selected?.participant_kind === "ORGANIZATION" ? <>
+        <FieldInput label="Organization Name" value={String(formData.organizationName ?? "")} onChange={(v) => setValue("organizationName", v)} />
+        <FieldInput label="Contact Person" value={String(formData.contactPerson ?? "")} onChange={(v) => setValue("contactPerson", v)} />
+        <FieldInput label="Contact Number" value={String(formData.contactNumber ?? "")} onChange={(v) => setValue("contactNumber", v)} />
+        <FieldInput label="Email" value={String(formData.email ?? "")} onChange={(v) => setValue("email", v)} />
+        <FieldInput label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} className="sm:col-span-2" />
+        <div className="sm:col-span-2 sm:max-w-[calc(50%-0.375rem)]">{roleField}</div>
+      </> : null}
+      {mode === "main" && selected?.participant_kind !== "ORGANIZATION" ? <>
+        {formData.useStructuredName ? <>
+          <FieldInput label="First Name" value={String(formData.firstName ?? "")} onChange={(v) => setValue("firstName", v)} />
+          <div><div className="flex items-center justify-between gap-3"><Label>Middle Name</Label><label className="flex items-center gap-2 text-sm italic text-muted-foreground"><Checkbox checked={Boolean(formData.noMiddleName)} onCheckedChange={(checked: boolean | "indeterminate") => { const noMiddleName = checked === true; setFormData((current) => ({ ...current, noMiddleName, middleName: noMiddleName ? "NMN" : "" })); }} /><span>(/) NMN</span></label></div><Input value={String(formData.middleName ?? "")} disabled={Boolean(formData.noMiddleName)} onChange={(event) => setValue("middleName", event.target.value)} /></div>
+          <FieldInput label="Last Name" value={String(formData.lastName ?? "")} onChange={(v) => setValue("lastName", v)} />
+          <FieldInput label="Suffix" value={String(formData.suffix ?? "")} onChange={(v) => setValue("suffix", v)} />
+        </> : <FieldInput label="Full Name" value={String(formData.fullName ?? "")} onChange={(v) => setValue("fullName", v)} className="sm:col-span-2" />}
+        <FieldSelect label="Gender" value={String(formData.gender ?? "")} onChange={(v) => setValue("gender", v)} options={genderOptions} valueKey="code" optionLabel={(option) => option.display_label ?? String(option.code)} allowEmpty />
+        <FieldInput label="Birthdate" type="date" value={String(formData.birthDate ?? "")} onChange={(v) => setValue("birthDate", v)} />
+        <FieldInput label="Age" value={String(formData.age ?? "")} onChange={(v) => setValue("age", v)} />
+        <FieldInput label="Remarks" value={String(formData.remarks ?? "")} onChange={(v) => setValue("remarks", v)} />
+        <div>{roleField}</div><div>{caseFlags}</div>
+      </> : null}
+      {mode === "alias" ? <FieldInput label="Alias" value={String(formData.aliasName ?? "")} onChange={(v) => setValue("aliasName", v)} className="sm:col-span-2" /> : null}
+      {mode === "address" ? <><FieldSelect label="Address type" value={String(formData.addressTypeId ?? "")} onChange={(v) => setValue("addressTypeId", v)} options={addressTypes} optionLabel={(option) => option.display_label ?? option.code ?? String(option.id)} /><FieldInput label="Line 1" value={String(formData.line1 ?? "")} onChange={(v) => setValue("line1", v)} /><FieldInput label="Line 2" value={String(formData.line2 ?? "")} onChange={(v) => setValue("line2", v)} /><FieldInput label="Barangay" value={String(formData.barangay ?? "")} onChange={(v) => setValue("barangay", v)} /><FieldInput label="City" value={String(formData.city ?? "")} onChange={(v) => setValue("city", v)} /><FieldInput label="Province" value={String(formData.province ?? "")} onChange={(v) => setValue("province", v)} /><FieldInput label="Country" value={String(formData.country ?? "")} onChange={(v) => setValue("country", v)} /></> : null}
+      {mode === "contact" ? <><FieldSelect label="Type" value={String(formData.contactType ?? "PHONE")} onChange={(v) => setValue("contactType", v)} options={[{id:1,code:"PHONE",display_label:"Phone"},{id:2,code:"EMAIL",display_label:"Email"},{id:3,code:"OTHER",display_label:"Other"}]} valueKey="code" optionLabel={(option) => option.display_label ?? String(option.id)} /><FieldInput label="Value" value={String(formData.contactValue ?? "")} onChange={(v) => setValue("contactValue", v)} /><FieldInput label="Label" value={String(formData.label ?? "")} onChange={(v) => setValue("label", v)} /></> : null}
+      {mode === "main" ? <div className="sm:col-span-2"><Label>Reason</Label><Textarea value={reason} onChange={(event) => { setReason(event.target.value); setReasonError(null); }} className={reasonError ? "border-destructive" : undefined} />{reasonError ? <p className="mt-1 text-sm text-destructive">{reasonError}</p> : null}</div> : null}
+    </div>
+    {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+    <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setMode(null)}>Cancel</Button><Button type="button" onClick={() => save()} disabled={isSaving}>{isSaving ? "Saving..." : "Save"}</Button></div>
+  </div> : null;
   const contactHref = (contact: Record<string, unknown>) => String(contact.contact_type).toUpperCase() === "EMAIL" ? `mailto:${String(contact.contact_value ?? "")}` : String(contact.contact_type).toUpperCase() === "PHONE" ? `tel:${String(contact.contact_value ?? "")}` : undefined;
   const correctionSnapshot = (snapshot: unknown, key: "person" | "organization" | "attributes") => typeof snapshot === "object" && snapshot && !Array.isArray(snapshot) && key in snapshot ? (snapshot as Record<string, unknown>)[key] : null;
   const correctionIdentityKey = selected?.participant_kind === "ORGANIZATION" ? "organization" : "person";
@@ -1709,7 +1759,7 @@ export default function CaseDetailsPage() {
     includeAttachmentIndex: true,
     includePrivateNotes: false,
   });
-  const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], stages: [], addressTypes: [] });
+  const [refs, setRefs] = useState<OverviewRefs>({ docketTypes: [], classifications: [], statuses: [], stages: [], addressTypes: [], participantRoles: [] });
   const [activeOverviewEditor, setActiveOverviewEditor] =
     useState<OverviewAction | null>(null);
   const [correctionParticipantId, setCorrectionParticipantId] = useState<number | null>(null);
@@ -1744,6 +1794,7 @@ export default function CaseDetailsPage() {
       statuses,
       stages,
       addressTypes,
+      participantRoles,
       linkedDockets,
     ] = await Promise.all([
       getCaseDetailsPageById(caseId),
@@ -1759,6 +1810,7 @@ export default function CaseDetailsPage() {
       getCaseStatuses(),
       getCaseStages(),
       getAddressTypes(),
+      getParticipantRoles(),
       getLinkedDocketsForCases([caseId]),
     ]);
 
@@ -1789,6 +1841,7 @@ export default function CaseDetailsPage() {
       statuses: ((statuses.data ?? []) as RefOption[]).filter((status) => ["PENDING", "FILED", "DISMISSED", "MIXED_RESULT"].includes(String(status.code))),
       stages: (stages.data ?? []) as RefOption[],
       addressTypes: (addressTypes.data ?? []) as RefOption[],
+      participantRoles: (participantRoles.data ?? []) as RefOption[],
     });
     const link = linkedDockets.data?.[0];
     setLinkedDocketNumber(link ? (link.pe_case_id === caseId ? link.linked_docket_number : link.pe_docket_number) : null);
@@ -2223,6 +2276,7 @@ export default function CaseDetailsPage() {
               /> : null}
               {canShowCaseManagementActions ? <ManageParticipantsDialog
                 addressTypes={refs.addressTypes}
+                participantRoles={refs.participantRoles}
                 caseId={caseId}
                 onOpenChange={(open) =>
                   setActiveOverviewEditor(open ? "participants" : null)
