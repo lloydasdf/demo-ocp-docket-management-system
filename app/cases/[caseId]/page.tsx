@@ -1130,12 +1130,12 @@ function ManageViolationsDialog({ caseId, open, onOpenChange, onSaved }: { caseI
   const optionLabel = (option: SupabaseTableRow<"violations">) => option.short_label ?? option.title ?? `Violation #${option.id}`;
   const resetForm = () => { setEditingId(null); setIsAdding(false); setViolationId(""); setViolationSearch(""); setError(null); };
   async function save(action: "add" | "edit" | "remove" | "restore", violation?: CaseViolationManagementRecord) {
-    if ((action === "add" || action === "edit") && !violationId) { setError("Violation is required."); return; }
+    if ((action === "add" || action === "edit") && !violationSearch.trim()) { setError("Violation is required."); return; }
     setIsSaving(true); setError(null);
     const result = await manageCaseViolations({
       caseId,
       action,
-      violation: violation ? { id: violation.id } : { id: editingId, violationId },
+      violation: violation ? { id: violation.id } : { id: editingId, violationId, violationTitle: violationSearch.trim() },
     });
     setIsSaving(false);
     if (result.error) { setError(result.error.message); return; }
@@ -1163,7 +1163,7 @@ function ManageViolationsDialog({ caseId, open, onOpenChange, onSaved }: { caseI
             </div>;
           })}
         </div>
-        {editingId || isAdding ? <div className="rounded-lg border p-4"><h3 className="mb-4 font-semibold">{editingId ? "Edit Violation" : "Add Violation"}</h3><div><Label htmlFor="violation-search">Violation</Label><Input id="violation-search" type="search" list="existing-violations" placeholder="Search existing violations" value={violationSearch} onChange={(event) => { const value = event.target.value; setViolationSearch(value); const match = violationOptions.find((option) => optionLabel(option) === value); setViolationId(match ? String(match.id) : ""); }} /><datalist id="existing-violations">{violationOptions.map((option) => <option key={option.id} value={optionLabel(option)} />)}</datalist><p className="mt-1 text-xs text-muted-foreground">Start typing, then choose an existing violation.</p></div></div> : null}
+        {editingId || isAdding ? <div className="rounded-lg border p-4"><h3 className="mb-4 font-semibold">{editingId ? "Edit Violation" : "Add Violation"}</h3><div><Label htmlFor="violation-search">Violation</Label><Input id="violation-search" type="search" list="existing-violations" placeholder="Type or search violations" value={violationSearch} onChange={(event) => { const value = event.target.value; setViolationSearch(value); const match = violationOptions.find((option) => optionLabel(option) === value); setViolationId(match ? String(match.id) : ""); }} /><datalist id="existing-violations">{violationOptions.map((option) => <option key={option.id} value={optionLabel(option)} />)}</datalist><p className="mt-1 text-xs text-muted-foreground">Choose a suggestion, or enter a new violation to add it to the database.</p></div></div> : null}
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
         <DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>{editingId || isAdding ? <><Button variant="outline" onClick={resetForm}>Cancel</Button><Button disabled={isSaving} onClick={() => save(editingId ? "edit" : "add")}>{isSaving ? "Saving..." : editingId ? "Save violation" : "Add violation"}</Button></> : <Button onClick={() => { setIsAdding(true); setError(null); }}>Add violation</Button>}</DialogFooter>
       </DialogContent>
