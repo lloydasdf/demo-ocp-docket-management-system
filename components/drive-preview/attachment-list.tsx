@@ -1,13 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { ArrowDownAZ, Download, Eye, File, Folder, FolderInput, Loader2, Pencil, Share2, Trash2 } from "lucide-react";
+import { useMemo } from "react";
+import { Download, Eye, File, Folder, FolderInput, Loader2, Pencil, Share2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formattedFileSize, isFolder, type PreviewFile } from "./types";
 
-type SortOption = "modified-asc" | "modified-desc" | "name-asc" | "name-desc" | "size-desc" | "size-asc" | "type-asc";
+export type AttachmentSortOption = "modified-asc" | "modified-desc" | "name-asc" | "name-desc" | "size-desc" | "size-asc" | "type-asc";
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -23,40 +21,18 @@ function numericValue(value: string | null) {
   return Number.isFinite(number) ? number : 0;
 }
 
-export function AttachmentList({ files, selectedId, downloadingId, managingFolderId, managingFileId, canShare, onSelect, onDownload, onShare, onRenameFile, onMoveFile, onTrashFile, onBrowse, onRenameFolder, onTrashFolder }: { files: PreviewFile[]; selectedId?: string; downloadingId: string | null; managingFolderId?: string | null; managingFileId?: string | null; canShare?: boolean; onSelect: (file: PreviewFile) => void; onDownload: (file: PreviewFile) => void; onShare: (file: PreviewFile) => void; onRenameFile: (file: PreviewFile) => void; onMoveFile: (file: PreviewFile) => void; onTrashFile: (file: PreviewFile) => void; onBrowse: (file: PreviewFile) => void; onRenameFolder: (file: PreviewFile) => void; onTrashFolder: (file: PreviewFile) => void }) {
-  const [sort, setSort] = useState<SortOption>("modified-asc");
-  const [foldersFirst, setFoldersFirst] = useState(true);
+export function AttachmentList({ files, sort, selectedId, downloadingId, managingFolderId, managingFileId, canShare, onSelect, onDownload, onShare, onRenameFile, onMoveFile, onTrashFile, onBrowse, onRenameFolder, onTrashFolder }: { files: PreviewFile[]; sort: AttachmentSortOption; selectedId?: string; downloadingId: string | null; managingFolderId?: string | null; managingFileId?: string | null; canShare?: boolean; onSelect: (file: PreviewFile) => void; onDownload: (file: PreviewFile) => void; onShare: (file: PreviewFile) => void; onRenameFile: (file: PreviewFile) => void; onMoveFile: (file: PreviewFile) => void; onTrashFile: (file: PreviewFile) => void; onBrowse: (file: PreviewFile) => void; onRenameFolder: (file: PreviewFile) => void; onTrashFolder: (file: PreviewFile) => void }) {
   const sortedFiles = useMemo(() => [...files].sort((left, right) => {
-    if (foldersFirst && isFolder(left) !== isFolder(right)) return isFolder(left) ? -1 : 1;
     let result = 0;
     if (sort === "name-asc" || sort === "name-desc") result = collator.compare(left.name, right.name) * (sort === "name-desc" ? -1 : 1);
     else if (sort === "modified-asc" || sort === "modified-desc") result = (numericValue(left.modifiedTime ? String(Date.parse(left.modifiedTime)) : null) - numericValue(right.modifiedTime ? String(Date.parse(right.modifiedTime)) : null)) * (sort === "modified-desc" ? -1 : 1);
     else if (sort === "size-asc" || sort === "size-desc") result = (numericValue(left.size) - numericValue(right.size)) * (sort === "size-desc" ? -1 : 1);
     else result = collator.compare(fileType(left), fileType(right));
     return result || collator.compare(left.name, right.name);
-  }), [files, foldersFirst, sort]);
+  }), [files, sort]);
 
   if (!files.length) return <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">This Google Drive folder is currently empty.</div>;
-  return <div className="space-y-3">
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 p-2.5">
-      <div className="flex items-center gap-2 text-sm font-medium"><ArrowDownAZ className="h-4 w-4" />Sort attachments</div>
-      <div className="flex flex-wrap items-center gap-3">
-        <Select value={sort} onValueChange={(value) => setSort(value as SortOption)}>
-          <SelectTrigger size="sm" className="w-[210px]" aria-label="Sort attachments"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="modified-asc">Modified date: Oldest first</SelectItem>
-            <SelectItem value="modified-desc">Modified date: Newest first</SelectItem>
-            <SelectItem value="name-asc">File name: A–Z</SelectItem>
-            <SelectItem value="name-desc">File name: Z–A</SelectItem>
-            <SelectItem value="size-desc">File size: Largest first</SelectItem>
-            <SelectItem value="size-asc">File size: Smallest first</SelectItem>
-            <SelectItem value="type-asc">File type</SelectItem>
-          </SelectContent>
-        </Select>
-        <label className="flex cursor-pointer items-center gap-2 whitespace-nowrap text-sm"><Checkbox checked={foldersFirst} onCheckedChange={(checked) => setFoldersFirst(checked === true)} />Folders first</label>
-      </div>
-    </div>
-    <div className="divide-y overflow-hidden rounded-lg border">{sortedFiles.map((file) => {
+  return <div className="divide-y overflow-hidden rounded-lg border">{sortedFiles.map((file) => {
       const folder = isFolder(file);
       return <div key={file.id} className={`flex items-center justify-between gap-3 p-3 ${selectedId === file.id ? "bg-muted" : ""}`}>
         <button className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => folder ? onBrowse(file) : onSelect(file)}>
@@ -65,6 +41,5 @@ export function AttachmentList({ files, selectedId, downloadingId, managingFolde
         </button>
         <div className="flex shrink-0 gap-1">{folder ? <><Button variant="outline" size="sm" onClick={() => onBrowse(file)} disabled={managingFolderId === file.id}>Browse</Button><Button variant="ghost" size="icon" onClick={() => onRenameFolder(file)} disabled={managingFolderId === file.id} aria-label={`Rename ${file.name}`}>{managingFolderId === file.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}</Button><Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => onTrashFolder(file)} disabled={managingFolderId === file.id} aria-label={`Trash ${file.name}`}><Trash2 className="h-4 w-4" /></Button></> : <><Button variant="outline" size="sm" onClick={() => onSelect(file)} disabled={managingFileId === file.id}><Eye className="mr-2 h-4 w-4" />Preview</Button>{canShare ? <Button variant="ghost" size="icon" onClick={() => onShare(file)} disabled={managingFileId === file.id} aria-label={`Share ${file.name}`}><Share2 className="h-4 w-4" /></Button> : null}<Button variant="ghost" size="icon" onClick={() => onDownload(file)} disabled={downloadingId === file.id || managingFileId === file.id} aria-label={`Download ${file.name}`}>{downloadingId === file.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}</Button><Button variant="ghost" size="icon" onClick={() => onRenameFile(file)} disabled={managingFileId === file.id} aria-label={`Rename ${file.name}`}>{managingFileId === file.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}</Button><Button variant="ghost" size="icon" onClick={() => onMoveFile(file)} disabled={managingFileId === file.id} aria-label={`Move ${file.name}`}><FolderInput className="h-4 w-4" /></Button><Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" onClick={() => onTrashFile(file)} disabled={managingFileId === file.id} aria-label={`Trash ${file.name}`}><Trash2 className="h-4 w-4" /></Button></>}</div>
       </div>;
-    })}</div>
-  </div>;
+    })}</div>;
 }

@@ -1,14 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, CheckCircle2, FolderPlus, Loader2, RefreshCw, Upload, UploadCloud } from "lucide-react";
+import { ArrowDownAZ, ArrowLeft, CheckCircle2, FolderPlus, Loader2, RefreshCw, Upload, UploadCloud } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 import { AttachmentWorkspace, type PreviewFile } from "@/components/drive-preview";
 import type { OnlyOfficeSession } from "@/components/drive-preview/onlyoffice-editor";
 import { DriveUploadManager, type UploadItem } from "@/components/drive-upload-manager";
+import type { AttachmentSortOption } from "@/components/drive-preview/attachment-list";
 
 type DriveFile = PreviewFile;
 
@@ -48,6 +50,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
   const [creatingChildFolder, setCreatingChildFolder] = useState(false);
   const [managingFileId, setManagingFileId] = useState<string | null>(null);
   const [canShareFiles, setCanShareFiles] = useState(false);
+  const [attachmentSort, setAttachmentSort] = useState<AttachmentSortOption>("modified-asc");
   const uploadRequests = useRef(new Map<string, XMLHttpRequest>());
   const uploadInput = useRef<HTMLInputElement>(null);
   const uploadDismissTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
@@ -282,6 +285,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
         {drive ? <Button variant="outline" onClick={() => void createChildFolder()} disabled={loading || creatingChildFolder}><FolderPlus className="mr-2 h-4 w-4" />{creatingChildFolder ? "Creating…" : "Create Folder"}</Button> : null}
         {drive ? <><input ref={uploadInput} type="file" multiple className="sr-only" onChange={(event) => { addUploads(Array.from(event.target.files ?? [])); event.target.value = ""; }} /><Button variant="outline" onClick={() => uploadInput.current?.click()} disabled={loading || creating}><Upload className="mr-2 h-4 w-4" />Upload Files</Button></> : null}
         <Button variant="outline" onClick={() => void load(drive?.currentFolder.id, Boolean(drive))} disabled={loading || refreshing || creating}><RefreshCw className={`mr-2 h-4 w-4 ${loading || refreshing ? "animate-spin" : ""}`} />Refresh</Button>
+        <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="icon" aria-label="Sort attachments" title="Sort attachments"><ArrowDownAZ className="h-4 w-4" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end" className="w-56"><DropdownMenuLabel>Sort attachments</DropdownMenuLabel><DropdownMenuRadioGroup value={attachmentSort} onValueChange={(value) => setAttachmentSort(value as AttachmentSortOption)}><DropdownMenuRadioItem value="modified-asc">Modified: Oldest first</DropdownMenuRadioItem><DropdownMenuRadioItem value="modified-desc">Modified: Newest first</DropdownMenuRadioItem><DropdownMenuRadioItem value="name-asc">File name: A–Z</DropdownMenuRadioItem><DropdownMenuRadioItem value="name-desc">File name: Z–A</DropdownMenuRadioItem><DropdownMenuRadioItem value="size-desc">Size: Largest first</DropdownMenuRadioItem><DropdownMenuRadioItem value="size-asc">Size: Smallest first</DropdownMenuRadioItem><DropdownMenuRadioItem value="type-asc">File type</DropdownMenuRadioItem></DropdownMenuRadioGroup></DropdownMenuContent></DropdownMenu>
       </div>
     </div>
     {loading && !drive ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Finding the docket folder and loading files…</div> : null}
@@ -289,6 +293,6 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     {folderCreated ? <div className="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800"><CheckCircle2 className="h-6 w-6 motion-safe:animate-[bounce_600ms_ease-out_1]" /><div><p className="font-medium">Folder created</p><p className="text-sm">The new Google Drive docket folder is empty.</p></div></div> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />Create GDrive folder</Button> : null}</AlertDescription></Alert> : null}
     {drive ? <DriveUploadManager uploads={uploads} onCancel={(id) => uploadRequests.current.get(id)?.abort()} onRetry={retryUpload} /> : null}
-    {drive && !loading ? <AttachmentWorkspace files={drive.files} downloadingId={downloadingId} managingFolderId={managingFolderId} managingFileId={managingFileId} canShare={canShareFiles} onBrowse={browseFolder} onDownload={(file) => void downloadFile(file)} onShare={(file) => void shareFile(file)} onRenameFile={(file) => void renameFile(file)} onMoveFile={(file) => void moveFile(file)} onTrashFile={(file) => void trashFile(file)} onRenameFolder={(folder) => void renameFolder(folder)} onTrashFolder={(folder) => void trashFolder(folder)} loadBlob={loadPreviewBlob} startEdit={startDocumentEdit} checkEditStatus={checkDocumentEditStatus} cancelEditSession={cancelDocumentEditSession} onDocumentSaved={() => void load(drive.currentFolder.id)} onPreviewChange={onPreviewChange} onError={setError} /> : null}
+    {drive && !loading ? <AttachmentWorkspace files={drive.files} sort={attachmentSort} downloadingId={downloadingId} managingFolderId={managingFolderId} managingFileId={managingFileId} canShare={canShareFiles} onBrowse={browseFolder} onDownload={(file) => void downloadFile(file)} onShare={(file) => void shareFile(file)} onRenameFile={(file) => void renameFile(file)} onMoveFile={(file) => void moveFile(file)} onTrashFile={(file) => void trashFile(file)} onRenameFolder={(folder) => void renameFolder(folder)} onTrashFolder={(folder) => void trashFolder(folder)} loadBlob={loadPreviewBlob} startEdit={startDocumentEdit} checkEditStatus={checkDocumentEditStatus} cancelEditSession={cancelDocumentEditSession} onDocumentSaved={() => void load(drive.currentFolder.id)} onPreviewChange={onPreviewChange} onError={setError} /> : null}
   </div>;
 }
