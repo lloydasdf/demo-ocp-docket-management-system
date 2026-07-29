@@ -235,6 +235,13 @@ export async function trashDriveItem(itemId: string) {
   });
 }
 
+export async function moveDriveItem(itemId: string, destinationFolderId: string, currentParentIds: string[]) {
+  const params = new URLSearchParams({ addParents: destinationFolderId, fields: 'id,name,mimeType,webViewLink,parents,modifiedTime,size' });
+  if (currentParentIds.length) params.set('removeParents', currentParentIds.join(','));
+  const response = await driveFetch(`files/${encodeURIComponent(itemId)}?${params}`, { method: 'PATCH' });
+  return response.json() as Promise<DriveChildMetadata & { parents?: string[]; modifiedTime?: string; size?: string }>;
+}
+
 export async function renameFolder(folderId: string, name: string) {
   const response = await driveFetch(`files/${encodeURIComponent(folderId)}?fields=id,name,webViewLink,parents`, {
     method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }),

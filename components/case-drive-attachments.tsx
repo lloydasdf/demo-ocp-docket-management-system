@@ -46,6 +46,8 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
   const [dragging, setDragging] = useState(false);
   const [managingFolderId, setManagingFolderId] = useState<string | null>(null);
   const [creatingChildFolder, setCreatingChildFolder] = useState(false);
+  const [managingFileId, setManagingFileId] = useState<string | null>(null);
+  const [canShareFiles, setCanShareFiles] = useState(false);
   const uploadRequests = useRef(new Map<string, XMLHttpRequest>());
   const uploadInput = useRef<HTMLInputElement>(null);
   const uploadDismissTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
@@ -53,6 +55,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
   const currentFolderId = useRef<string | null>(null);
 
   useEffect(() => () => { uploadRequests.current.forEach((request) => request.abort()); uploadDismissTimers.current.forEach(clearTimeout); }, []);
+  useEffect(() => { setCanShareFiles(typeof navigator !== "undefined" && typeof navigator.share === "function" && typeof navigator.canShare === "function"); }, []);
 
   const load = useCallback(async (folderId?: string, background = false) => {
     const sequence = ++loadSequence.current;
@@ -216,6 +219,41 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     finally { setManagingFolderId(null); }
   }
 
+  async function fileRequest(file: DriveFile, method: "PATCH" | "DELETE", body?: Record<string, string>) {
+    const supabase = await getSupabaseBrowserClient(); const { data } = await supabase.auth.getSession(); if (!data.session?.access_token) throw new Error("Your session has expired.");
+    const response = await fetch(`/api/cases/${caseId}/drive/files/${encodeURIComponent(file.id)}`, { method, headers: { Authorization: `Bearer ${data.session.access_token}`, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const result = await response.json().catch(() => null) as { error?: { message?: string } } | null; if (!response.ok) throw new Error(result?.error?.message ?? "The file operation failed.");
+  }
+
+  async function shareFile(file: DriveFile) {
+    try { const downloaded = await fetchFileBlob(file); const sharedFile = new File([downloaded.blob], file.name, { type: file.mimeType || downloaded.blob.type || "application/octet-stream" }); if (!navigator.canShare?.({ files: [sharedFile] })) throw new Error("This browser cannot share this file."); await navigator.share({ title: file.name, files: [sharedFile] }); }
+    catch (shareError) { if (shareError instanceof DOMException && shareError.name === "AbortError") return; setError(shareError instanceof Error ? shareError.message : "The file could not be shared."); }
+  }
+
+  async function renameFile(file: DriveFile) {
+    if (!drive) return; const name = window.prompt("Rename file", file.name); if (name === null || name === file.name) return; if (!name.trim()) { setError("Enter a file name."); return; }
+    setManagingFileId(file.id); setError(null);
+    try { await fileRequest(file, "PATCH", { action: "rename", name }); setDrive((current) => current ? { ...current, files: current.files.map((item) => item.id === file.id ? { ...item, name: name.trim(), modifiedTime: new Date().toISOString() } : item) } : current); void load(drive.currentFolder.id, true); }
+    catch (operationError) { setError(operationError instanceof Error ? operationError.message : "The file could not be renamed."); } finally { setManagingFileId(null); }
+  }
+
+  async function moveFile(file: DriveFile) {
+    if (!drive) return;
+    const candidates = [...folderStack, ...drive.files.filter((item) => item.mimeType === "application/vnd.google-apps.folder").map((item) => ({ id: item.id, name: item.name }))].filter((folder, index, all) => all.findIndex((item) => item.id === folder.id) === index && folder.id !== drive.currentFolder.id);
+    if (!candidates.length) { setError("Create or browse to another folder before moving this file."); return; }
+    const choice = window.prompt(`Move “${file.name}” to:\n${candidates.map((folder, index) => `${index + 1}. ${folder.name}`).join("\n")}\n\nEnter a folder number:`); if (choice === null) return;
+    const destination = candidates[Number(choice) - 1]; if (!destination) { setError("Choose a valid destination folder number."); return; }
+    setManagingFileId(file.id); setError(null);
+    try { await fileRequest(file, "PATCH", { action: "move", destinationFolderId: destination.id }); setDrive((current) => current ? { ...current, files: current.files.filter((item) => item.id !== file.id) } : current); void load(drive.currentFolder.id, true); }
+    catch (operationError) { setError(operationError instanceof Error ? operationError.message : "The file could not be moved."); } finally { setManagingFileId(null); }
+  }
+
+  async function trashFile(file: DriveFile) {
+    if (!drive || !window.confirm(`Move “${file.name}” to Google Drive trash?`)) return; setManagingFileId(file.id); setError(null);
+    try { await fileRequest(file, "DELETE"); setDrive((current) => current ? { ...current, files: current.files.filter((item) => item.id !== file.id) } : current); void load(drive.currentFolder.id, true); }
+    catch (operationError) { setError(operationError instanceof Error ? operationError.message : "The file could not be moved to trash."); } finally { setManagingFileId(null); }
+  }
+
   function browseFolder(folder: DriveFile) {
     if (!drive) return;
     setFolderStack((items) => [...items, { id: drive.currentFolder.id, name: drive.currentFolder.name }]);
@@ -251,6 +289,6 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     {folderCreated ? <div className="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800"><CheckCircle2 className="h-6 w-6 motion-safe:animate-[bounce_600ms_ease-out_1]" /><div><p className="font-medium">Folder created</p><p className="text-sm">The new Google Drive docket folder is empty.</p></div></div> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />Create GDrive folder</Button> : null}</AlertDescription></Alert> : null}
     {drive ? <DriveUploadManager uploads={uploads} onCancel={(id) => uploadRequests.current.get(id)?.abort()} onRetry={retryUpload} /> : null}
-    {drive && !loading ? <AttachmentWorkspace files={drive.files} downloadingId={downloadingId} managingFolderId={managingFolderId} onBrowse={browseFolder} onDownload={(file) => void downloadFile(file)} onRenameFolder={(folder) => void renameFolder(folder)} onTrashFolder={(folder) => void trashFolder(folder)} loadBlob={loadPreviewBlob} startEdit={startDocumentEdit} checkEditStatus={checkDocumentEditStatus} cancelEditSession={cancelDocumentEditSession} onDocumentSaved={() => void load(drive.currentFolder.id)} onPreviewChange={onPreviewChange} onError={setError} /> : null}
+    {drive && !loading ? <AttachmentWorkspace files={drive.files} downloadingId={downloadingId} managingFolderId={managingFolderId} managingFileId={managingFileId} canShare={canShareFiles} onBrowse={browseFolder} onDownload={(file) => void downloadFile(file)} onShare={(file) => void shareFile(file)} onRenameFile={(file) => void renameFile(file)} onMoveFile={(file) => void moveFile(file)} onTrashFile={(file) => void trashFile(file)} onRenameFolder={(folder) => void renameFolder(folder)} onTrashFolder={(folder) => void trashFolder(folder)} loadBlob={loadPreviewBlob} startEdit={startDocumentEdit} checkEditStatus={checkDocumentEditStatus} cancelEditSession={cancelDocumentEditSession} onDocumentSaved={() => void load(drive.currentFolder.id)} onPreviewChange={onPreviewChange} onError={setError} /> : null}
   </div>;
 }
