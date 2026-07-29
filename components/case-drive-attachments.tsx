@@ -92,11 +92,11 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     finally { setCreating(false); }
   }
 
-  async function fetchFileBlob(file: DriveFile) {
+  async function fetchFileBlob(file: DriveFile, inline = false) {
       const supabase = await getSupabaseBrowserClient();
       const { data } = await supabase.auth.getSession();
       if (!data.session?.access_token) throw new Error("Your session has expired.");
-      const response = await fetch(`/api/cases/${caseId}/drive/files/${encodeURIComponent(file.id)}/download`, { headers: { Authorization: `Bearer ${data.session.access_token}` } });
+      const response = await fetch(`/api/cases/${caseId}/drive/files/${encodeURIComponent(file.id)}/download${inline ? "?disposition=inline" : ""}`, { headers: { Authorization: `Bearer ${data.session.access_token}` } });
       if (!response.ok) {
         const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
         throw new Error(body?.error?.message ?? "Unable to download the file.");
@@ -105,7 +105,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
   }
 
   async function loadPreviewBlob(file: DriveFile) {
-    return (await fetchFileBlob(file)).blob;
+    return (await fetchFileBlob(file, /\.pdf$/i.test(file.name) || file.mimeType === "application/pdf")).blob;
   }
 
   async function startDocumentEdit(file: DriveFile): Promise<OnlyOfficeSession> {
