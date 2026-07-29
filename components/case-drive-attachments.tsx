@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, CheckCircle2, FolderPlus, Loader2, RefreshCw, UploadCloud } from "lucide-react";
+import { ArrowLeft, CheckCircle2, FolderPlus, Loader2, RefreshCw, Upload, UploadCloud } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
   const [error, setError] = useState<string | null>(null);
   const [canCreate, setCanCreate] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [folderStack, setFolderStack] = useState<Array<{ id: string; name: string }>>([]);
@@ -46,21 +47,26 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
   const [managingFolderId, setManagingFolderId] = useState<string | null>(null);
   const [creatingChildFolder, setCreatingChildFolder] = useState(false);
   const uploadRequests = useRef(new Map<string, XMLHttpRequest>());
+  const uploadInput = useRef<HTMLInputElement>(null);
+  const uploadDismissTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const loadSequence = useRef(0);
   const currentFolderId = useRef<string | null>(null);
 
-  useEffect(() => () => { uploadRequests.current.forEach((request) => request.abort()); }, []);
+  useEffect(() => () => { uploadRequests.current.forEach((request) => request.abort()); uploadDismissTimers.current.forEach(clearTimeout); }, []);
 
-  const load = useCallback(async (folderId?: string) => {
-    setLoading(true); setError(null); setFolderCreated(false);
+  const load = useCallback(async (folderId?: string, background = false) => {
+    const sequence = ++loadSequence.current;
+    if (background) setRefreshing(true); else setLoading(true);
+    setError(null); setFolderCreated(false);
     try {
       const { response, body } = await authenticatedRequest(caseId, folderId ? `files?folderId=${encodeURIComponent(folderId)}` : "files");
       if (!response.ok || !body.data) {
         setCanCreate(Boolean(body.error?.canCreate));
         throw new Error(body.error?.message ?? "Unable to read Google Drive attachments.");
       }
-      setDrive(body.data); currentFolderId.current = body.data.currentFolder.id; setCanCreate(false);
-    } catch (loadError) { setError(loadError instanceof Error ? loadError.message : "Unable to read Google Drive attachments."); }
-    finally { setLoading(false); }
+      if (sequence === loadSequence.current) { setDrive(body.data); currentFolderId.current = body.data.currentFolder.id; setCanCreate(false); }
+    } catch (loadError) { if (sequence === loadSequence.current) setError(loadError instanceof Error ? loadError.message : "Unable to read Google Drive attachments."); }
+    finally { if (sequence === loadSequence.current) { if (background) setRefreshing(false); else setLoading(false); } }
   }, [caseId]);
 
   useEffect(() => { void load(); }, [load]);
@@ -144,7 +150,18 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     request.upload.onprogress = (event) => { if (event.lengthComputable) setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, progress: Math.min(99, Math.round(event.loaded / event.total * 100)) } : upload)); };
     request.onload = () => {
       uploadRequests.current.delete(item.id);
-      if (request.status >= 200 && request.status < 300) { setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, status: "complete", progress: 100 } : upload)); if (currentFolderId.current === item.destinationId) void load(item.destinationId); return; }
+      if (request.status >= 200 && request.status < 300) {
+        setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, status: "complete", progress: 100 } : upload));
+        if (currentFolderId.current === item.destinationId) {
+          try {
+            const uploaded = (JSON.parse(request.responseText) as { data?: { item?: Partial<DriveFile> } }).data?.item;
+            if (uploaded?.id && uploaded.name) setDrive((current) => current && current.currentFolder.id === item.destinationId ? { ...current, files: [...current.files.filter((file) => file.id !== uploaded.id), { id: uploaded.id!, name: uploaded.name!, mimeType: uploaded.mimeType || item.file.type || "application/octet-stream", webViewLink: uploaded.webViewLink ?? null, webContentLink: uploaded.webContentLink ?? null, size: uploaded.size ?? String(item.file.size), modifiedTime: uploaded.modifiedTime ?? new Date().toISOString() }] } : current);
+          } catch { /* The background refresh remains authoritative. */ }
+          void load(item.destinationId, true);
+        }
+        const timer = setTimeout(() => { setUploads((items) => items.filter((upload) => upload.id !== item.id)); uploadDismissTimers.current.delete(timer); }, 1200); uploadDismissTimers.current.add(timer);
+        return;
+      }
       let message = "The file could not be uploaded."; try { message = (JSON.parse(request.responseText) as { error?: { message?: string } }).error?.message ?? message; } catch { /* Non-JSON error response. */ }
       setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, status: "failed", error: message } : upload));
     };
@@ -156,8 +173,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
 
   function addUploads(files: File[]) {
     if (!drive || !files.length) return;
-    const destinationName = [...folderStack.map((folder) => folder.name), drive.currentFolder.name].join(" / ");
-    const items = files.map<UploadItem>((file) => ({ id: crypto.randomUUID(), file, destinationId: drive.currentFolder.id, destinationName, progress: 0, status: "queued" }));
+    const items = files.map<UploadItem>((file) => ({ id: crypto.randomUUID(), file, destinationId: drive.currentFolder.id, progress: 0, status: "queued" }));
     const valid: UploadItem[] = []; const rejected: UploadItem[] = [];
     items.forEach((item) => { if (!item.file.name.trim()) rejected.push({ ...item, status: "failed", error: "The file name is invalid." }); else if (!item.file.size) rejected.push({ ...item, status: "failed", error: "Empty files cannot be uploaded." }); else if (item.file.size > 100 * 1024 * 1024) rejected.push({ ...item, status: "failed", error: "Each upload is limited to 100 MB." }); else valid.push(item); });
     setUploads((current) => [...valid, ...rejected, ...current].slice(0, 50)); valid.forEach((item) => void uploadOne(item));
@@ -178,7 +194,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     if (!drive) return; const name = window.prompt("New folder name"); if (name === null) return;
     if (!name.trim()) { setError("Enter a folder name."); return; }
     setCreatingChildFolder(true); setError(null);
-    try { await folderRequest("POST", { parentId: drive.currentFolder.id, name }); await load(drive.currentFolder.id); }
+    try { await folderRequest("POST", { parentId: drive.currentFolder.id, name }); await load(drive.currentFolder.id, true); }
     catch (operationError) { setError(operationError instanceof Error ? operationError.message : "The folder could not be created."); }
     finally { setCreatingChildFolder(false); }
   }
@@ -187,7 +203,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     if (!drive) return; const name = window.prompt("Rename folder", folder.name); if (name === null || name === folder.name) return;
     if (!name.trim()) { setError("Enter a folder name."); return; }
     setManagingFolderId(folder.id); setError(null);
-    try { await folderRequest("PATCH", { folderId: folder.id, name }); await load(drive.currentFolder.id); }
+    try { await folderRequest("PATCH", { folderId: folder.id, name }); await load(drive.currentFolder.id, true); }
     catch (operationError) { setError(operationError instanceof Error ? operationError.message : "The folder could not be renamed."); }
     finally { setManagingFolderId(null); }
   }
@@ -195,7 +211,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
   async function trashFolder(folder: DriveFile) {
     if (!drive || !window.confirm(`Move “${folder.name}” and all of its contents to Google Drive trash?`)) return;
     setManagingFolderId(folder.id); setError(null);
-    try { await folderRequest("DELETE", undefined, folder.id); await load(drive.currentFolder.id); }
+    try { await folderRequest("DELETE", undefined, folder.id); await load(drive.currentFolder.id, true); }
     catch (operationError) { setError(operationError instanceof Error ? operationError.message : "The folder could not be moved to trash."); }
     finally { setManagingFolderId(null); }
   }
@@ -226,14 +242,15 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
       <div className="flex gap-2">
         {folderStack.length ? <Button variant="outline" onClick={browseBack} disabled={loading}><ArrowLeft className="mr-2 h-4 w-4" />Back</Button> : null}
         {drive ? <Button variant="outline" onClick={() => void createChildFolder()} disabled={loading || creatingChildFolder}><FolderPlus className="mr-2 h-4 w-4" />{creatingChildFolder ? "Creating…" : "Create Folder"}</Button> : null}
-        <Button variant="outline" onClick={() => void load(drive?.currentFolder.id)} disabled={loading || creating}><RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</Button>
+        {drive ? <><input ref={uploadInput} type="file" multiple className="sr-only" onChange={(event) => { addUploads(Array.from(event.target.files ?? [])); event.target.value = ""; }} /><Button variant="outline" onClick={() => uploadInput.current?.click()} disabled={loading || creating}><Upload className="mr-2 h-4 w-4" />Upload Files</Button></> : null}
+        <Button variant="outline" onClick={() => void load(drive?.currentFolder.id, Boolean(drive))} disabled={loading || refreshing || creating}><RefreshCw className={`mr-2 h-4 w-4 ${loading || refreshing ? "animate-spin" : ""}`} />Refresh</Button>
       </div>
     </div>
     {loading && !drive ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Finding the docket folder and loading files…</div> : null}
     {creating ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Creating folder</div> : null}
     {folderCreated ? <div className="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800"><CheckCircle2 className="h-6 w-6 motion-safe:animate-[bounce_600ms_ease-out_1]" /><div><p className="font-medium">Folder created</p><p className="text-sm">The new Google Drive docket folder is empty.</p></div></div> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />Create GDrive folder</Button> : null}</AlertDescription></Alert> : null}
-    {drive ? <DriveUploadManager uploads={uploads} destination={destination} disabled={loading || creating} onChoose={addUploads} onCancel={(id) => uploadRequests.current.get(id)?.abort()} onRetry={retryUpload} /> : null}
+    {drive ? <DriveUploadManager uploads={uploads} onCancel={(id) => uploadRequests.current.get(id)?.abort()} onRetry={retryUpload} /> : null}
     {drive && !loading ? <AttachmentWorkspace files={drive.files} downloadingId={downloadingId} managingFolderId={managingFolderId} onBrowse={browseFolder} onDownload={(file) => void downloadFile(file)} onRenameFolder={(folder) => void renameFolder(folder)} onTrashFolder={(folder) => void trashFolder(folder)} loadBlob={loadPreviewBlob} startEdit={startDocumentEdit} checkEditStatus={checkDocumentEditStatus} cancelEditSession={cancelDocumentEditSession} onDocumentSaved={() => void load(drive.currentFolder.id)} onPreviewChange={onPreviewChange} onError={setError} /> : null}
   </div>;
 }
