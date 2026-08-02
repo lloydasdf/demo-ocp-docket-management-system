@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict JGMyJ2gUB9GVTfI74Woqh85KNscdqsp3Mg1EgndKzZ2rGcz2YogclNquu76bah7
+\restrict dYWBEheNYxvxjJuFT7q21TJRZiPhg96dV4fiSIUWgR7sfFLGX90McGrTw0ibWsB
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 18.1
@@ -2311,6 +2311,98 @@ $$;
 
 
 --
+-- Name: create_docket_entry_idempotent(jsonb, uuid, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.create_docket_entry_idempotent(p_payload jsonb, p_idempotency_key uuid, p_linked_pe_case_id bigint DEFAULT NULL::bigint) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_auth_uid uuid := auth.uid();
+  v_request public.docket_creation_requests%ROWTYPE;
+  v_result jsonb;
+  v_case_id bigint;
+  v_candidate_count integer;
+BEGIN
+  IF v_auth_uid IS NULL THEN RAISE EXCEPTION 'Authentication required' USING ERRCODE = '42501'; END IF;
+
+  -- Serializes this user's key, including stale-claim recovery and concurrent retries.
+  PERFORM pg_advisory_xact_lock(hashtextextended(v_auth_uid::text || ':' || p_idempotency_key::text, 0));
+
+  SELECT * INTO v_request
+  FROM public.docket_creation_requests
+  WHERE auth_user_id = v_auth_uid AND idempotency_key = p_idempotency_key
+  FOR UPDATE;
+
+  IF v_request.result IS NOT NULL THEN RETURN v_request.result; END IF;
+
+  IF v_request.case_id IS NOT NULL THEN
+    SELECT jsonb_build_object(
+      'caseId', c.id, 'docketTypeId', c.docket_type_id, 'docketYear', c.docket_year,
+      'docketNumber', c.docket_number, 'docketMonthCode', c.docket_month_code,
+      'docketDisplayNumber', concat_ws('-', c.region_code, dt.prefix,
+        right(c.docket_year::text, 2) || coalesce(c.docket_month_code, ''), lpad(c.docket_number::text, 6, '0'))
+    ) INTO v_result FROM public.cases c JOIN public.docket_types dt ON dt.id = c.docket_type_id
+    WHERE c.id = v_request.case_id;
+    IF v_result IS NOT NULL THEN
+      UPDATE public.docket_creation_requests SET status='CREATED', result=v_result, updated_at=now()
+      WHERE auth_user_id=v_auth_uid AND idempotency_key=p_idempotency_key;
+      RETURN v_result;
+    END IF;
+  END IF;
+
+  IF v_request.status = 'CREATING' AND v_request.updated_at > now() - interval '2 minutes' THEN
+    RAISE EXCEPTION 'DOCKET_CREATION_IN_PROGRESS' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- Recover claims written by the old, non-atomic endpoint. If its RPC committed
+  -- before the process died, the earliest matching case after the claim is reused.
+  IF v_request.status = 'CREATING' THEN
+    SELECT count(*), min(c.id) INTO v_candidate_count, v_case_id
+    FROM public.cases c
+    JOIN public.users u ON u.id = c.created_by_user_id
+    WHERE u.auth_user_id = v_auth_uid
+      AND c.created_at >= v_request.created_at - interval '1 second'
+      AND c.docket_type_id = nullif(p_payload->>'docketTypeId','')::bigint
+      AND c.docket_year = nullif(p_payload->>'docketYear','')::integer
+      AND c.date_received = nullif(p_payload->>'dateReceived','')::date;
+
+    IF v_candidate_count > 0 THEN
+      SELECT jsonb_build_object(
+        'caseId', c.id, 'docketTypeId', c.docket_type_id, 'docketYear', c.docket_year,
+        'docketNumber', c.docket_number, 'docketMonthCode', c.docket_month_code,
+        'docketDisplayNumber', concat_ws('-', c.region_code, dt.prefix,
+          right(c.docket_year::text, 2) || coalesce(c.docket_month_code, ''), lpad(c.docket_number::text, 6, '0'))
+      ) INTO v_result FROM public.cases c JOIN public.docket_types dt ON dt.id=c.docket_type_id WHERE c.id=v_case_id;
+      UPDATE public.docket_creation_requests SET status='CREATED', case_id=v_case_id, result=v_result, updated_at=now()
+      WHERE auth_user_id=v_auth_uid AND idempotency_key=p_idempotency_key;
+      RETURN v_result;
+    END IF;
+
+    DELETE FROM public.docket_creation_requests
+    WHERE auth_user_id=v_auth_uid AND idempotency_key=p_idempotency_key;
+  END IF;
+
+  INSERT INTO public.docket_creation_requests(auth_user_id,idempotency_key,status,updated_at)
+  VALUES(v_auth_uid,p_idempotency_key,'CREATING',now());
+
+  IF p_linked_pe_case_id IS NULL THEN
+    v_result := public.create_new_docket_entry(p_payload);
+  ELSE
+    v_result := public.create_linked_docket_entry(p_payload,p_linked_pe_case_id);
+  END IF;
+
+  v_case_id := nullif(v_result->>'caseId','')::bigint;
+  UPDATE public.docket_creation_requests
+  SET status='CREATED', case_id=v_case_id, result=v_result, updated_at=now()
+  WHERE auth_user_id=v_auth_uid AND idempotency_key=p_idempotency_key;
+  RETURN v_result;
+END;
+$$;
+
+
+--
 -- Name: create_linked_docket_entry(jsonb, bigint); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2426,11 +2518,53 @@ BEGIN
     INSERT INTO public.case_addresses(case_id,address_id,address_type_id,is_primary,remarks) VALUES (v_case_id,v_address_id,(v_item->>'addressTypeId')::bigint,COALESCE((v_item->>'isPrimary')::boolean,true),nullif(btrim(v_item->>'remarks'),''));
   END LOOP;
 
+  
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_payload->'violations') LOOP
     v_violation_id := COALESCE(NULLIF(v_item->>'existingViolationId',''), NULLIF(v_item->>'violationId',''))::bigint;
-    IF v_violation_id IS NULL THEN INSERT INTO public.violations(title,reference_code,short_label,description,law_reference,created_by_user_id,is_active,canonical_title) VALUES (btrim(v_item#>>'{newViolation,title}'),nullif(btrim(v_item#>>'{newViolation,referenceCode}'),''),nullif(btrim(v_item#>>'{newViolation,shortLabel}'),''),nullif(btrim(v_item#>>'{newViolation,description}'),''),nullif(btrim(v_item#>>'{newViolation,lawReference}'),''),v_user_id,true,regexp_replace(lower(btrim(v_item#>>'{newViolation,title}')), '\s+', ' ', 'g')) RETURNING id INTO v_violation_id; v_created_violations:=v_created_violations+1; ELSE v_reused_violations:=v_reused_violations+1; END IF;
-    IF v_violation_id = ANY(v_seen_violation_ids) THEN RAISE EXCEPTION 'Duplicate violation id % in payload', v_violation_id; END IF; v_seen_violation_ids:=array_append(v_seen_violation_ids,v_violation_id);
-    INSERT INTO public.case_violations(case_id,violation_id,violation_order,raw_violation_text) VALUES (v_case_id,v_violation_id,COALESCE((v_item->>'violationOrder')::int,v_violation_count+1),nullif(btrim(v_item->>'rawViolationText'),'')); v_violation_count:=v_violation_count+1;
+    IF v_violation_id IS NULL THEN
+      INSERT INTO public.violations(title,reference_code,short_label,description,law_reference,created_by_user_id,is_active,canonical_title)
+      VALUES (
+        btrim(v_item#>>'{newViolation,title}'),
+        nullif(btrim(v_item#>>'{newViolation,referenceCode}'),''),
+        nullif(btrim(v_item#>>'{newViolation,shortLabel}'),''),
+        nullif(btrim(v_item#>>'{newViolation,description}'),''),
+        nullif(btrim(v_item#>>'{newViolation,lawReference}'),''),
+        v_user_id,
+        true,
+        regexp_replace(lower(btrim(v_item#>>'{newViolation,title}')), '\s+', ' ', 'g')
+      )
+      ON CONFLICT (canonical_title) DO NOTHING
+      RETURNING id INTO v_violation_id;
+
+      IF v_violation_id IS NULL THEN
+        SELECT id
+        INTO v_violation_id
+        FROM public.violations
+        WHERE canonical_title = regexp_replace(lower(btrim(v_item#>>'{newViolation,title}')), '\s+', ' ', 'g');
+
+        IF v_violation_id IS NULL THEN
+          RAISE EXCEPTION 'Unable to resolve violation title %', btrim(v_item#>>'{newViolation,title}');
+        END IF;
+
+        v_reused_violations := v_reused_violations + 1;
+      ELSE
+        v_created_violations := v_created_violations + 1;
+      END IF;
+    ELSE
+      SELECT id INTO v_violation_id FROM public.violations WHERE id = v_violation_id;
+      IF v_violation_id IS NULL THEN
+        RAISE EXCEPTION 'Existing violation not found';
+      END IF;
+      v_reused_violations := v_reused_violations + 1;
+    END IF;
+
+    IF v_violation_id = ANY(v_seen_violation_ids) THEN
+      RAISE EXCEPTION 'Duplicate violation id % in payload', v_violation_id;
+    END IF;
+    v_seen_violation_ids := array_append(v_seen_violation_ids, v_violation_id);
+    INSERT INTO public.case_violations(case_id,violation_id,violation_order,raw_violation_text)
+    VALUES (v_case_id,v_violation_id,COALESCE((v_item->>'violationOrder')::int,v_violation_count+1),nullif(btrim(v_item->>'rawViolationText'),''));
+    v_violation_count := v_violation_count + 1;
   END LOOP;
 
   INSERT INTO public.case_events(case_id,event_type_id,event_date,event_time,event_order,title,description,status_id,case_status_id,case_stage_id,source,source_table,created_by_user_id,updated_by_user_id) VALUES (v_case_id,v_received_event_type_id,v_status_date,v_time_received,1,'Case received',v_case_received_description,v_pending_status_id,v_pending_status_id,v_initial_stage_id,'MANUAL_ENTRY','case_status_history',v_user_id,v_user_id) RETURNING id INTO v_event_id;
@@ -7717,6 +7851,72 @@ CREATE FUNCTION public.manage_case_participants(p_payload jsonb) RETURNS bigint
     SET search_path TO 'public'
     AS $$
 DECLARE
+  v_result bigint;
+  v_participant jsonb := coalesce(p_payload->'participant', '{}'::jsonb);
+  v_participant_id bigint := nullif(v_participant->>'id', '')::bigint;
+  v_role_id bigint := nullif(v_participant->>'roleId', '')::bigint;
+  v_old_role_id bigint;
+BEGIN
+  IF lower(btrim(p_payload->>'action')) = 'edit_main_details' THEN
+    -- Identity corrections may be saved without a user-entered reason. The
+    -- legacy implementation still expects a non-empty audit description, so
+    -- provide a neutral system description rather than rejecting the request.
+    IF nullif(btrim(p_payload->>'reason'), '') IS NULL THEN
+      p_payload := jsonb_set(p_payload, '{reason}', to_jsonb('Identity details updated'::text));
+    END IF;
+
+    IF v_role_id IS NULL OR NOT EXISTS (
+      SELECT 1 FROM public.participant_roles
+      WHERE id = v_role_id AND is_active = true
+    ) THEN
+      RAISE EXCEPTION 'A valid participant role is required';
+    END IF;
+
+    SELECT role_id INTO v_old_role_id
+    FROM public.case_participants
+    WHERE id = v_participant_id
+      AND case_id = nullif(p_payload->>'caseId', '')::bigint;
+  END IF;
+
+  v_result := public.manage_case_participants_without_role_edit(p_payload);
+
+  IF lower(btrim(p_payload->>'action')) = 'edit_main_details'
+     AND v_old_role_id IS DISTINCT FROM v_role_id THEN
+    UPDATE public.case_participants
+    SET role_id = v_role_id
+    WHERE id = v_participant_id
+      AND case_id = nullif(p_payload->>'caseId', '')::bigint;
+
+    INSERT INTO public.audit_logs(
+      actor_user_id, action, entity_name, entity_id, case_id, summary, metadata,
+      old_data, new_data
+    ) VALUES (
+      nullif(p_payload->>'userId', '')::bigint,
+      'MANAGE_CASE_PARTICIPANTS_EDIT_ROLE',
+      'case_participants',
+      v_participant_id,
+      nullif(p_payload->>'caseId', '')::bigint,
+      'Corrected case participant role',
+      jsonb_build_object('reason', nullif(btrim(p_payload->>'reason'), '')),
+      jsonb_build_object('role_id', v_old_role_id),
+      jsonb_build_object('role_id', v_role_id)
+    );
+  END IF;
+
+  RETURN v_result;
+END;
+$$;
+
+
+--
+-- Name: manage_case_participants_without_role_edit(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.manage_case_participants_without_role_edit(p_payload jsonb) RETURNS bigint
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+DECLARE
   v_case_id bigint := (p_payload->>'caseId')::bigint;
   v_action text := lower(btrim(p_payload->>'action'));
   v_reason text := nullif(btrim(p_payload->>'reason'), '');
@@ -7983,14 +8183,13 @@ DECLARE
   v_violation jsonb := coalesce(p_payload->'violation', '{}'::jsonb);
   v_case_violation_id bigint := nullif(v_violation->>'id','')::bigint;
   v_violation_id bigint := nullif(v_violation->>'violationId','')::bigint;
-  v_violation_order integer := nullif(v_violation->>'violationOrder','')::integer;
-  v_raw_violation_text text := nullif(btrim(v_violation->>'rawViolationText'), '');
+  v_violation_title text := nullif(btrim(v_violation->>'violationTitle'), '');
+  v_canonical_title text;
   v_old jsonb;
   v_new jsonb;
 BEGIN
   IF v_case_id IS NULL THEN RAISE EXCEPTION 'caseId is required'; END IF;
   IF v_action IS NULL THEN RAISE EXCEPTION 'action is required'; END IF;
-  IF v_reason IS NULL THEN RAISE EXCEPTION 'reason is required'; END IF;
   IF NOT EXISTS (SELECT 1 FROM public.cases WHERE id = v_case_id) THEN RAISE EXCEPTION 'Case % not found', v_case_id; END IF;
 
   SELECT coalesce(jsonb_agg(to_jsonb(cv) || jsonb_build_object('violation', to_jsonb(v)) ORDER BY cv.violation_order NULLS LAST, cv.id), '[]'::jsonb)
@@ -8000,37 +8199,60 @@ BEGIN
   WHERE cv.case_id = v_case_id;
 
   IF v_action IN ('add', 'edit') THEN
-    IF v_violation_id IS NULL THEN RAISE EXCEPTION 'violationId is required'; END IF;
-    IF NOT EXISTS (SELECT 1 FROM public.violations WHERE id = v_violation_id) THEN RAISE EXCEPTION 'Violation % not found', v_violation_id; END IF;
+    IF v_violation_id IS NULL THEN
+      IF v_violation_title IS NULL THEN RAISE EXCEPTION 'violationTitle is required'; END IF;
+      v_canonical_title := regexp_replace(lower(v_violation_title), '\s+', ' ', 'g');
+
+      SELECT id
+      INTO v_violation_id
+      FROM public.violations
+      WHERE canonical_title = v_canonical_title
+         OR regexp_replace(lower(btrim(title)), '\s+', ' ', 'g') = v_canonical_title
+         OR regexp_replace(lower(btrim(short_label)), '\s+', ' ', 'g') = v_canonical_title
+         OR regexp_replace(lower(btrim(reference_code)), '\s+', ' ', 'g') = v_canonical_title
+      ORDER BY is_active DESC, id
+      LIMIT 1;
+
+      IF v_violation_id IS NULL THEN
+        INSERT INTO public.violations(title, created_by_user_id, is_active, canonical_title)
+        VALUES (v_violation_title, v_user_id, true, v_canonical_title)
+        ON CONFLICT (canonical_title) DO UPDATE SET is_active = true
+        RETURNING id INTO v_violation_id;
+      ELSE
+        UPDATE public.violations SET is_active = true WHERE id = v_violation_id;
+      END IF;
+    ELSIF NOT EXISTS (SELECT 1 FROM public.violations WHERE id = v_violation_id) THEN
+      RAISE EXCEPTION 'Violation % not found', v_violation_id;
+    END IF;
+
     IF v_action = 'add' THEN
       INSERT INTO public.case_violations(case_id,violation_id,violation_order,raw_violation_text)
-      VALUES (v_case_id, v_violation_id, COALESCE(v_violation_order, (SELECT COALESCE(max(cv.violation_order), 0) + 1 FROM public.case_violations cv WHERE cv.case_id = v_case_id)), v_raw_violation_text);
+      VALUES (v_case_id, v_violation_id, (SELECT COALESCE(max(cv.violation_order), 0) + 1 FROM public.case_violations cv WHERE cv.case_id = v_case_id), NULL)
+      ON CONFLICT (case_id, violation_id) DO UPDATE
+      SET is_deleted = false,
+          deleted_at = NULL,
+          deleted_by_user_id = NULL,
+          delete_reason = NULL,
+          raw_violation_text = NULL;
     ELSE
       IF v_case_violation_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
       IF EXISTS (SELECT 1 FROM public.case_violations WHERE id = v_case_violation_id AND case_id = v_case_id AND is_deleted IS TRUE) THEN RAISE EXCEPTION 'Restore violation before editing'; END IF;
       UPDATE public.case_violations
       SET violation_id = v_violation_id,
-          violation_order = v_violation_order,
-          raw_violation_text = v_raw_violation_text
+          raw_violation_text = NULL
       WHERE id = v_case_violation_id AND case_id = v_case_id;
       IF NOT FOUND THEN RAISE EXCEPTION 'Case violation % not found', v_case_violation_id; END IF;
     END IF;
   ELSIF v_action = 'remove' THEN
     IF v_case_violation_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
     UPDATE public.case_violations
-    SET is_deleted = true,
-        deleted_at = now(),
-        deleted_by_user_id = v_user_id,
-        delete_reason = v_reason
+    SET is_deleted = true, deleted_at = now(), deleted_by_user_id = v_user_id, delete_reason = v_reason
     WHERE id = v_case_violation_id AND case_id = v_case_id;
     IF NOT FOUND THEN RAISE EXCEPTION 'Case violation % not found', v_case_violation_id; END IF;
   ELSIF v_action = 'restore' THEN
     IF v_case_violation_id IS NULL THEN RAISE EXCEPTION 'id is required'; END IF;
     UPDATE public.case_violations
-    SET is_deleted = false,
-        deleted_at = NULL,
-        deleted_by_user_id = NULL,
-        delete_reason = NULL
+    SET is_deleted = false, deleted_at = NULL, deleted_by_user_id = NULL, delete_reason = NULL
     WHERE id = v_case_violation_id AND case_id = v_case_id;
     IF NOT FOUND THEN RAISE EXCEPTION 'Case violation % not found', v_case_violation_id; END IF;
   ELSE
@@ -15836,6 +16058,40 @@ ALTER TABLE public.case_docket_links ALTER COLUMN id ADD GENERATED BY DEFAULT AS
 
 
 --
+-- Name: case_drive_folders; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.case_drive_folders (
+    id bigint NOT NULL,
+    case_id bigint NOT NULL,
+    docket_year integer NOT NULL,
+    folder_id character varying(255),
+    parent_folder_id character varying(255) NOT NULL,
+    folder_name text NOT NULL,
+    status character varying(30) DEFAULT 'PENDING'::character varying NOT NULL,
+    last_error text,
+    last_scanned_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT case_drive_folder_status CHECK (((status)::text = ANY ((ARRAY['PENDING'::character varying, 'CREATING'::character varying, 'READY'::character varying, 'FAILED'::character varying, 'DISCONNECTED'::character varying])::text[])))
+);
+
+
+--
+-- Name: case_drive_folders_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.case_drive_folders ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.case_drive_folders_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: case_event_types; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17354,6 +17610,22 @@ ALTER SEQUENCE public.courts_id_seq OWNED BY public.courts.id;
 
 
 --
+-- Name: docket_creation_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.docket_creation_requests (
+    auth_user_id uuid NOT NULL,
+    idempotency_key uuid NOT NULL,
+    status character varying(30) NOT NULL,
+    case_id bigint,
+    result jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT docket_creation_request_status CHECK (((status)::text = ANY ((ARRAY['CREATING'::character varying, 'CREATED'::character varying])::text[])))
+);
+
+
+--
 -- Name: docket_number_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17455,6 +17727,21 @@ CREATE SEQUENCE public.docket_types_id_seq
 --
 
 ALTER SEQUENCE public.docket_types_id_seq OWNED BY public.docket_types.id;
+
+
+--
+-- Name: docket_year_drive_folders; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.docket_year_drive_folders (
+    docket_year integer NOT NULL,
+    folder_id character varying(255),
+    root_folder_id character varying(255) NOT NULL,
+    status character varying(30) DEFAULT 'PENDING'::character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT docket_year_drive_folder_status CHECK (((status)::text = ANY ((ARRAY['PENDING'::character varying, 'CREATING'::character varying, 'READY'::character varying, 'FAILED'::character varying, 'DISCONNECTED'::character varying])::text[])))
+);
 
 
 --
@@ -19537,11 +19824,14 @@ CREATE VIEW public.v_case_details_page WITH (security_invoker='true') AS
     NULL::text AS case_classification_name,
     cc.display_label AS case_classification_label,
     cc.description AS case_classification_description,
-    NULL::text AS gdrive_folder_id,
-    NULL::text AS gdrive_folder_link,
-    NULL::text AS gdrive_folder_name,
-    NULL::text AS gdrive_folder_status,
-    NULL::timestamp with time zone AS gdrive_folder_last_scanned_at,
+    (cdf.folder_id)::text AS gdrive_folder_id,
+        CASE
+            WHEN (cdf.folder_id IS NULL) THEN NULL::text
+            ELSE ('https://drive.google.com/drive/folders/'::text || (cdf.folder_id)::text)
+        END AS gdrive_folder_link,
+    cdf.folder_name AS gdrive_folder_name,
+    (cdf.status)::text AS gdrive_folder_status,
+    cdf.last_scanned_at AS gdrive_folder_last_scanned_at,
     NULL::text AS court_codes,
     NULL::text AS criminal_case_numbers,
     NULL::boolean AS court_needs_review,
@@ -19557,7 +19847,7 @@ CREATE VIEW public.v_case_details_page WITH (security_invoker='true') AS
     cpd.current_case_stage_remarks,
     stage.code AS current_case_stage_code,
     stage.display_label AS current_case_stage_label
-   FROM ((((((((((((public.cases c
+   FROM (((((((((((((public.cases c
      JOIN public.docket_types dt ON ((dt.id = c.docket_type_id)))
      LEFT JOIN public.case_private_details cpd ON ((cpd.case_id = c.id)))
      LEFT JOIN public.case_statuses cs ON ((cs.id = cpd.current_status_id)))
@@ -19570,6 +19860,7 @@ CREATE VIEW public.v_case_details_page WITH (security_invoker='true') AS
      LEFT JOIN violation_summary vs ON ((vs.case_id = c.id)))
      LEFT JOIN note_summary ns ON ((ns.case_id = c.id)))
      LEFT JOIN case_address_summary cas ON ((cas.case_id = c.id)))
+     LEFT JOIN public.case_drive_folders cdf ON ((cdf.case_id = c.id)))
   WHERE (NOT c.is_archived);
 
 
@@ -21522,6 +21813,22 @@ ALTER TABLE ONLY public.case_docket_links
 
 
 --
+-- Name: case_drive_folders case_drive_folders_case_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_drive_folders
+    ADD CONSTRAINT case_drive_folders_case_id_key UNIQUE (case_id);
+
+
+--
+-- Name: case_drive_folders case_drive_folders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_drive_folders
+    ADD CONSTRAINT case_drive_folders_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: case_event_types case_event_types_code_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21930,6 +22237,22 @@ ALTER TABLE ONLY public.courts
 
 
 --
+-- Name: docket_creation_requests docket_creation_requests_case_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.docket_creation_requests
+    ADD CONSTRAINT docket_creation_requests_case_id_key UNIQUE (case_id);
+
+
+--
+-- Name: docket_creation_requests docket_creation_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.docket_creation_requests
+    ADD CONSTRAINT docket_creation_requests_pkey PRIMARY KEY (auth_user_id, idempotency_key);
+
+
+--
 -- Name: docket_number_history docket_number_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21975,6 +22298,14 @@ ALTER TABLE ONLY public.docket_types
 
 ALTER TABLE ONLY public.docket_types
     ADD CONSTRAINT docket_types_prefix_key UNIQUE (prefix);
+
+
+--
+-- Name: docket_year_drive_folders docket_year_drive_folders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.docket_year_drive_folders
+    ADD CONSTRAINT docket_year_drive_folders_pkey PRIMARY KEY (docket_year, root_folder_id);
 
 
 --
@@ -22863,6 +23194,13 @@ CREATE UNIQUE INDEX case_classifications_active_label_ci_uidx ON public.case_cla
 --
 
 CREATE INDEX case_docket_links_linked_case_id_idx ON public.case_docket_links USING btree (linked_case_id);
+
+
+--
+-- Name: case_drive_folders_year_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX case_drive_folders_year_idx ON public.case_drive_folders USING btree (docket_year);
 
 
 --
@@ -24912,6 +25250,14 @@ ALTER TABLE ONLY public.case_docket_links
 
 
 --
+-- Name: case_drive_folders case_drive_folders_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.case_drive_folders
+    ADD CONSTRAINT case_drive_folders_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id) ON DELETE CASCADE;
+
+
+--
 -- Name: case_events case_events_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25912,6 +26258,14 @@ ALTER TABLE ONLY public.clearance_possible_name_tokens
 
 
 --
+-- Name: docket_creation_requests docket_creation_requests_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.docket_creation_requests
+    ADD CONSTRAINT docket_creation_requests_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.cases(id) ON DELETE SET NULL;
+
+
+--
 -- Name: docket_number_history docket_number_history_case_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26310,6 +26664,31 @@ ALTER TABLE auth.sso_providers ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE auth.users ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_drive_folders; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.case_drive_folders ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: case_drive_folders case_drive_folders_read; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY case_drive_folders_read ON public.case_drive_folders FOR SELECT TO authenticated USING (public.can_view_case_details(case_id));
+
+
+--
+-- Name: docket_creation_requests; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.docket_creation_requests ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: docket_year_drive_folders; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.docket_year_drive_folders ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: messages; Type: ROW SECURITY; Schema: realtime; Owner: -
@@ -27472,6 +27851,16 @@ GRANT ALL ON FUNCTION public.compute_current_case_state(p_case_id bigint) TO ser
 GRANT ALL ON FUNCTION public.create_case_event(p_case_id bigint, p_event_type_code text, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_created_by_user_id bigint, p_event_time time without time zone) TO anon;
 GRANT ALL ON FUNCTION public.create_case_event(p_case_id bigint, p_event_type_code text, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_created_by_user_id bigint, p_event_time time without time zone) TO authenticated;
 GRANT ALL ON FUNCTION public.create_case_event(p_case_id bigint, p_event_type_code text, p_event_date date, p_title text, p_description text, p_details_jsonb jsonb, p_created_by_user_id bigint, p_event_time time without time zone) TO service_role;
+
+
+--
+-- Name: FUNCTION create_docket_entry_idempotent(p_payload jsonb, p_idempotency_key uuid, p_linked_pe_case_id bigint); Type: ACL; Schema: public; Owner: -
+--
+
+REVOKE ALL ON FUNCTION public.create_docket_entry_idempotent(p_payload jsonb, p_idempotency_key uuid, p_linked_pe_case_id bigint) FROM PUBLIC;
+GRANT ALL ON FUNCTION public.create_docket_entry_idempotent(p_payload jsonb, p_idempotency_key uuid, p_linked_pe_case_id bigint) TO anon;
+GRANT ALL ON FUNCTION public.create_docket_entry_idempotent(p_payload jsonb, p_idempotency_key uuid, p_linked_pe_case_id bigint) TO authenticated;
+GRANT ALL ON FUNCTION public.create_docket_entry_idempotent(p_payload jsonb, p_idempotency_key uuid, p_linked_pe_case_id bigint) TO service_role;
 
 
 --
@@ -29867,6 +30256,15 @@ GRANT ALL ON FUNCTION public.manage_case_participants(p_payload jsonb) TO servic
 
 
 --
+-- Name: FUNCTION manage_case_participants_without_role_edit(p_payload jsonb); Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON FUNCTION public.manage_case_participants_without_role_edit(p_payload jsonb) TO anon;
+GRANT ALL ON FUNCTION public.manage_case_participants_without_role_edit(p_payload jsonb) TO authenticated;
+GRANT ALL ON FUNCTION public.manage_case_participants_without_role_edit(p_payload jsonb) TO service_role;
+
+
+--
 -- Name: FUNCTION manage_case_places(p_payload jsonb); Type: ACL; Schema: public; Owner: -
 --
 
@@ -31355,6 +31753,24 @@ GRANT ALL ON SEQUENCE public.case_docket_links_id_seq TO service_role;
 
 
 --
+-- Name: TABLE case_drive_folders; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.case_drive_folders TO anon;
+GRANT ALL ON TABLE public.case_drive_folders TO authenticated;
+GRANT ALL ON TABLE public.case_drive_folders TO service_role;
+
+
+--
+-- Name: SEQUENCE case_drive_folders_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.case_drive_folders_id_seq TO anon;
+GRANT ALL ON SEQUENCE public.case_drive_folders_id_seq TO authenticated;
+GRANT ALL ON SEQUENCE public.case_drive_folders_id_seq TO service_role;
+
+
+--
 -- Name: TABLE case_event_types; Type: ACL; Schema: public; Owner: -
 --
 
@@ -31913,6 +32329,13 @@ GRANT ALL ON SEQUENCE public.courts_id_seq TO service_role;
 
 
 --
+-- Name: TABLE docket_creation_requests; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.docket_creation_requests TO service_role;
+
+
+--
 -- Name: TABLE docket_number_history; Type: ACL; Schema: public; Owner: -
 --
 
@@ -31964,6 +32387,15 @@ GRANT ALL ON TABLE public.docket_types TO service_role;
 GRANT ALL ON SEQUENCE public.docket_types_id_seq TO anon;
 GRANT ALL ON SEQUENCE public.docket_types_id_seq TO authenticated;
 GRANT ALL ON SEQUENCE public.docket_types_id_seq TO service_role;
+
+
+--
+-- Name: TABLE docket_year_drive_folders; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON TABLE public.docket_year_drive_folders TO anon;
+GRANT ALL ON TABLE public.docket_year_drive_folders TO authenticated;
+GRANT ALL ON TABLE public.docket_year_drive_folders TO service_role;
 
 
 --
@@ -33316,5 +33748,5 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 -- PostgreSQL database dump complete
 --
 
-\unrestrict JGMyJ2gUB9GVTfI74Woqh85KNscdqsp3Mg1EgndKzZ2rGcz2YogclNquu76bah7
+\unrestrict dYWBEheNYxvxjJuFT7q21TJRZiPhg96dV4fiSIUWgR7sfFLGX90McGrTw0ibWsB
 
