@@ -1679,7 +1679,7 @@ export default function NewDocket() {
               </section>
 
               <Dialog open={Boolean(participantDialog)} onOpenChange={(open) => !open && setParticipantDialog(null)}>
-                <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[700px]" onKeyDown={handleParticipantDialogEnter}>
+                <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[560px]" onKeyDown={handleParticipantDialogEnter}>
                   <DialogHeader><DialogTitle>Add {participantDialog?.role}</DialogTitle><DialogDescription>Step {(participantDialog?.step ?? 0) + 1} of 2: {participantSteps[participantDialog?.step ?? 0]}.</DialogDescription></DialogHeader>
                   <div className="space-y-2">{participantDialog?.step === 0 ? <Label>Participant Type</Label> : null}{renderParticipantDraftField()}</div>
                   <DialogFooter>
