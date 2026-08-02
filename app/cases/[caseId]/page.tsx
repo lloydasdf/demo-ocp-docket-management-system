@@ -345,9 +345,10 @@ function roleLabel(participant: CaseParticipantRecord) {
 function partyRoleDisplayOrder(role: string) {
   const normalizedRole = role.toLowerCase();
 
-  if (normalizedRole.includes("complainant")) return 0;
-  if (normalizedRole.includes("respondent")) return 1;
-  return 2;
+  if (normalizedRole.includes("victim")) return 0;
+  if (normalizedRole.includes("complainant")) return 1;
+  if (normalizedRole.includes("respondent")) return 2;
+  return 3;
 }
 
 function personBirthDateAndSex(participant: CaseParticipantRecord) {
