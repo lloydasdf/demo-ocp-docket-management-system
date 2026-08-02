@@ -74,7 +74,7 @@ type ParticipantDialogState = { role: ParticipantColumnRole; step: number; entry
 type AddOnDialogState = { personId: string; kind: 'alias' | 'address' | 'contact'; step: number; alias: AliasEntry; address: AddressEntry; contact: ContactInformationEntry } | null;
 type CaseModalState = { kind: 'docket' | 'violation' | 'procedure' | 'place' | 'assignment'; step: number; id?: string; violation?: ViolationEntry; place?: AddressEntry } | null;
 type ParticipantEditDialogState = { personId: string; mode: 'attributes' | 'addresses' | 'contacts' } | null;
-type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; aliases?: AliasEntry[]; existingAliases?: ExistingAliasEntry[]; addresses?: AddressEntry[]; organizationDetails?: CustomOrganizationDetailEntry[]; showOrganizationDetails?: boolean };
+type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; aliases?: AliasEntry[]; existingAliases?: ExistingAliasEntry[]; addresses?: AddressEntry[]; organizationDetails?: CustomOrganizationDetailEntry[]; showOrganizationDetails?: boolean; correctionReason?: string };
 type ViolationEntry = NewDocketViolationInput & { id: string; searchText: string; selectedExistingTitle?: string | null; createNew?: boolean; newViolationTitle?: string | null; referenceCode?: string | null; shortLabel?: string | null; description?: string | null; lawReference?: string | null };
 
 const emptyLookups: LookupState = {
@@ -118,8 +118,7 @@ type NewDocketDraftState = {
 
 const thisYear = new Date().getFullYear();
 const genderOptions = ['Female', 'Male', 'Other', 'Unspecified'];
-const personWorkflowSteps = ['Participant Type', 'First Name', 'Middle Name', 'Surname', 'Suffix', 'Gender', 'Birthdate', 'Age', 'Case Flags', 'Role', 'Remarks'];
-const organizationWorkflowSteps = ['Participant Type', 'Organization Name', 'Contact Person', 'Contact Number', 'Email', 'Custom Details', 'Role', 'Remarks'];
+const participantWorkflowSteps = ['Participant Type', 'Participant Details'];
 const aliasWorkflowSteps = ['Alias Name', 'Remarks'];
 const addressWorkflowSteps = ['Address Type', 'Address Details'];
 const contactWorkflowSteps = ['Contact Type', 'Contact Value', 'Primary', 'Remarks'];
@@ -1211,7 +1210,7 @@ export default function NewDocket() {
     setParticipantDialog((current) => current ? { ...current, entry: { ...current.entry, ...updates } } : current);
   };
 
-  const participantSteps = participantDialog?.entry.participantKind === 'ORGANIZATION' ? organizationWorkflowSteps : personWorkflowSteps;
+  const participantSteps = participantWorkflowSteps;
   const isParticipantFinalStep = Boolean(participantDialog && participantDialog.step >= participantSteps.length - 1);
   const participantsByColumn = (role: ParticipantColumnRole) => persons.filter((person) => person.sourceDetail === role || lookups.participantRoles.find((item) => item.id === person.roleId)?.display_label?.toLowerCase().includes(role.toLowerCase()));
 
@@ -1315,21 +1314,32 @@ export default function NewDocket() {
     const entry = participantDialog.entry;
     const stepName = participantSteps[participantDialog.step];
     if (stepName === 'Participant Type') return <Select value={entry.participantKind ?? 'PERSON'} onValueChange={(value) => updateParticipantDraft({ participantKind: value as 'PERSON' | 'ORGANIZATION' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PERSON">Person</SelectItem><SelectItem value="ORGANIZATION">Organization</SelectItem></SelectContent></Select>;
-    if (stepName === 'First Name') return <Input value={entry.firstName ?? ''} onChange={(event) => updateParticipantDraft({ firstName: event.target.value })} placeholder="First name or skip" />;
-    if (stepName === 'Middle Name') return <div className="space-y-3"><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.noMiddleName === true} onCheckedChange={(checked) => updateParticipantDraft({ noMiddleName: checked === true, middleName: checked === true ? 'NMN' : '' })} /> NMN (No Middle Name)</label><Input value={entry.noMiddleName ? 'NMN' : (entry.middleName ?? '')} disabled={entry.noMiddleName === true} onChange={(event) => updateParticipantDraft({ middleName: event.target.value, noMiddleName: false })} placeholder="Middle name or skip" /></div>;
-    if (stepName === 'Surname') return <Input value={entry.lastName ?? ''} onChange={(event) => updateParticipantDraft({ lastName: event.target.value })} placeholder="Surname or skip" />;
-    if (stepName === 'Suffix') return <div className="space-y-3"><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.suffix === ''} onCheckedChange={(checked) => updateParticipantDraft({ suffix: checked === true ? '' : entry.suffix })} /> No Suffix</label><Input value={entry.suffix ?? ''} onChange={(event) => updateParticipantDraft({ suffix: event.target.value })} placeholder="Suffix or skip" /></div>;
-    if (stepName === 'Role') return <CreatableLookupSelect value={entry.roleId ? entry.roleId.toString() : ''} onValueChange={(value) => updateParticipantDraft({ roleId: toNumber(value) })} options={lookups.participantRoles} placeholder="Select role" addLabel="Add Role" dialogTitle="Add Participant Role" labelField="Role Label" onCreate={createParticipantRoleOption} />;
-    if (stepName === 'Gender') return <div className="flex flex-wrap gap-2">{genderOptions.map((gender) => <Button key={gender} type="button" variant={entry.gender === gender ? 'default' : 'outline'} onClick={() => updateParticipantDraft({ gender })}>{gender}</Button>)}</div>;
-    if (stepName === 'Birthdate') return <Input type="date" value={entry.birthDate ?? ''} onChange={(event) => updateParticipantDraft({ birthDate: event.target.value })} />;
-    if (stepName === 'Age') return <Input value={entry.age ?? ''} onChange={(event) => updateParticipantDraft({ age: event.target.value })} placeholder="Age or skip" />;
-    if (stepName === 'Case Flags') return <div className="flex flex-wrap gap-4"><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.attributes?.isMinorAtCase === true} onCheckedChange={(checked) => updateParticipantDraft({ attributes: { ...(entry.attributes ?? {}), isMinorAtCase: checked === true, minorText: checked === true ? 'YES' : null } })} /> Minor</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.attributes?.isSeniorAtCase === true} onCheckedChange={(checked) => updateParticipantDraft({ attributes: { ...(entry.attributes ?? {}), isSeniorAtCase: checked === true, seniorText: checked === true ? 'YES' : null } })} /> Senior</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.attributes?.isPwdAtCase === true} onCheckedChange={(checked) => updateParticipantDraft({ attributes: { ...(entry.attributes ?? {}), isPwdAtCase: checked === true, pwdText: checked === true ? 'YES' : null } })} /> PWD</label></div>;
-    if (stepName === 'Organization Name') return <Input value={entry.organizationName ?? ''} onChange={(event) => updateParticipantDraft({ organizationName: event.target.value })} placeholder="Organization name or skip" />;
-    if (stepName === 'Contact Person') return <Input value={entry.contactPerson ?? ''} onChange={(event) => updateParticipantDraft({ contactPerson: event.target.value })} placeholder="Contact person or skip" />;
-    if (stepName === 'Contact Number') return <Input value={entry.contactNumber ?? ''} onChange={(event) => updateParticipantDraft({ contactNumber: event.target.value })} placeholder="Contact number or skip" />;
-    if (stepName === 'Email') return <Input value={entry.email ?? ''} onChange={(event) => updateParticipantDraft({ email: event.target.value })} placeholder="Email or skip" />;
-    if (stepName === 'Custom Details') return <Textarea value={entry.organizationDetails?.[0]?.fieldValue ?? ''} onChange={(event) => updateParticipantDraft({ organizationDetails: [{ id: entry.organizationDetails?.[0]?.id ?? makeId('organization-detail'), fieldTitle: 'Details', fieldValue: event.target.value }] })} placeholder="Organization details or skip" />;
-    return <Textarea value={entry.remarks ?? ''} onChange={(event) => updateParticipantDraft({ remarks: event.target.value })} placeholder="Remarks or skip" />;
+    const field = (label: string, control: React.ReactNode, className = '') => <div className={className}><Label>{label}</Label>{control}</div>;
+    const role = field('Role', <CreatableLookupSelect value={entry.roleId ? entry.roleId.toString() : ''} onValueChange={(value) => updateParticipantDraft({ roleId: toNumber(value) })} options={lookups.participantRoles} placeholder="Select role" addLabel="Add Role" dialogTitle="Add Participant Role" labelField="Role Label" onCreate={createParticipantRoleOption} />);
+    const reason = field('Reason', <><span className="ml-2 text-sm text-muted-foreground">(optional)</span><Textarea value={entry.correctionReason ?? ''} onChange={(event) => updateParticipantDraft({ correctionReason: event.target.value })} /></>, 'sm:col-span-2');
+
+    if (entry.participantKind === 'ORGANIZATION') return <div className="space-y-4 rounded-lg border p-4"><h3 className="font-semibold">Participant name and details</h3><div className="grid gap-3 sm:grid-cols-2">
+      {field('Organization Name', <Input value={entry.organizationName ?? ''} onChange={(event) => updateParticipantDraft({ organizationName: event.target.value })} />)}
+      {field('Contact Person', <Input value={entry.contactPerson ?? ''} onChange={(event) => updateParticipantDraft({ contactPerson: event.target.value })} />)}
+      {field('Contact Number', <Input value={entry.contactNumber ?? ''} onChange={(event) => updateParticipantDraft({ contactNumber: event.target.value })} />)}
+      {field('Email', <Input type="email" value={entry.email ?? ''} onChange={(event) => updateParticipantDraft({ email: event.target.value })} />)}
+      {field('Remarks', <Input value={entry.remarks ?? ''} onChange={(event) => updateParticipantDraft({ remarks: event.target.value })} />, 'sm:col-span-2')}
+      <div>{role}</div>{reason}
+    </div></div>;
+
+    return <div className="space-y-4 rounded-lg border p-4"><h3 className="font-semibold">Participant name and details</h3><div className="grid gap-3 sm:grid-cols-2">
+      {field('First Name', <Input value={entry.firstName ?? ''} onChange={(event) => updateParticipantDraft({ firstName: event.target.value })} />)}
+      {field('Middle Name', <div className="relative"><Input className="pr-24" value={entry.noMiddleName ? 'NMN' : (entry.middleName ?? '')} disabled={entry.noMiddleName === true} onChange={(event) => updateParticipantDraft({ middleName: event.target.value })} /><label className="absolute inset-y-0 right-3 flex items-center gap-2 text-sm italic text-muted-foreground"><Checkbox checked={entry.noMiddleName === true} onCheckedChange={(checked) => updateParticipantDraft({ noMiddleName: checked === true, middleName: checked === true ? 'NMN' : '' })} /><span>NMN</span></label></div>)}
+      {field('Last Name', <Input value={entry.lastName ?? ''} onChange={(event) => updateParticipantDraft({ lastName: event.target.value })} />)}
+      {field('Suffix', <Input value={entry.suffix ?? ''} onChange={(event) => updateParticipantDraft({ suffix: event.target.value })} />)}
+      {field('Gender', <Select value={entry.gender ?? ''} onValueChange={(gender) => updateParticipantDraft({ gender })}><SelectTrigger><SelectValue placeholder="Select gender" /></SelectTrigger><SelectContent>{genderOptions.map((gender) => <SelectItem key={gender} value={gender}>{gender}</SelectItem>)}</SelectContent></Select>)}
+      {field('Birthdate', <Input type="date" value={entry.birthDate ?? ''} onChange={(event) => updateParticipantDraft({ birthDate: event.target.value })} />)}
+      {field('Age', <Input value={entry.age ?? ''} onChange={(event) => updateParticipantDraft({ age: event.target.value })} />)}
+      {field('Remarks', <Input value={entry.remarks ?? ''} onChange={(event) => updateParticipantDraft({ remarks: event.target.value })} />)}
+      <div>{role}</div>
+      {field('Case Flags', <div className="flex min-h-9 flex-wrap items-center gap-4"><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.attributes?.isMinorAtCase === true} onCheckedChange={(checked) => updateParticipantDraft({ attributes: { ...(entry.attributes ?? {}), isMinorAtCase: checked === true, minorText: checked === true ? 'YES' : null } })} /> Minor</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.attributes?.isSeniorAtCase === true} onCheckedChange={(checked) => updateParticipantDraft({ attributes: { ...(entry.attributes ?? {}), isSeniorAtCase: checked === true, seniorText: checked === true ? 'YES' : null } })} /> Senior</label><label className="flex items-center gap-2 text-sm"><Checkbox checked={entry.attributes?.isPwdAtCase === true} onCheckedChange={(checked) => updateParticipantDraft({ attributes: { ...(entry.attributes ?? {}), isPwdAtCase: checked === true, pwdText: checked === true ? 'YES' : null } })} /> PWD</label></div>)}
+      {reason}
+    </div></div>;
   };
 
   const renderAddOnField = () => {
@@ -1671,13 +1681,13 @@ export default function NewDocket() {
               </section>
 
               <Dialog open={Boolean(participantDialog)} onOpenChange={(open) => !open && setParticipantDialog(null)}>
-                <DialogContent onKeyDown={handleParticipantDialogEnter}>
-                  <DialogHeader><DialogTitle>Add {participantDialog?.role}</DialogTitle><DialogDescription>Step {(participantDialog?.step ?? 0) + 1} of {participantSteps.length}: {participantSteps[participantDialog?.step ?? 0]}. Nullable fields can be skipped.</DialogDescription></DialogHeader>
-                  <div className="space-y-2"><Label>{participantSteps[participantDialog?.step ?? 0]}</Label>{renderParticipantDraftField()}</div>
+                <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl" onKeyDown={handleParticipantDialogEnter}>
+                  <DialogHeader><DialogTitle>Add {participantDialog?.role}</DialogTitle><DialogDescription>Step {(participantDialog?.step ?? 0) + 1} of 2: {participantSteps[participantDialog?.step ?? 0]}.</DialogDescription></DialogHeader>
+                  <div className="space-y-2">{participantDialog?.step === 0 ? <Label>Participant Type</Label> : null}{renderParticipantDraftField()}</div>
                   <DialogFooter>
                     <Button type="button" variant="outline" onClick={() => setParticipantDialog(null)}>Cancel</Button>
                     {participantDialog && participantDialog.step > 0 ? <Button type="button" variant="outline" onClick={() => setParticipantDialog((current) => current ? { ...current, step: current.step - 1 } : current)}>Back</Button> : null}
-                    {isParticipantFinalStep ? <Button type="button" onClick={saveParticipantDialog}>OK</Button> : <Button type="button" onClick={() => setParticipantDialog((current) => current ? { ...current, step: Math.min(current.step + 1, participantSteps.length - 1) } : current)}>Next / Skip</Button>}
+                    {isParticipantFinalStep ? <Button type="button" onClick={saveParticipantDialog}>Save</Button> : <Button type="button" onClick={() => setParticipantDialog((current) => current ? { ...current, step: Math.min(current.step + 1, participantSteps.length - 1) } : current)}>Next</Button>}
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
