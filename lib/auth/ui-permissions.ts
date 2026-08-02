@@ -76,3 +76,8 @@ export function canViewLinkedDocket(role: RoleInput) {
   const roles = normalizeRoleCodes(role);
   return roles.includes('ADMIN') || roles.includes('DEVELOPER');
 }
+
+export function canViewCaseAging(role: RoleInput) {
+  const roles = normalizeRoleCodes(role);
+  return roles.includes('ADMIN') || roles.includes('DEVELOPER');
+}

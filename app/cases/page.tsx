@@ -19,7 +19,7 @@ import {
 import { ChevronDown, ChevronRight, Printer, RefreshCw, X } from 'lucide-react';
 import { ExportCasesDialog } from '@/components/cases/export-cases-dialog';
 import { useCurrentUserRole } from '@/hooks/use-current-user-role';
-import { canExportCasesToExcel, canViewLinkedDocket } from '@/lib/auth/ui-permissions';
+import { canExportCasesToExcel, canViewCaseAging, canViewLinkedDocket } from '@/lib/auth/ui-permissions';
 import {
   getDocketCaseLabelsForCases,
   getDocketParticipantsForCases,
@@ -287,6 +287,30 @@ function formatDate(value: string | null | undefined) {
   return Number.isNaN(parsedDate.getTime()) ? value : parsedDate.toLocaleDateString();
 }
 
+const AGING_EXCLUDED_STATUS_CODES = new Set(['FILED', 'MIXED_RESULT', 'DISMISSED']);
+
+function formatCaseAging(caseDetail: CompactCase, today = new Date()) {
+  const statusCode = (
+    caseDetail.current_case_status_code ||
+    caseDetail.current_case_status_label ||
+    caseDetail.current_status_code ||
+    caseDetail.current_status_label
+  )?.trim().toUpperCase().replace(/[\s-]+/g, '_');
+  if (!caseDetail.date_received || (statusCode && AGING_EXCLUDED_STATUS_CODES.has(statusCode))) {
+    return '—';
+  }
+
+  const receivedParts = /^(\d{4})-(\d{2})-(\d{2})/.exec(caseDetail.date_received);
+  if (!receivedParts) {
+    return '—';
+  }
+
+  const receivedUtc = Date.UTC(Number(receivedParts[1]), Number(receivedParts[2]) - 1, Number(receivedParts[3]));
+  const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const days = Math.max(0, Math.floor((todayUtc - receivedUtc) / 86_400_000));
+  return `${days} ${days === 1 ? 'day' : 'days'}`;
+}
+
 function getCaseColumnFilterValue(
   caseDetail: CompactCase,
   columnKey: CaseTableColumnKey,
@@ -482,6 +506,8 @@ export default function CasesPage() {
   const { roles: currentRoles, isLoading: isRoleLoading, error: roleError } = useCurrentUserRole();
   const canShowExcelExport = !isRoleLoading && !roleError && canExportCasesToExcel(currentRoles);
   const canViewLinkedDockets = !isRoleLoading && !roleError && canViewLinkedDocket(currentRoles);
+  const canViewAging = !isRoleLoading && !roleError && canViewCaseAging(currentRoles);
+  const renderedColumnCount = CASE_TABLE_COLUMNS.length + (canViewLinkedDockets ? 1 : 0) + (canViewAging ? 1 : 0);
 
   useEffect(() => {
     if (!canViewLinkedDockets || cases.length === 0) return;
@@ -1015,8 +1041,8 @@ export default function CasesPage() {
       : 'text-xs';
 
   const tableWidth = useMemo(
-    () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0) + (canViewLinkedDockets ? 180 : 0),
-    [canViewLinkedDockets, columnWidths],
+    () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0) + (canViewLinkedDockets ? 180 : 0) + (canViewAging ? 120 : 0),
+    [canViewAging, canViewLinkedDockets, columnWidths],
   );
 
   const rowHeights = useMemo(
@@ -1675,6 +1701,7 @@ export default function CasesPage() {
                       {CASE_TABLE_COLUMNS.map((column) => (
                         <col key={column.key} style={{ width: columnWidths[column.key] }} />
                       ))}
+                      {canViewAging ? <col style={{ width: 120 }} /> : null}
                     </colgroup>
                     <TableHeader className="sticky top-0 z-20 bg-muted shadow-sm">
                       <TableRow className="bg-muted hover:bg-muted">
@@ -1696,18 +1723,19 @@ export default function CasesPage() {
                             />
                           </TableHead>
                         ))}
+                        {canViewAging ? <TableHead className="whitespace-nowrap uppercase">Aging</TableHead> : null}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {virtualRows.topPadding > 0 ? (
                         <TableRow aria-hidden="true">
-                          <TableCell colSpan={CASE_TABLE_COLUMNS.length} style={{ height: virtualRows.topPadding, padding: 0 }} />
+                          <TableCell colSpan={renderedColumnCount} style={{ height: virtualRows.topPadding, padding: 0 }} />
                         </TableRow>
                       ) : null}
 
                       {sortedCases.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={CASE_TABLE_COLUMNS.length} className="py-8 text-center text-sm text-muted-foreground">
+                          <TableCell colSpan={renderedColumnCount} className="py-8 text-center text-sm text-muted-foreground">
                             No cases, please check filters.
                           </TableCell>
                         </TableRow>
@@ -1770,13 +1798,14 @@ export default function CasesPage() {
                               <StageBadge stage={currentStageLabel(caseDetail) ?? '—'} size="sm" />
                             </TableCell>
                             <TableCell className="truncate text-sm">{formatDate(caseDetail.date_received)}</TableCell>
+                            {canViewAging ? <TableCell className="truncate text-sm">{formatCaseAging(caseDetail)}</TableCell> : null}
                           </TableRow>
                         );
                       })}
 
                       {virtualRows.bottomPadding > 0 ? (
                         <TableRow aria-hidden="true">
-                          <TableCell colSpan={CASE_TABLE_COLUMNS.length} style={{ height: virtualRows.bottomPadding, padding: 0 }} />
+                          <TableCell colSpan={renderedColumnCount} style={{ height: virtualRows.bottomPadding, padding: 0 }} />
                         </TableRow>
                       ) : null}
                     </TableBody>
