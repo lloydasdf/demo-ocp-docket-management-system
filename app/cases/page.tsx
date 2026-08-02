@@ -16,7 +16,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ChevronDown, ChevronRight, Printer, RefreshCw, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Filter, Printer, RefreshCw, X } from 'lucide-react';
 import { ExportCasesDialog } from '@/components/cases/export-cases-dialog';
 import { useCurrentUserRole } from '@/hooks/use-current-user-role';
 import { canExportCasesToExcel, canViewCaseAging, canViewLinkedDocket } from '@/lib/auth/ui-permissions';
@@ -855,7 +855,7 @@ export default function CasesPage() {
 
   const columnFilterOptions = useMemo(() => (
     CASE_TABLE_COLUMNS.reduce((options, column) => {
-      const availableCases = !showColumnFilters
+      const facetedAvailableCases = !showColumnFilters
         ? casesMatchingPrimaryFilters
         : casesMatchingPrimaryFilters.filter((caseDetail) => {
           const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
@@ -872,6 +872,10 @@ export default function CasesPage() {
             );
           });
         });
+      const isEmptySelection = columnFilterTouchedRef.current[column.key] && selectedColumnFilters[column.key].length === 0;
+      const availableCases = facetedAvailableCases.length === 0 && isEmptySelection
+        ? casesMatchingPrimaryFilters
+        : facetedAvailableCases;
 
       options[column.key] = uniqueSortedOptions(
         availableCases.map((caseDetail) => {
@@ -961,7 +965,7 @@ export default function CasesPage() {
     visibleCaseTableColumns.filter((column) => {
       const selectedValues = selectedColumnFilters[column.key];
       const availableValues = columnFilterOptions[column.key];
-      return selectedValues.length !== availableValues.length || selectedValues.some((value) => !availableValues.includes(value));
+      return columnFilterTouchedRef.current[column.key] && !allOptionsSelected(selectedValues, availableValues);
     }).length
   ), [columnFilterOptions, selectedColumnFilters, visibleCaseTableColumns]);
 
@@ -989,13 +993,6 @@ export default function CasesPage() {
         const nextColumnOptions = columnFilterOptions[column.key];
 
         if (columnFilterTouchedRef.current[column.key]) {
-          const stillAvailableSelections = currentFilters[column.key].filter((value) => nextColumnOptions.includes(value));
-          if (!sameOptions(currentFilters[column.key], stillAvailableSelections)) {
-            if (nextFilters === currentFilters) {
-              nextFilters = { ...currentFilters };
-            }
-            nextFilters[column.key] = stillAvailableSelections;
-          }
           continue;
         }
 
@@ -1293,11 +1290,19 @@ export default function CasesPage() {
 
     const availableValues = columnFilterOptions[columnKey];
     const selectedValues = selectedColumnFilters[columnKey];
+    const isActive = columnFilterTouchedRef.current[columnKey] && !allOptionsSelected(selectedValues, availableValues);
 
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button type="button" variant="ghost" size="sm" className="h-7 max-w-full justify-start gap-1 px-0 text-xs font-normal normal-case">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className={`h-7 max-w-full justify-start gap-1 px-0 text-xs font-normal normal-case ${isActive ? 'text-primary' : ''}`}
+            aria-label={`${columnFilterLabel(columnKey)} filter${isActive ? ' (active)' : ''}`}
+          >
+            {isActive ? <Filter className="size-3 fill-current" aria-hidden="true" /> : null}
             <span className="truncate">{columnFilterSummary(columnKey)}</span>
             <ChevronDown className="size-3 opacity-70" />
           </Button>
