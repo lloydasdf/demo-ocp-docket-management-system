@@ -68,10 +68,11 @@ const CASE_TABLE_COLUMNS = [
   { key: 'currentStatus', label: 'Current Status', initialWidth: 180, minWidth: 150 },
   { key: 'currentStage', label: 'Current Stage', initialWidth: 200, minWidth: 160 },
   { key: 'dateReceived', label: 'Date Received', initialWidth: 150, minWidth: 120 },
+  { key: 'aging', label: 'Aging', initialWidth: 120, minWidth: 100 },
 ] as const;
 
 type CaseTableColumnKey = (typeof CASE_TABLE_COLUMNS)[number]['key'];
-type CaseSearchColumnKey = Exclude<CaseTableColumnKey, 'docketType' | 'docketYear'>;
+type CaseSearchColumnKey = Exclude<CaseTableColumnKey, 'docketType' | 'docketYear' | 'aging'>;
 type ColumnWidths = Record<CaseTableColumnKey, number>;
 type ColumnFilters = Record<CaseTableColumnKey, string[]>;
 type ColumnFilterTouched = Record<CaseTableColumnKey, boolean>;
@@ -98,7 +99,7 @@ type CasesPageCache = {
 
 const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
   (column): column is Extract<(typeof CASE_TABLE_COLUMNS)[number], { key: CaseSearchColumnKey }> =>
-    column.key !== 'docketType' && column.key !== 'docketYear',
+    column.key !== 'docketType' && column.key !== 'docketYear' && column.key !== 'aging',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
 const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v21';
@@ -338,6 +339,8 @@ function getCaseColumnFilterValue(
       return currentStatusLabel(caseDetail) ?? '—';
     case 'dateReceived':
       return formatDate(caseDetail.date_received);
+    case 'aging':
+      return formatCaseAging(caseDetail);
     default:
       return '—';
   }
@@ -507,7 +510,11 @@ export default function CasesPage() {
   const canShowExcelExport = !isRoleLoading && !roleError && canExportCasesToExcel(currentRoles);
   const canViewLinkedDockets = !isRoleLoading && !roleError && canViewLinkedDocket(currentRoles);
   const canViewAging = !isRoleLoading && !roleError && canViewCaseAging(currentRoles);
-  const renderedColumnCount = CASE_TABLE_COLUMNS.length + (canViewLinkedDockets ? 1 : 0) + (canViewAging ? 1 : 0);
+  const visibleCaseTableColumns = useMemo(
+    () => CASE_TABLE_COLUMNS.filter((column) => column.key !== 'aging' || canViewAging),
+    [canViewAging],
+  );
+  const renderedColumnCount = visibleCaseTableColumns.length + (canViewLinkedDockets ? 1 : 0);
 
   useEffect(() => {
     if (!canViewLinkedDockets || cases.length === 0) return;
@@ -826,7 +833,7 @@ export default function CasesPage() {
       const classification = caseDetail.id ? classificationsByCase[caseDetail.id] : undefined;
 
       if (showColumnFilters) {
-        const matchesColumnFilters = CASE_TABLE_COLUMNS.every((column) => {
+        const matchesColumnFilters = visibleCaseTableColumns.every((column) => {
           const selectedValues = selectedColumnFilters[column.key];
           return selectedValues.length > 0 && selectedValues.includes(
             getCaseColumnFilterValue(caseDetail, column.key, casePartyNames, classification),
@@ -859,6 +866,7 @@ export default function CasesPage() {
     selectedDocketMonthsByYear,
     selectedSearchColumns,
     showColumnFilters,
+    visibleCaseTableColumns,
   ]);
 
   const sortedCases = useMemo(
@@ -913,12 +921,12 @@ export default function CasesPage() {
   ), [cases, classificationsByCase, partyNamesByCase]);
 
   const activeColumnFilterCount = useMemo(() => (
-    CASE_TABLE_COLUMNS.filter((column) => {
+    visibleCaseTableColumns.filter((column) => {
       const selectedValues = selectedColumnFilters[column.key];
       const availableValues = columnFilterOptions[column.key];
       return selectedValues.length !== availableValues.length || selectedValues.some((value) => !availableValues.includes(value));
     }).length
-  ), [columnFilterOptions, selectedColumnFilters]);
+  ), [columnFilterOptions, selectedColumnFilters, visibleCaseTableColumns]);
 
   useEffect(() => {
     if (!docketFiltersTouchedRef.current) {
@@ -1041,8 +1049,8 @@ export default function CasesPage() {
       : 'text-xs';
 
   const tableWidth = useMemo(
-    () => CASE_TABLE_COLUMNS.reduce((total, column) => total + columnWidths[column.key], 0) + (canViewLinkedDockets ? 180 : 0) + (canViewAging ? 120 : 0),
-    [canViewAging, canViewLinkedDockets, columnWidths],
+    () => visibleCaseTableColumns.reduce((total, column) => total + columnWidths[column.key], 0) + (canViewLinkedDockets ? 180 : 0),
+    [canViewLinkedDockets, columnWidths, visibleCaseTableColumns],
   );
 
   const rowHeights = useMemo(
@@ -1309,7 +1317,7 @@ export default function CasesPage() {
       return [];
     }
 
-    return CASE_TABLE_COLUMNS.flatMap((column) => {
+    return visibleCaseTableColumns.flatMap((column) => {
       const selectedValues = selectedColumnFilters[column.key];
       const availableValues = columnFilterOptions[column.key];
       const isActive =
@@ -1698,15 +1706,14 @@ export default function CasesPage() {
                   <table className="w-full caption-bottom table-fixed text-sm" style={{ width: tableWidth, minWidth: '100%' }}>
                     <colgroup>
                       {canViewLinkedDockets ? <col style={{ width: 180 }} /> : null}
-                      {CASE_TABLE_COLUMNS.map((column) => (
+                      {visibleCaseTableColumns.map((column) => (
                         <col key={column.key} style={{ width: columnWidths[column.key] }} />
                       ))}
-                      {canViewAging ? <col style={{ width: 120 }} /> : null}
                     </colgroup>
                     <TableHeader className="sticky top-0 z-20 bg-muted shadow-sm">
                       <TableRow className="bg-muted hover:bg-muted">
                         {canViewLinkedDockets ? <TableHead className="whitespace-nowrap uppercase">Linked Docket</TableHead> : null}
-                        {CASE_TABLE_COLUMNS.map((column) => (
+                        {visibleCaseTableColumns.map((column) => (
                           <TableHead key={column.key} className="relative select-none whitespace-nowrap pr-4 uppercase">
                             <div className="flex min-w-0 flex-col gap-1">
                               <span>{column.label}</span>
@@ -1723,7 +1730,6 @@ export default function CasesPage() {
                             />
                           </TableHead>
                         ))}
-                        {canViewAging ? <TableHead className="whitespace-nowrap uppercase">Aging</TableHead> : null}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
