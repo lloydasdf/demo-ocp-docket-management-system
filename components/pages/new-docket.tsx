@@ -74,7 +74,7 @@ type ParticipantDialogState = { role: ParticipantColumnRole; step: number; entry
 type AddOnDialogState = { personId: string; kind: 'alias' | 'address' | 'contact'; step: number; alias: AliasEntry; address: AddressEntry; contact: ContactInformationEntry } | null;
 type CaseModalState = { kind: 'docket' | 'violation' | 'procedure' | 'place' | 'assignment'; step: number; id?: string; violation?: ViolationEntry; place?: AddressEntry } | null;
 type ParticipantEditDialogState = { personId: string; mode: 'attributes' | 'addresses' | 'contacts' } | null;
-type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; aliases?: AliasEntry[]; existingAliases?: ExistingAliasEntry[]; addresses?: AddressEntry[]; organizationDetails?: CustomOrganizationDetailEntry[]; showOrganizationDetails?: boolean };
+type PersonEntry = NewDocketParticipantInput & { id: string; selectedExistingName?: string | null; selectedExistingOrganizationName?: string | null; fullNamePreview?: string | null; previousMiddleName?: string; aliases?: AliasEntry[]; existingAliases?: ExistingAliasEntry[]; addresses?: AddressEntry[]; organizationDetails?: CustomOrganizationDetailEntry[]; showOrganizationDetails?: boolean };
 type ViolationEntry = NewDocketViolationInput & { id: string; searchText: string; selectedExistingTitle?: string | null; createNew?: boolean; newViolationTitle?: string | null; referenceCode?: string | null; shortLabel?: string | null; description?: string | null; lawReference?: string | null };
 
 const emptyLookups: LookupState = {
@@ -1316,6 +1316,18 @@ export default function NewDocket() {
     if (stepName === 'Participant Type') return <Select value={entry.participantKind ?? 'PERSON'} onValueChange={(value) => updateParticipantDraft({ participantKind: value as 'PERSON' | 'ORGANIZATION' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="PERSON">Person</SelectItem><SelectItem value="ORGANIZATION">Organization</SelectItem></SelectContent></Select>;
     const field = (label: string, control: React.ReactNode, className = '') => <div className={className}><Label>{label}</Label>{control}</div>;
     const role = field('Role', <CreatableLookupSelect className="w-full" value={entry.roleId ? entry.roleId.toString() : ''} onValueChange={(value) => updateParticipantDraft({ roleId: toNumber(value) })} options={lookups.participantRoles} placeholder="Select role" addLabel="Add Role" dialogTitle="Add Participant Role" labelField="Role Label" onCreate={createParticipantRoleOption} />);
+    const toggleNoMiddleName = (checked: boolean | 'indeterminate') => {
+      const noMiddleName = checked === true;
+      setParticipantDialog((current) => {
+        if (!current) return current;
+        const currentEntry = current.entry;
+        if (noMiddleName) {
+          const previousMiddleName = currentEntry.middleName === 'NMN' ? currentEntry.previousMiddleName : currentEntry.middleName;
+          return { ...current, entry: { ...currentEntry, noMiddleName: true, previousMiddleName: previousMiddleName ?? '', middleName: 'NMN' } };
+        }
+        return { ...current, entry: { ...currentEntry, noMiddleName: false, middleName: currentEntry.previousMiddleName ?? '' } };
+      });
+    };
 
     if (entry.participantKind === 'ORGANIZATION') return <div className="space-y-4 rounded-lg border p-4"><h3 className="font-semibold">Participant name and details</h3><div className="grid gap-3 sm:grid-cols-2">
       {field('Organization Name', <Input value={entry.organizationName ?? ''} onChange={(event) => updateParticipantDraft({ organizationName: event.target.value })} />)}
@@ -1328,7 +1340,7 @@ export default function NewDocket() {
 
     return <div className="space-y-4 rounded-lg border p-4"><h3 className="font-semibold">Participant name and details</h3><div className="grid gap-3 sm:grid-cols-2">
       {field('First Name', <Input value={entry.firstName ?? ''} onChange={(event) => updateParticipantDraft({ firstName: event.target.value })} />)}
-      {field('Middle Name', <div className="relative"><Input className="pr-24" value={entry.noMiddleName ? 'NMN' : (entry.middleName ?? '')} disabled={entry.noMiddleName === true} onChange={(event) => updateParticipantDraft({ middleName: event.target.value })} /><label className="absolute inset-y-0 right-3 flex items-center gap-2 text-sm italic text-muted-foreground"><Checkbox checked={entry.noMiddleName === true} onCheckedChange={(checked) => updateParticipantDraft({ noMiddleName: checked === true, middleName: checked === true ? 'NMN' : '' })} /><span>NMN</span></label></div>)}
+      {field('Middle Name', <div className="relative"><Input className="pr-24" value={entry.noMiddleName ? 'NMN' : (entry.middleName ?? '')} disabled={entry.noMiddleName === true} onChange={(event) => updateParticipantDraft({ middleName: event.target.value })} /><label className="absolute inset-y-0 right-3 flex items-center gap-2 text-sm italic text-muted-foreground"><Checkbox checked={entry.noMiddleName === true} onCheckedChange={toggleNoMiddleName} /><span>NMN</span></label></div>)}
       {field('Last Name', <Input value={entry.lastName ?? ''} onChange={(event) => updateParticipantDraft({ lastName: event.target.value })} />)}
       {field('Suffix', <Input value={entry.suffix ?? ''} onChange={(event) => updateParticipantDraft({ suffix: event.target.value })} />)}
       {field('Gender', <Select value={entry.gender ?? ''} onValueChange={(gender) => updateParticipantDraft({ gender })}><SelectTrigger className="w-full"><SelectValue placeholder="Select gender" /></SelectTrigger><SelectContent>{genderOptions.map((gender) => <SelectItem key={gender} value={gender}>{gender}</SelectItem>)}</SelectContent></Select>)}
