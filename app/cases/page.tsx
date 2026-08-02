@@ -1873,9 +1873,15 @@ export default function CasesPage() {
                   {sortedCases.length.toLocaleString()} {sortedCases.length === 1 ? 'case' : 'cases'} shown
                 </span>
                 <div className="flex items-center gap-2">
-                  {showColumnFilters && activeColumnFilterCount > 0 ? (
-                    <Button type="button" variant="ghost" size="sm" onClick={clearColumnFilters}>
-                      Clear filters
+                  {showColumnFilters ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearColumnFilters}
+                      disabled={activeColumnFilterCount === 0}
+                    >
+                      Clear all filters
                     </Button>
                   ) : null}
                   <Button type="button" variant="outline" size="sm" onClick={() => setShowColumnFilters((currentValue) => !currentValue)}>
