@@ -14,9 +14,19 @@ export async function POST(request: Request) {
   if (!Array.isArray(body?.caseIds) || body.caseIds.length > 10000 || body.caseIds.some((id) => !Number.isSafeInteger(id))) {
     return NextResponse.json({ error: { message: 'A valid list of at most 10,000 case IDs is required.' } }, { status: 400 });
   }
-  try {
-    return NextResponse.json({ data: await reconcileDocketFolders(body.caseIds as number[]) });
-  } catch (error) {
-    return NextResponse.json({ error: { message: error instanceof Error ? error.message : 'Unable to reconcile docket folders.' } }, { status: 502 });
-  }
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (payload: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
+      try {
+        const data = await reconcileDocketFolders(body.caseIds as number[], (progress) => send({ type: 'progress', ...progress }));
+        send({ type: 'complete', data });
+      } catch (error) {
+        send({ type: 'error', message: error instanceof Error ? error.message : 'Unable to reconcile docket folders.' });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(stream, { headers: { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-cache, no-transform' } });
 }
