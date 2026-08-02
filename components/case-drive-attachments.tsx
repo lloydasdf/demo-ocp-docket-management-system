@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowDownAZ, ArrowLeft, CheckCircle2, FolderPlus, Loader2, RefreshCw, Upload, UploadCloud } from "lucide-react";
+import { ArrowDownAZ, ArrowLeft, CheckCircle2, FolderPlus, Loader2, RefreshCw, Upload, UploadCloud, X } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,9 @@ import { DriveUploadManager, type UploadItem } from "@/components/drive-upload-m
 import type { AttachmentSortOption } from "@/components/drive-preview/attachment-list";
 
 type DriveFile = PreviewFile;
+
+const MAX_VERCEL_UPLOAD_BYTES = 4.5 * 1024 * 1024;
+const VERCEL_UPLOAD_LIMIT_MESSAGE = "This file cannot be uploaded here, go to Gdrive folder ot this case and upload the file there. Max upload here is 4.5MB";
 
 type DriveState = {
   files: DriveFile[];
@@ -168,7 +171,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
         const timer = setTimeout(() => { setUploads((items) => items.filter((upload) => upload.id !== item.id)); uploadDismissTimers.current.delete(timer); }, 1200); uploadDismissTimers.current.add(timer);
         return;
       }
-      let message = "The file could not be uploaded."; try { message = (JSON.parse(request.responseText) as { error?: { message?: string } }).error?.message ?? message; } catch { /* Non-JSON error response. */ }
+      let message = request.status === 413 ? VERCEL_UPLOAD_LIMIT_MESSAGE : "The file could not be uploaded."; try { message = (JSON.parse(request.responseText) as { error?: { message?: string } }).error?.message ?? message; } catch { /* Non-JSON error response. */ }
       setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, status: "failed", error: message } : upload));
     };
     request.onerror = () => { uploadRequests.current.delete(item.id); setUploads((items) => items.map((upload) => upload.id === item.id ? { ...upload, status: "failed", error: "A network error interrupted the upload." } : upload)); };
@@ -181,7 +184,7 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     if (!drive || !files.length) return;
     const items = files.map<UploadItem>((file) => ({ id: crypto.randomUUID(), file, destinationId: drive.currentFolder.id, progress: 0, status: "queued" }));
     const valid: UploadItem[] = []; const rejected: UploadItem[] = [];
-    items.forEach((item) => { if (!item.file.name.trim()) rejected.push({ ...item, status: "failed", error: "The file name is invalid." }); else if (!item.file.size) rejected.push({ ...item, status: "failed", error: "Empty files cannot be uploaded." }); else if (item.file.size > 100 * 1024 * 1024) rejected.push({ ...item, status: "failed", error: "Each upload is limited to 100 MB." }); else valid.push(item); });
+    items.forEach((item) => { if (!item.file.name.trim()) rejected.push({ ...item, status: "failed", error: "The file name is invalid." }); else if (!item.file.size) rejected.push({ ...item, status: "failed", error: "Empty files cannot be uploaded." }); else if (item.file.size > MAX_VERCEL_UPLOAD_BYTES) rejected.push({ ...item, status: "failed", error: VERCEL_UPLOAD_LIMIT_MESSAGE }); else valid.push(item); });
     setUploads((current) => [...valid, ...rejected, ...current].slice(0, 50)); valid.forEach((item) => void uploadOne(item));
   }
 
@@ -290,8 +293,8 @@ export function CaseDriveAttachments({ caseId, docketYear, docketType, docketNum
     {loading && !drive ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Finding the docket folder and loading files…</div> : null}
     {creating ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Creating folder</div> : null}
     {folderCreated ? <div className="flex items-center gap-3 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800"><CheckCircle2 className="h-6 w-6 motion-safe:animate-[bounce_600ms_ease-out_1]" /><div><p className="font-medium">Folder created</p><p className="text-sm">The new Google Drive docket folder is empty.</p></div></div> : null}
-    {error ? <Alert variant="destructive"><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />Create GDrive folder</Button> : null}</AlertDescription></Alert> : null}
-    {drive ? <DriveUploadManager uploads={uploads} onCancel={(id) => uploadRequests.current.get(id)?.abort()} onRetry={retryUpload} /> : null}
+    {error ? <Alert variant="destructive" className="pr-12"><Button type="button" size="icon" variant="ghost" className="absolute right-2 top-2 h-8 w-8" onClick={() => setError(null)} aria-label="Dismiss Google Drive error" title="Dismiss error"><X className="h-4 w-4" /></Button><AlertTitle>Google Drive unavailable</AlertTitle><AlertDescription className="space-y-3"><p>{error}</p>{canCreate ? <Button onClick={() => void createFolder()} disabled={creating}><FolderPlus className="mr-2 h-4 w-4" />Create GDrive folder</Button> : null}</AlertDescription></Alert> : null}
+    {drive ? <DriveUploadManager uploads={uploads} onCancel={(id) => uploadRequests.current.get(id)?.abort()} onRetry={retryUpload} onDismiss={(id) => setUploads((items) => items.filter((item) => item.id !== id))} /> : null}
     {drive && !loading ? <AttachmentWorkspace files={drive.files} sort={attachmentSort} downloadingId={downloadingId} managingFolderId={managingFolderId} managingFileId={managingFileId} canShare={canShareFiles} onBrowse={browseFolder} onDownload={(file) => void downloadFile(file)} onShare={(file) => void shareFile(file)} onRenameFile={(file) => void renameFile(file)} onMoveFile={(file) => void moveFile(file)} onTrashFile={(file) => void trashFile(file)} onRenameFolder={(folder) => void renameFolder(folder)} onTrashFolder={(folder) => void trashFolder(folder)} loadBlob={loadPreviewBlob} startEdit={startDocumentEdit} checkEditStatus={checkDocumentEditStatus} cancelEditSession={cancelDocumentEditSession} onDocumentSaved={() => void load(drive.currentFolder.id)} onPreviewChange={onPreviewChange} onError={setError} /> : null}
   </div>;
 }

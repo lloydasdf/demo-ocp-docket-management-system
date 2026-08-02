@@ -4,7 +4,8 @@ import { getSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getAuthenticatedSupabase } from "@/lib/supabase/server-user";
 
 export const runtime = "nodejs";
-const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 4.5 * 1024 * 1024;
+const UPLOAD_LIMIT_MESSAGE = "This file cannot be uploaded here, go to Gdrive folder ot this case and upload the file there. Max upload here is 4.5MB";
 
 function safeName(value: string) { const name = value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 200); return name && name !== "." && name !== ".." ? name : null; }
 
@@ -23,7 +24,7 @@ export async function POST(request: Request, context: { params: Promise<{ caseId
     const form = await request.formData(); const parentId = String(form.get("parentId") ?? ""); const file = form.get("file");
     if (!(file instanceof File) || !parentId || !safeName(file.name)) return NextResponse.json({ error: { code: "invalid_upload", message: "A valid file and destination folder are required." } }, { status: 400 });
     if (file.size === 0) return NextResponse.json({ error: { code: "empty_file", message: "Empty files cannot be uploaded." } }, { status: 400 });
-    if (file.size > MAX_UPLOAD_BYTES) return NextResponse.json({ error: { code: "file_too_large", message: "Each upload is limited to 100 MB." } }, { status: 413 });
+    if (file.size > MAX_UPLOAD_BYTES) return NextResponse.json({ error: { code: "file_too_large", message: UPLOAD_LIMIT_MESSAGE } }, { status: 413 });
     if (!(await isDriveItemInsideFolder(parentId, mapping.folder_id))) return NextResponse.json({ error: { code: "invalid_destination", message: "The upload destination is outside this docket." } }, { status: 400 });
     const parent = await getDriveItemMetadata(parentId);
     if (parent.mimeType !== "application/vnd.google-apps.folder") return NextResponse.json({ error: { code: "invalid_destination", message: "The upload destination is not a folder." } }, { status: 400 });
