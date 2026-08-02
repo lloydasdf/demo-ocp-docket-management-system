@@ -1827,6 +1827,30 @@ export async function manageCaseParticipants(
   }
 }
 
+export interface AddCaseParticipantInput {
+  caseId: number;
+  participant: Record<string, unknown>;
+}
+
+export async function addCaseParticipant(
+  input: AddCaseParticipantInput,
+): Promise<SupabaseQueryResult<number>> {
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) {
+      return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "addCaseParticipant", "users"));
+    }
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("add_case_participant" as never, {
+      p_payload: { caseId: input.caseId, userId: currentUserQuery.data.id, participant: input.participant },
+    } as never);
+    if (error) return fail(toQueryError(error, "addCaseParticipant", "case_participants"));
+    return ok(Number(data));
+  } catch (error) {
+    return fail(toQueryError(error, "addCaseParticipant", "case_participants"));
+  }
+}
+
 
 
 export type CaseParticipantCorrectionRecord = {

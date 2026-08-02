@@ -52,6 +52,7 @@ import {
   getCaseStatuses,
   getCaseStages,
   addCaseStage,
+  addCaseParticipant,
   getDocketTypes,
   getCaseMotions,
   getLinkedDocketsForCases,
@@ -1296,6 +1297,7 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
   const [correctionHistoryOpen, setCorrectionHistoryOpen] = useState(false);
   const [correctionHistory, setCorrectionHistory] = useState<CaseParticipantCorrectionRecord[]>([]);
   const [correctionHistoryError, setCorrectionHistoryError] = useState<string | null>(null);
+  const [adding, setAdding] = useState<{ roleId: number; label: string; step: 1 | 2; kind: "PERSON" | "ORGANIZATION" } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -1333,6 +1335,23 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
   const legacyFullNameOnly = Boolean(selected?.persons && !selected.persons.first_name && !selected.persons.middle_name && !selected.persons.last_name && selected.persons.full_name);
 
   const setValue = (key: string, value: string | boolean) => setFormData((current) => ({ ...current, [key]: value }));
+
+  function startAdding(label: "Complainant" | "Respondent") {
+    const role = participantRoles.find((item) => String(item.display_label ?? item.name ?? item.code).toLowerCase().includes(label.toLowerCase()));
+    if (!role) { setError(`No active ${label} role is configured.`); return; }
+    setFormData({ noMiddleName: false });
+    setAdding({ roleId: role.id, label, step: 1, kind: "PERSON" });
+  }
+
+  async function saveNewParticipant() {
+    if (!adding) return;
+    setIsSaving(true); setError(null);
+    const result = await addCaseParticipant({ caseId, participant: { ...formData, participantKind: adding.kind, roleId: adding.roleId } });
+    setIsSaving(false);
+    if (result.error) { setError(result.error.message); return; }
+    setAdding(null); setSelectedId(result.data); setFormData({});
+    await onSaved();
+  }
 
   function openEditor(nextMode: ParticipantEditorMode, record?: Record<string, unknown>) {
     if (!selected) return;
@@ -1521,7 +1540,7 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
 
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="flex max-h-[90vh] flex-col overflow-hidden sm:max-w-5xl"><DialogHeader className="shrink-0"><DialogTitle>Manage Participants</DialogTitle><DialogDescription>Select a participant, then edit main details, aliases, addresses, or contact information.</DialogDescription></DialogHeader>
     <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-      <div className="min-h-0 overflow-y-auto pr-2"><div className="grid gap-4 md:grid-cols-2 lg:grid-cols-1"><div><h3 className="mb-2 font-semibold">Complainants</h3><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">{complainants.length ? complainants.map(participantButton) : <SectionEmpty>No complainants.</SectionEmpty>}</div></div><div><h3 className="mb-2 font-semibold">Respondents</h3><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">{respondents.length ? respondents.map(participantButton) : <SectionEmpty>No respondents.</SectionEmpty>}</div></div>{others.length ? <div className="md:col-span-2 lg:col-span-1"><h3 className="mb-2 font-semibold">Other Participants</h3><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">{others.map(participantButton)}</div></div> : null}</div></div>
+      <div className="min-h-0 overflow-y-auto pr-2"><div className="grid gap-4 md:grid-cols-2 lg:grid-cols-1"><div><div className="mb-2 flex items-center justify-between gap-2"><h3 className="font-semibold">Complainants</h3><Button type="button" size="sm" variant="outline" onClick={() => startAdding("Complainant")}>+ Add Complainant</Button></div><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">{complainants.length ? complainants.map(participantButton) : <SectionEmpty>No complainants.</SectionEmpty>}</div></div><div><div className="mb-2 flex items-center justify-between gap-2"><h3 className="font-semibold">Respondents</h3><Button type="button" size="sm" variant="outline" onClick={() => startAdding("Respondent")}>+ Add Respondent</Button></div><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">{respondents.length ? respondents.map(participantButton) : <SectionEmpty>No respondents.</SectionEmpty>}</div></div>{others.length ? <div className="md:col-span-2 lg:col-span-1"><h3 className="mb-2 font-semibold">Other Participants</h3><div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">{others.map(participantButton)}</div></div> : null}</div></div>
       <div className="min-w-0 space-y-4 rounded-lg border p-4">{selected ? <><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 className="break-words text-lg font-semibold">{participantName(selected)}</h3><p className="text-sm text-muted-foreground">{roleLabel(selected)} • {selected.participant_kind ?? "PERSON"}</p><div className="mt-2 flex flex-wrap gap-2">{legacyFullNameOnly ? <Badge variant="outline">Legacy full-name only</Badge> : null}{correctionHistory.length ? <button type="button" onClick={openCorrectionHistory}><Badge variant="secondary" className="cursor-pointer">Corrected</Badge></button> : null}</div></div><Button type="button" size="sm" onClick={() => openEditor("main")}>Correct Identity</Button></div>
         <div className="grid gap-3 sm:grid-cols-3"><div className={`flex ${detailListMaxHeight} min-h-0 flex-col rounded-md border p-3`}><div className="mb-2 flex shrink-0 items-center justify-between gap-2"><p className="font-medium">Aliases</p><Button type="button" size="sm" variant="outline" onClick={() => openEditor("alias")}>Add</Button></div>{aliases.length ? <div className="min-h-0 flex-1 divide-y overflow-y-auto pr-1">{aliases.map((alias) => <div key={String(alias.id)} className="space-y-2 py-2 text-sm"><p className="break-words">{String(alias.alias_name ?? "")}</p><div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="ghost" onClick={() => openEditor("alias", alias)}>Edit</Button><Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => { setMode("alias"); setEditingRecord(alias); openDelete("remove_alias", alias, "alias") }}>Remove</Button></div></div>)}</div> : <p className="text-sm text-muted-foreground">No aliases.</p>}</div>
         <div className={`flex ${detailListMaxHeight} min-h-0 flex-col rounded-md border p-3`}><div className="mb-2 flex shrink-0 items-center justify-between gap-2"><p className="font-medium">Addresses</p><Button type="button" size="sm" variant="outline" onClick={() => openEditor("address")}>Add</Button></div>{addresses.length ? <div className="min-h-0 flex-1 divide-y overflow-y-auto pr-1">{addresses.map((address) => <div key={String(address.id)} className="space-y-2 py-2"><p className="break-words text-sm">{formatAddress((address.addresses ?? {}) as never) || "Address"}</p><div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="ghost" onClick={() => openEditor("address", address)}>Edit</Button><Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => { setMode("address"); setEditingRecord(address); openDelete("remove_address", address, "address") }}>Remove</Button></div></div>)}</div> : <p className="text-sm text-muted-foreground">No addresses.</p>}</div>
@@ -1529,6 +1548,15 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
       </div>
     </div>
     </DialogContent>
+    <Dialog open={Boolean(adding)} onOpenChange={(nextOpen) => { if (!nextOpen) setAdding(null); }}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader><DialogTitle>Add {adding?.label}</DialogTitle><DialogDescription>Step {adding?.step ?? 1} of 2: {adding?.step === 2 ? "Participant details" : "Participant type"}. After saving, use the same alias, address, and contact controls in Manage Participants.</DialogDescription></DialogHeader>
+        {adding?.step === 1 ? <div><Label>Participant Type</Label><select className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={adding.kind} onChange={(event) => setAdding({ ...adding, kind: event.target.value as "PERSON" | "ORGANIZATION" })}><option value="PERSON">Person</option><option value="ORGANIZATION">Organization</option></select></div> : null}
+        {adding?.step === 2 ? <div className="grid gap-3 sm:grid-cols-2">{adding.kind === "ORGANIZATION" ? <><FieldInput label="Organization Name" value={String(formData.organizationName ?? "")} onChange={(value) => setValue("organizationName", value)} /><FieldInput label="Contact Person" value={String(formData.contactPerson ?? "")} onChange={(value) => setValue("contactPerson", value)} /><FieldInput label="Contact Number" value={String(formData.contactNumber ?? "")} onChange={(value) => setValue("contactNumber", value)} /><FieldInput label="Email" value={String(formData.email ?? "")} onChange={(value) => setValue("email", value)} /></> : <><FieldInput label="First Name" value={String(formData.firstName ?? "")} onChange={(value) => setValue("firstName", value)} /><div><Label>Middle Name</Label><div className="relative"><Input className="pr-24" disabled={Boolean(formData.noMiddleName)} value={String(formData.noMiddleName ? "NMN" : formData.middleName ?? "")} onChange={(event) => setValue("middleName", event.target.value)} /><label className="absolute inset-y-0 right-3 flex items-center gap-2 text-sm italic text-muted-foreground"><Checkbox checked={Boolean(formData.noMiddleName)} onCheckedChange={(checked) => setValue("noMiddleName", checked === true)} /><span>NMN</span></label></div></div><FieldInput label="Last Name" value={String(formData.lastName ?? "")} onChange={(value) => setValue("lastName", value)} /><FieldInput label="Suffix" value={String(formData.suffix ?? "")} onChange={(value) => setValue("suffix", value)} /><FieldSelect label="Gender" value={String(formData.gender ?? "")} onChange={(value) => setValue("gender", value)} options={genderOptions} valueKey="code" optionLabel={(option) => option.display_label ?? String(option.code)} allowEmpty /><FieldInput label="Birthdate" type="date" value={String(formData.birthDate ?? "")} onChange={(value) => setValue("birthDate", value)} /><FieldInput label="Age" value={String(formData.age ?? "")} onChange={(value) => setValue("age", value)} /><fieldset className="pt-1"><legend className="text-sm font-medium">Case Flags</legend><div className="flex flex-wrap gap-3 pt-2">{[["isMinorAtCase","Minor"],["isSeniorAtCase","Senior"],["isPwdAtCase","PWD"]].map(([key,label]) => <label key={key} className="flex items-center gap-2 text-sm"><Checkbox checked={Boolean(formData[key])} onCheckedChange={(checked) => setValue(key, checked === true)} />{label}</label>)}</div></fieldset></>}<FieldInput label="Remarks" value={String(formData.remarks ?? "")} onChange={(value) => setValue("remarks", value)} className="sm:col-span-2" /></div> : null}
+        {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+        <DialogFooter><Button type="button" variant="outline" onClick={() => adding?.step === 2 ? setAdding({ ...adding, step: 1 }) : setAdding(null)}>{adding?.step === 2 ? "Back" : "Cancel"}</Button>{adding?.step === 1 ? <Button type="button" onClick={() => setAdding({ ...adding, step: 2 })}>Next</Button> : <Button type="button" disabled={isSaving} onClick={saveNewParticipant}>{isSaving ? "Adding..." : `Add ${adding?.label}`}</Button>}</DialogFooter>
+      </DialogContent>
+    </Dialog>
     <Dialog open={correctionHistoryOpen} onOpenChange={setCorrectionHistoryOpen}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader><DialogTitle>Correction History</DialogTitle><DialogDescription>Prior voided person details are shown only in this correction history.</DialogDescription></DialogHeader>
