@@ -11,6 +11,15 @@ export type DocketFolderReconciliationResult = {
   failedCases: Array<{ caseId: number; docketNumber: string; error: string }>;
 };
 
+export type DocketFolderProgress = {
+  completed: number;
+  total: number;
+  percent: number;
+  caseId?: number;
+  docketNumber?: string;
+  message: string;
+};
+
 type CaseRow = { id: number; docket_year: number; docket_display_number: string; docket_type_prefix: string };
 type MappingRow = { folder_id: string | null; parent_folder_id: string; folder_name: string; status: string };
 
@@ -29,7 +38,10 @@ async function findOrCreate(parentId: string, name: string) {
   return existingId ? { id: existingId, created: false } : { id: await createFolder(parentId, name), created: true };
 }
 
-export async function reconcileDocketFolders(caseIds: number[]): Promise<DocketFolderReconciliationResult> {
+export async function reconcileDocketFolders(
+  caseIds: number[],
+  onProgress?: (progress: DocketFolderProgress) => void | Promise<void>,
+): Promise<DocketFolderReconciliationResult> {
   const ids = Array.from(new Set(caseIds.filter(Number.isSafeInteger)));
   const result: DocketFolderReconciliationResult = { totalCasesChecked: 0, existingFolders: 0, newFoldersCreated: 0, databaseMappingsUpdated: 0, failedCases: [] };
   if (!ids.length) return result;
@@ -42,10 +54,13 @@ export async function reconcileDocketFolders(caseIds: number[]): Promise<DocketF
   const casesById = new Map((loaded.data ?? []).map((row) => [row.id, row]));
   const rootId = getDocketRootFolderId();
 
+  await onProgress?.({ completed: 0, total: ids.length, percent: 0, message: `Loaded ${ids.length.toLocaleString()} cases. Starting Google Drive folder checks.` });
+
   for (const caseId of ids) {
     const caseRow = casesById.get(caseId);
     const docketNumber = caseRow?.docket_display_number ?? `Case ${caseId}`;
-    result.totalCasesChecked += 1;
+    await onProgress?.({ completed: result.totalCasesChecked, total: ids.length, percent: Math.floor(result.totalCasesChecked / ids.length * 100), caseId, docketNumber, message: `Checking ${docketNumber} in Google Drive…` });
+    let outcome = 'Folder check failed';
     try {
       if (!caseRow?.docket_year || !caseRow.docket_display_number || !caseRow.docket_type_prefix) throw new Error('The case docket data is incomplete.');
       const mappingResponse = await admin.from('case_drive_folders' as never).select('folder_id,parent_folder_id,folder_name,status').eq('case_id', caseId).maybeSingle();
@@ -55,6 +70,7 @@ export async function reconcileDocketFolders(caseIds: number[]): Promise<DocketF
         result.existingFolders += 1;
         const scanned = await admin.from('case_drive_folders' as never).update({ last_scanned_at: new Date().toISOString(), last_error: null } as never).eq('case_id', caseId);
         if (scanned.error) throw new Error(scanned.error.message);
+        outcome = 'Existing folder verified';
         continue;
       }
 
@@ -70,8 +86,13 @@ export async function reconcileDocketFolders(caseIds: number[]): Promise<DocketF
       } as never, { onConflict: 'case_id' });
       if (saved.error) throw new Error(saved.error.message);
       if (mappingChanged) result.databaseMappingsUpdated += 1;
+      outcome = docket.created ? 'Created folder and saved mapping' : mappingChanged ? 'Found folder and updated mapping' : 'Existing folder verified';
     } catch (error) {
       result.failedCases.push({ caseId, docketNumber, error: error instanceof Error ? error.message : 'Unknown error' });
+      outcome = `Failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    } finally {
+      result.totalCasesChecked += 1;
+      await onProgress?.({ completed: result.totalCasesChecked, total: ids.length, percent: Math.floor(result.totalCasesChecked / ids.length * 100), caseId, docketNumber, message: `${docketNumber}: ${outcome}.` });
     }
   }
   return result;
