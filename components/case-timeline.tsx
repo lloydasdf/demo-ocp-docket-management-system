@@ -380,14 +380,28 @@ function uniqueCourtValues(values: Array<string | null | undefined>) {
   return uniqueValues.size > 0 ? Array.from(uniqueValues.values()).join("; ") : null;
 }
 
+function snapshotCriminalCaseNumbers(details: Record<string, unknown>) {
+  if (!Array.isArray(details.criminal_case_numbers)) {
+    return [stringDetail(details.criminal_case_no)];
+  }
+
+  return details.criminal_case_numbers.map((row) => {
+    // Older Court Filing events stored the snapshot as an array of strings,
+    // while newer status updates store objects with a criminal_case_no field.
+    // Accept both representations so historical numbers remain visible.
+    if (row && typeof row === "object" && !Array.isArray(row)) {
+      return stringDetail((row as Record<string, unknown>).criminal_case_no);
+    }
+
+    return stringDetail(row);
+  });
+}
+
 function courtFilingEventDetails(event: CaseTimelineEventRecord, court: CaseCourtRecord | null) {
   if (event.event_type_code !== "COURT_FILING" && eventSourceTable(event) !== "case_court_filings") return null;
   const details = event.details_jsonb && typeof event.details_jsonb === "object" ? event.details_jsonb as Record<string, unknown> : {};
-  const snapshotCriminalCaseNumbers = Array.isArray(details.criminal_case_numbers)
-    ? details.criminal_case_numbers.map((row) => stringDetail((row as Record<string, unknown>).criminal_case_no))
-    : [stringDetail(details.criminal_case_no)];
   const criminalCaseNumbers = uniqueCourtValues([
-    ...snapshotCriminalCaseNumbers,
+    ...snapshotCriminalCaseNumbers(details),
     court?.criminal_case_number,
   ]);
   const courtStatuses = mergeCourtStatusRows(
