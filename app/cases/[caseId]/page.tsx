@@ -1298,6 +1298,7 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
   const [correctionHistory, setCorrectionHistory] = useState<CaseParticipantCorrectionRecord[]>([]);
   const [correctionHistoryError, setCorrectionHistoryError] = useState<string | null>(null);
   const [adding, setAdding] = useState<{ roleId: number; label: string; step: 1 | 2; kind: "PERSON" | "ORGANIZATION" } | null>(null);
+  const [pendingAddedParticipantId, setPendingAddedParticipantId] = useState<number | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -1334,6 +1335,16 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
   const contacts = participantArray(selected?.contact_informations);
   const legacyFullNameOnly = Boolean(selected?.persons && !selected.persons.first_name && !selected.persons.middle_name && !selected.persons.last_name && selected.persons.full_name);
 
+  useEffect(() => {
+    if (!open || !pendingAddedParticipantId) return;
+    const addedParticipant = participants.find((participant) => participant.id === pendingAddedParticipantId);
+    if (!addedParticipant) return;
+    setSelectedId(addedParticipant.id);
+    setAdding(null);
+    openEditor("main", undefined, addedParticipant);
+    setPendingAddedParticipantId(null);
+  }, [open, participants, pendingAddedParticipantId]);
+
   const setValue = (key: string, value: string | boolean) => setFormData((current) => ({ ...current, [key]: value }));
 
   function startAdding(label: "Complainant" | "Respondent") {
@@ -1349,12 +1360,13 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
     const result = await addCaseParticipant({ caseId, participant: { ...formData, participantKind: adding.kind, roleId: Number(formData.roleId || adding.roleId) } });
     setIsSaving(false);
     if (result.error) { setError(result.error.message); return; }
-    setAdding(null); setSelectedId(result.data); setFormData({});
+    setPendingAddedParticipantId(result.data); setSelectedId(result.data); setFormData({});
     await onSaved();
   }
 
-  function openEditor(nextMode: ParticipantEditorMode, record?: Record<string, unknown>) {
-    if (!selected) return;
+  function openEditor(nextMode: ParticipantEditorMode, record?: Record<string, unknown>, participantOverride?: CaseParticipantRecord) {
+    const targetParticipant = participantOverride ?? selected;
+    if (!targetParticipant) return;
     setMode(nextMode);
     setEditingRecord(record ?? null);
     setPendingDelete(null);
@@ -1362,36 +1374,37 @@ function ManageParticipantsDialog({ addressTypes, participantRoles, caseId, onOp
     setError(null);
     setReasonError(null);
     if (nextMode === "main") {
-      setFormData(selected.participant_kind === "ORGANIZATION" ? {
-        roleId: String(selected.role_id ?? ""),
-        organizationName: selected.organizations?.organization_name ?? "",
-        contactPerson: selected.organizations?.contact_person ?? "",
-        contactNumber: selected.organizations?.contact_number ?? "",
-        email: selected.organizations?.email ?? "",
-        isMinorAtCase: selected.case_participant_attributes?.is_minor_at_case === true,
-        isSeniorAtCase: selected.case_participant_attributes?.is_senior_at_case === true,
-        isPwdAtCase: selected.case_participant_attributes?.is_pwd_at_case === true,
-        remarks: selected.remarks ?? "",
-        sourceDetail: selected.case_participant_private_details?.source_detail ?? "",
+      const targetLegacyFullNameOnly = Boolean(targetParticipant.persons && !targetParticipant.persons.first_name && !targetParticipant.persons.middle_name && !targetParticipant.persons.last_name && targetParticipant.persons.full_name);
+      setFormData(targetParticipant.participant_kind === "ORGANIZATION" ? {
+        roleId: String(targetParticipant.role_id ?? ""),
+        organizationName: targetParticipant.organizations?.organization_name ?? "",
+        contactPerson: targetParticipant.organizations?.contact_person ?? "",
+        contactNumber: targetParticipant.organizations?.contact_number ?? "",
+        email: targetParticipant.organizations?.email ?? "",
+        isMinorAtCase: targetParticipant.case_participant_attributes?.is_minor_at_case === true,
+        isSeniorAtCase: targetParticipant.case_participant_attributes?.is_senior_at_case === true,
+        isPwdAtCase: targetParticipant.case_participant_attributes?.is_pwd_at_case === true,
+        remarks: targetParticipant.remarks ?? "",
+        sourceDetail: targetParticipant.case_participant_private_details?.source_detail ?? "",
       } : {
-        roleId: String(selected.role_id ?? ""),
-        useStructuredName: !legacyFullNameOnly,
-        fullName: selected.persons?.full_name ?? selected.display_name_snapshot ?? "",
-        firstName: selected.persons?.first_name ?? "",
-        middleName: selected.persons?.middle_name ?? "",
-        noMiddleName: selected.persons?.middle_name === "NMN",
-        lastName: selected.persons?.last_name ?? "",
-        suffix: selected.persons?.suffix ?? "",
-        gender: selected.persons?.gender ?? selected.case_participant_attributes?.gender_text ?? "",
-        birthDate: selected.persons?.birth_date ?? "",
-        age: selected.persons?.age ?? selected.case_participant_attributes?.age_text ?? "",
-        personDescriptor: selected.persons?.person_descriptor ?? "",
-        notes: selected.persons?.notes ?? "",
-        remarks: selected.remarks ?? "",
-        sourceDetail: selected.case_participant_private_details?.source_detail ?? "",
-        isMinorAtCase: selected.case_participant_attributes?.is_minor_at_case === true,
-        isSeniorAtCase: selected.case_participant_attributes?.is_senior_at_case === true,
-        isPwdAtCase: selected.case_participant_attributes?.is_pwd_at_case === true,
+        roleId: String(targetParticipant.role_id ?? ""),
+        useStructuredName: !targetLegacyFullNameOnly,
+        fullName: targetParticipant.persons?.full_name ?? targetParticipant.display_name_snapshot ?? "",
+        firstName: targetParticipant.persons?.first_name ?? "",
+        middleName: targetParticipant.persons?.middle_name ?? "",
+        noMiddleName: targetParticipant.persons?.middle_name === "NMN",
+        lastName: targetParticipant.persons?.last_name ?? "",
+        suffix: targetParticipant.persons?.suffix ?? "",
+        gender: targetParticipant.persons?.gender ?? targetParticipant.case_participant_attributes?.gender_text ?? "",
+        birthDate: targetParticipant.persons?.birth_date ?? "",
+        age: targetParticipant.persons?.age ?? targetParticipant.case_participant_attributes?.age_text ?? "",
+        personDescriptor: targetParticipant.persons?.person_descriptor ?? "",
+        notes: targetParticipant.persons?.notes ?? "",
+        remarks: targetParticipant.remarks ?? "",
+        sourceDetail: targetParticipant.case_participant_private_details?.source_detail ?? "",
+        isMinorAtCase: targetParticipant.case_participant_attributes?.is_minor_at_case === true,
+        isSeniorAtCase: targetParticipant.case_participant_attributes?.is_senior_at_case === true,
+        isPwdAtCase: targetParticipant.case_participant_attributes?.is_pwd_at_case === true,
       });
     } else if (nextMode === "alias") {
       setFormData({ aliasName: String(record?.alias_name ?? "") });
