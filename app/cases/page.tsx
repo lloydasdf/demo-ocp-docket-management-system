@@ -808,7 +808,7 @@ export default function CasesPage() {
     return () => resizeObserver.disconnect();
   }, [isLoading, cases.length]);
 
-  const filteredCases = useMemo(() => {
+  const casesMatchingPrimaryFilters = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
 
     return cases.filter((caseDetail) => {
@@ -832,19 +832,6 @@ export default function CasesPage() {
       const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
       const classification = caseDetail.id ? classificationsByCase[caseDetail.id] : undefined;
 
-      if (showColumnFilters) {
-        const matchesColumnFilters = visibleCaseTableColumns.every((column) => {
-          const selectedValues = selectedColumnFilters[column.key];
-          return selectedValues.length > 0 && selectedValues.includes(
-            getCaseColumnFilterValue(caseDetail, column.key, casePartyNames, classification),
-          );
-        });
-
-        if (!matchesColumnFilters) {
-          return false;
-        }
-      }
-
       if (!normalizedSearch) {
         return true;
       }
@@ -860,11 +847,74 @@ export default function CasesPage() {
     classificationsByCase,
     partyNamesByCase,
     searchTerm,
-    selectedColumnFilters,
     selectedDocketTypes,
     selectedDocketYears,
     selectedDocketMonthsByYear,
     selectedSearchColumns,
+  ]);
+
+  const columnFilterOptions = useMemo(() => (
+    CASE_TABLE_COLUMNS.reduce((options, column) => {
+      const availableCases = !showColumnFilters
+        ? casesMatchingPrimaryFilters
+        : casesMatchingPrimaryFilters.filter((caseDetail) => {
+          const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
+          const classification = caseDetail.id ? classificationsByCase[caseDetail.id] : undefined;
+
+          return visibleCaseTableColumns.every((otherColumn) => {
+            if (otherColumn.key === column.key || !columnFilterTouchedRef.current[otherColumn.key]) {
+              return true;
+            }
+
+            const selectedValues = selectedColumnFilters[otherColumn.key];
+            return selectedValues.includes(
+              getCaseColumnFilterValue(caseDetail, otherColumn.key, casePartyNames, classification),
+            );
+          });
+        });
+
+      options[column.key] = uniqueSortedOptions(
+        availableCases.map((caseDetail) => {
+          const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
+          const classification = caseDetail.id ? classificationsByCase[caseDetail.id] : undefined;
+          return getCaseColumnFilterValue(caseDetail, column.key, casePartyNames, classification);
+        }),
+      );
+      return options;
+    }, {} as ColumnFilters)
+  ), [
+    casesMatchingPrimaryFilters,
+    classificationsByCase,
+    partyNamesByCase,
+    selectedColumnFilters,
+    showColumnFilters,
+    visibleCaseTableColumns,
+  ]);
+
+  const filteredCases = useMemo(() => {
+    if (!showColumnFilters) {
+      return casesMatchingPrimaryFilters;
+    }
+
+    return casesMatchingPrimaryFilters.filter((caseDetail) => {
+      const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
+      const classification = caseDetail.id ? classificationsByCase[caseDetail.id] : undefined;
+
+      return visibleCaseTableColumns.every((column) => {
+        if (!columnFilterTouchedRef.current[column.key]) {
+          return true;
+        }
+
+        return selectedColumnFilters[column.key].includes(
+          getCaseColumnFilterValue(caseDetail, column.key, casePartyNames, classification),
+        );
+      });
+    });
+  }, [
+    casesMatchingPrimaryFilters,
+    classificationsByCase,
+    partyNamesByCase,
+    selectedColumnFilters,
     showColumnFilters,
     visibleCaseTableColumns,
   ]);
@@ -907,19 +957,6 @@ export default function CasesPage() {
     return monthsByYear;
   }, [cases]);
 
-  const columnFilterOptions = useMemo(() => (
-    CASE_TABLE_COLUMNS.reduce((options, column) => {
-      options[column.key] = uniqueSortedOptions(
-        cases.map((caseDetail) => {
-          const casePartyNames = caseDetail.id ? partyNamesByCase[caseDetail.id] : undefined;
-          const classification = caseDetail.id ? classificationsByCase[caseDetail.id] : undefined;
-          return getCaseColumnFilterValue(caseDetail, column.key, casePartyNames, classification);
-        }),
-      );
-      return options;
-    }, {} as ColumnFilters)
-  ), [cases, classificationsByCase, partyNamesByCase]);
-
   const activeColumnFilterCount = useMemo(() => (
     visibleCaseTableColumns.filter((column) => {
       const selectedValues = selectedColumnFilters[column.key];
@@ -949,11 +986,19 @@ export default function CasesPage() {
       let nextFilters = currentFilters;
 
       for (const column of CASE_TABLE_COLUMNS) {
+        const nextColumnOptions = columnFilterOptions[column.key];
+
         if (columnFilterTouchedRef.current[column.key]) {
+          const stillAvailableSelections = currentFilters[column.key].filter((value) => nextColumnOptions.includes(value));
+          if (!sameOptions(currentFilters[column.key], stillAvailableSelections)) {
+            if (nextFilters === currentFilters) {
+              nextFilters = { ...currentFilters };
+            }
+            nextFilters[column.key] = stillAvailableSelections;
+          }
           continue;
         }
 
-        const nextColumnOptions = columnFilterOptions[column.key];
         if (sameOptions(currentFilters[column.key], nextColumnOptions)) {
           continue;
         }
