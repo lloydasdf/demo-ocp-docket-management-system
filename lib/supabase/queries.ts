@@ -1418,6 +1418,30 @@ export async function getProsecutors(limit?: number): Promise<SupabaseQueryResul
   }, []);
 }
 
+export async function addProsecutor(input: { firstName: string; lastName: string; middleName?: string | null; suffix?: string | null; shortName?: string | null }): Promise<SupabaseQueryResult<TableRow<"prosecutors">>> {
+  const environment = getSupabaseEnvironmentStatus();
+  if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table: "prosecutors", operation: "addProsecutor" });
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "addProsecutor", "users"));
+    const supabase = await getSupabaseBrowserClient();
+    const { data: prosecutorId, error } = await supabase.rpc("add_prosecutor" as never, {
+      p_first_name: input.firstName.trim(),
+      p_middle_name: input.middleName?.trim() || null,
+      p_last_name: input.lastName.trim(),
+      p_suffix: input.suffix?.trim() || null,
+      p_short_name: input.shortName?.trim() || null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "addProsecutor", "prosecutors"));
+    const result = await supabase.from("v_ref_prosecutors" as never).select("*").eq("id" as never, Number(prosecutorId)).single();
+    if (result.error) return fail(toQueryError(result.error, "addProsecutor", "v_ref_prosecutors" as RelationName));
+    return ok(result.data as unknown as TableRow<"prosecutors">);
+  } catch (error) {
+    return fail(toQueryError(error, "addProsecutor", "prosecutors"));
+  }
+}
+
 
 export async function getStaff(limit?: number): Promise<SupabaseQueryResult<TableRow<"staff">[]>> {
   const safeLimit = normalizeLimit(limit, 50, 250);

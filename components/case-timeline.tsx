@@ -46,6 +46,7 @@ import {
   getCaseManagedViolations,
   getViolations,
   getProsecutors,
+  addProsecutor,
   getStaff,
   recordCaseAssignmentEvent,
   recordCaseReassignmentEvent,
@@ -82,7 +83,6 @@ import {
   voidCaseEvent,
 } from "@/lib/supabase/queries";
 import { formatManilaClock, getManilaDateTimeInputValues } from "@/lib/philippine-time";
-import { createProsecutor } from "@/lib/supabase/prosecutors";
 import type { TableRow } from "@/lib/supabase/types";
 
 export type CaseTimelineProps = {
@@ -1305,7 +1305,9 @@ export function CaseTimeline({
     setIsCreatingProsecutor(true);
     setProsecutorFormError(null);
     try {
-      const prosecutor = await createProsecutor(prosecutorForm);
+      const result = await addProsecutor(prosecutorForm);
+      if (result.error) throw new Error(result.error.message);
+      const prosecutor = result.data;
       setProsecutors((current) => [...current, prosecutor].sort((left, right) => left.full_name.localeCompare(right.full_name)));
       setAddForm((form) => ({ ...form, prosecutorId: String(prosecutor.id) }));
       setIsProsecutorDialogOpen(false);
