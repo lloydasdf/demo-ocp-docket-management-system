@@ -78,6 +78,7 @@ import {
   recordPetitionForReviewEvent,
   recordPetitionForReviewUpdate,
   editCaseEvent,
+  editCaseAssignmentEvent,
   editCourtFilingEvent,
   getCaseEventTypes,
   voidCaseEvent,
@@ -1284,7 +1285,7 @@ export function CaseTimeline({
   const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: initialManilaDateTime.time, title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", caseMotionId: "", motionResolutionId: "", filedByCode: "", assignedProsecutorId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[], petitionStatus: "", petitionUpdateStep: 1, petitionUpdatePetitionId: "", petitionUpdateCaseStatus: "", petitionSelectedCaseStatusId: "", petitionSelectedCaseStageId: "", petitionDetails: [] as MotionDetailRow[], customStep: 1, customUpdateCaseStatus: "", customSelectedCaseStatusId: "", customSelectedCaseStageId: "", customDetails: [] as MotionDetailRow[] });
   const [manilaNow, setManilaNow] = useState(() => new Date());
   const [isAddDateTimeDirty, setIsAddDateTimeDirty] = useState(false);
-  const [editForm, setEditForm] = useState({ eventDate: "", eventTime: "", title: "", description: "", remarks: "", editReason: "", prosecutorId: "", staffId: "", assignedProsecutorId: "", filedByCode: "", petitionStatus: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", criminalCaseNumbers: [{ criminal_case_no: "" }] as CriminalCaseNumberRow[], courtStatuses: [] as CourtStatusRow[], approvedFilingDecision: "", approvedByProsecutorId: "", motionTitle: "", additionalDetails: [] as MotionDetailRow[] });
+  const [editForm, setEditForm] = useState({ eventDate: "", eventTime: "", title: "", description: "", remarks: "", reason: "", editReason: "", prosecutorId: "", staffId: "", assignedProsecutorId: "", filedByCode: "", petitionStatus: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", criminalCaseNumbers: [{ criminal_case_no: "" }] as CriminalCaseNumberRow[], courtStatuses: [] as CourtStatusRow[], approvedFilingDecision: "", approvedByProsecutorId: "", motionTitle: "", additionalDetails: [] as MotionDetailRow[] });
   const [voidReason, setVoidReason] = useState("");
   const [voidConfirmed, setVoidConfirmed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -1293,10 +1294,12 @@ export function CaseTimeline({
   const [isCreatingProsecutor, setIsCreatingProsecutor] = useState(false);
   const [prosecutorForm, setProsecutorForm] = useState({ fiscalCode: "" });
   const [prosecutorFormError, setProsecutorFormError] = useState<string | null>(null);
+  const [prosecutorSelectionTarget, setProsecutorSelectionTarget] = useState<"add" | "edit">("add");
 
-  const openProsecutorDialog = () => {
+  const openProsecutorDialog = (target: "add" | "edit" = "add") => {
     setProsecutorForm({ fiscalCode: "" });
     setProsecutorFormError(null);
+    setProsecutorSelectionTarget(target);
     setIsProsecutorDialogOpen(true);
   };
 
@@ -1309,7 +1312,8 @@ export function CaseTimeline({
       if (result.error) throw new Error(result.error.message);
       const prosecutor = result.data;
       setProsecutors((current) => [...current, prosecutor].sort((left, right) => left.full_name.localeCompare(right.full_name)));
-      setAddForm((form) => ({ ...form, prosecutorId: String(prosecutor.id) }));
+      if (prosecutorSelectionTarget === "edit") setEditForm((form) => ({ ...form, prosecutorId: String(prosecutor.id) }));
+      else setAddForm((form) => ({ ...form, prosecutorId: String(prosecutor.id) }));
       setIsProsecutorDialogOpen(false);
     } catch (error) {
       setProsecutorFormError(error instanceof Error ? error.message : "Unable to add prosecutor.");
@@ -1626,6 +1630,7 @@ export function CaseTimeline({
     const legacyCourt = !courtFiling && event.event_type_code === "COURT_FILING" && event.source_table === "case_courts" && event.source_id !== null ? (await getLegacyCourtFilingBySource(caseId, event.source_id)).data : null;
     const sourceMotion = motions.find((motion) => sourceIdMatches(event, motion.id));
     const sourcePetition = petitionsForReview.find((petition) => sourceIdMatches(event, petition.id));
+    const sourceAssignment = assignments.find((assignment) => Number(assignment.id) === Number(event.source_id));
     setEditingEvent(event);
     setEditForm({
       eventDate: toDateInputValue(sourceMotion?.date_filed ?? sourcePetition?.date_filed ?? legacyCourt?.actual_filing_date ?? legacyCourt?.date_filed_in_court ?? stringDetail(details.date_filed) ?? stringDetail(details.date_resolved) ?? stringDetail(details.date_approved) ?? stringDetail(details.status_date) ?? event.event_date),
@@ -1635,9 +1640,10 @@ export function CaseTimeline({
         ? event.description ?? ""
         : sourceMotion?.remarks ?? sourcePetition?.remarks ?? stringDetail(details.remarks) ?? event.description ?? "",
       remarks: courtFiling?.court_status_update_remarks ?? courtFiling?.remarks ?? legacyCourt?.court_remarks ?? stringDetail(details.remarks) ?? "",
+      reason: stringDetail(details.reason) ?? "",
       editReason: "",
-      prosecutorId: String(details.prosecutor_id ?? ""),
-      staffId: String(details.staff_id ?? ""),
+      prosecutorId: String(sourceAssignment?.prosecutor_id ?? details.new_prosecutor_id ?? ""),
+      staffId: String(sourceAssignment?.staff_id ?? details.staff_id ?? ""),
       assignedProsecutorId: String(sourceMotion?.assigned_prosecutor_id ?? details.assigned_prosecutor_id ?? details.approved_by_prosecutor_id ?? details.approved_by_id ?? ""),
       filedByCode: sourceMotion?.filed_by_code ?? sourcePetition?.filed_by_code ?? stringDetail(details.filed_by_code) ?? "",
       petitionStatus: sourcePetition?.petition_status ?? stringDetail(details.petition_status) ?? "",
@@ -1675,7 +1681,18 @@ export function CaseTimeline({
     if (isCustomOrLegacy && !editForm.title.trim()) return;
     setIsSaving(true);
     setActionError(null);
-    const result = code === "COURT_FILING"
+    const result = code === "CASE_ASSIGNMENT" || code === "CASE_REASSIGNMENT"
+      ? await editCaseAssignmentEvent({
+        caseEventId: editingEvent.case_event_id,
+        eventTypeCode: code,
+        prosecutorId: Number(editForm.prosecutorId),
+        eventDate: editForm.eventDate,
+        eventTime: editForm.eventTime || null,
+        staffId: editForm.staffId ? Number(editForm.staffId) : null,
+        reason: code === "CASE_REASSIGNMENT" ? editForm.reason : null,
+        remarks: editForm.description,
+      })
+      : code === "COURT_FILING"
       ? await editCourtFilingEvent({ caseEventId: editingEvent.case_event_id, courtId: editForm.courtId, courtName: editForm.courtName, courtBranch: editForm.courtBranch, chargeFiled: editForm.chargeFiled, dateFiled: editForm.eventDate, timeFiled: editForm.eventTime || null, informationCount: editForm.informationCount ? Number(editForm.informationCount) : null, criminalCaseNumbers: editForm.criminalCaseNumbers, courtStatuses: editForm.courtStatuses, additionalDetails: editForm.additionalDetails, remarks: editForm.remarks, editReason: editForm.editReason.trim() || null })
       : await editCaseEvent({
       caseEventId: editingEvent.case_event_id,
@@ -2011,7 +2028,7 @@ export function CaseTimeline({
                             ) : null}
                             {canShowCaseManagementActions && !event.is_voided ? (
                               <div className="flex gap-2 border-t pt-3">
-                                {(!EDIT_WORKFLOW_TEMPORARILY_DISABLED || event.event_type_code === "CASE_RECEIVED" || event.event_type_code === "COURT_FILING") ? <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button> : null}
+                                {(!EDIT_WORKFLOW_TEMPORARILY_DISABLED || event.event_type_code === "CASE_RECEIVED" || event.event_type_code === "COURT_FILING" || event.event_type_code === "CASE_ASSIGNMENT" || event.event_type_code === "CASE_REASSIGNMENT") ? <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button> : null}
                                 {event.event_type_code !== "CASE_RECEIVED" ? <Button type="button" variant="destructive" size="sm" onClick={() => openVoidDialog(event)}>Void</Button> : null}
                               </div>
                             ) : null}
@@ -2066,7 +2083,7 @@ export function CaseTimeline({
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <Label htmlFor="add-assigned-prosecutor">{isAddingReassignment ? "New Prosecutor" : "Assigned Prosecutor"}</Label>
-                    <Button type="button" variant="outline" size="sm" onClick={openProsecutorDialog}>+ Add prosecutor</Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => openProsecutorDialog("add")}>+ Add prosecutor</Button>
                   </div>
                   <select id="add-assigned-prosecutor" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.prosecutorId} onChange={(e) => setAddForm((form) => ({ ...form, prosecutorId: e.target.value }))}><option value="">Select prosecutor</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select>
                   <p className="text-xs text-muted-foreground">Can’t find the prosecutor? Add them here and they will be selected automatically.</p>
@@ -2283,11 +2300,11 @@ export function CaseTimeline({
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editDialogTitle(editingEvent)}</DialogTitle>
-            {editingEvent?.event_type_code !== "COURT_FILING" ? <DialogDescription>Correct stored timeline information without changing the event type, source record, or legal/workflow decision.</DialogDescription> : null}
+            {editingEvent?.event_type_code !== "COURT_FILING" ? <DialogDescription>{editingEvent?.event_type_code === "CASE_ASSIGNMENT" || editingEvent?.event_type_code === "CASE_REASSIGNMENT" ? "Update the stored assignment details using the same fields as the original event." : "Correct stored timeline information without changing the event type, source record, or legal/workflow decision."}</DialogDescription> : null}
           </DialogHeader>
           <div className="space-y-4">
             {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
-            {editingEvent?.event_type_code !== "COURT_FILING" ? <><EditNotice /><ReadOnlyActivityDetails event={editingEvent} /><div className="space-y-2"><p className="text-sm font-medium">Editable Corrections</p></div></> : null}
+            {editingEvent?.event_type_code !== "COURT_FILING" && editingEvent?.event_type_code !== "CASE_ASSIGNMENT" && editingEvent?.event_type_code !== "CASE_REASSIGNMENT" ? <><EditNotice /><ReadOnlyActivityDetails event={editingEvent} /><div className="space-y-2"><p className="text-sm font-medium">Editable Corrections</p></div></> : null}
             {(() => {
               const code = editingEvent?.event_type_code ?? "";
               const isAssignment = code === "CASE_ASSIGNMENT" || code === "CASE_REASSIGNMENT";
@@ -2299,6 +2316,18 @@ export function CaseTimeline({
               const isPetition = code === "PETITION_FOR_REVIEW";
               const isStatus = code === "CASE_STATUS_UPDATED";
               const isCustomOrLegacy = code === "CUSTOM_EVENT" || !SUPPORTED_EVENT_EDIT_TYPES.has(code);
+              if (isAssignment) return <>
+                <div className="space-y-2"><Label>Event Type</Label><select className="border-input h-9 w-full rounded-md border bg-muted px-3 text-sm" value={code} disabled><option value={code}>{code === "CASE_REASSIGNMENT" ? "Case Reassignment" : "Case Assignment"}</option></select></div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2"><Label htmlFor="edit-assigned-prosecutor">{code === "CASE_REASSIGNMENT" ? "New Prosecutor" : "Assigned Prosecutor"}</Label><Button type="button" variant="outline" size="sm" onClick={() => openProsecutorDialog("edit")}>+ Add prosecutor</Button></div>
+                  <select id="edit-assigned-prosecutor" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={editForm.prosecutorId} onChange={(e) => setEditForm((form) => ({ ...form, prosecutorId: e.target.value }))}><option value="">Select prosecutor</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select>
+                  <p className="text-xs text-muted-foreground">Can’t find the prosecutor? Add them here and they will be selected automatically.</p>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="edit-assignment-date">{code === "CASE_REASSIGNMENT" ? "Reassignment Date" : "Assignment Date"}</Label><Input id="edit-assignment-date" type="date" value={editForm.eventDate} onChange={(e) => setEditForm((form) => ({ ...form, eventDate: e.target.value }))} /></div><div className="space-y-2"><Label htmlFor="edit-assignment-time">{code === "CASE_REASSIGNMENT" ? "Reassignment Time" : "Assignment Time"}</Label><Input id="edit-assignment-time" type="time" step="1" value={editForm.eventTime} onChange={(e) => setEditForm((form) => ({ ...form, eventTime: e.target.value }))} /></div></div>
+                <div className="space-y-2"><Label htmlFor="edit-assigned-staff">{code === "CASE_REASSIGNMENT" ? "New Staff" : "Assigned Staff"}</Label><select id="edit-assigned-staff" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={editForm.staffId} onChange={(e) => setEditForm((form) => ({ ...form, staffId: e.target.value }))}><option value="">No staff selected</option>{staffMembers.map((staff) => <option key={staff.id} value={staff.id}>{staff.short_name ?? staff.full_name}</option>)}</select></div>
+                {code === "CASE_REASSIGNMENT" ? <div className="space-y-2"><Label htmlFor="edit-reassignment-reason">Reason</Label><Textarea id="edit-reassignment-reason" value={editForm.reason} onChange={(e) => setEditForm((form) => ({ ...form, reason: e.target.value }))} /></div> : null}
+                <div className="space-y-2"><Label htmlFor="edit-assignment-remarks">Remarks</Label><Textarea id="edit-assignment-remarks" value={editForm.description} onChange={(e) => setEditForm((form) => ({ ...form, description: e.target.value }))} /></div>
+              </>;
               return <>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-2"><Label htmlFor="edit-date">{isStatus ? "Status Date" : isResolution ? "Resolution Date" : isApproval ? "Approval Date" : isCourtFiling || isMotionReceived || isPetition ? "Date Filed" : isMotionResolved ? "Date Resolved" : isAssignment && code === "CASE_REASSIGNMENT" ? "Reassignment Date" : "Event Date"}</Label><Input id="edit-date" type="date" value={editForm.eventDate} onChange={(e) => setEditForm((form) => ({ ...form, eventDate: e.target.value }))} /></div>
@@ -2317,7 +2346,7 @@ export function CaseTimeline({
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setEditingEvent(null)}>Cancel</Button>
-            <Button type="button" onClick={handleEditSave} disabled={isSaving || !editForm.eventDate}>{isSaving ? "Saving..." : "Save Corrections"}</Button>
+            <Button type="button" onClick={handleEditSave} disabled={isSaving || !editForm.eventDate || ((editingEvent?.event_type_code === "CASE_ASSIGNMENT" || editingEvent?.event_type_code === "CASE_REASSIGNMENT") && !editForm.prosecutorId)}>{isSaving ? "Saving..." : editingEvent?.event_type_code === "CASE_REASSIGNMENT" ? "Confirm Reassignment Update" : editingEvent?.event_type_code === "CASE_ASSIGNMENT" ? "Confirm Assignment Update" : "Save Corrections"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

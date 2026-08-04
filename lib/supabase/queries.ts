@@ -2896,6 +2896,40 @@ export interface EditCaseEventInput {
   editReason: string | null;
 }
 
+export interface EditCaseAssignmentEventInput {
+  caseEventId: number;
+  eventTypeCode: "CASE_ASSIGNMENT" | "CASE_REASSIGNMENT";
+  prosecutorId: number;
+  eventDate: string;
+  eventTime?: string | null;
+  staffId?: number | null;
+  reason?: string | null;
+  remarks?: string | null;
+}
+
+export async function editCaseAssignmentEvent(input: EditCaseAssignmentEventInput): Promise<SupabaseQueryResult<number>> {
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user."), "editCaseAssignmentEvent", "users"));
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("edit_case_assignment_event" as never, {
+      p_case_event_id: input.caseEventId,
+      p_expected_event_type_code: input.eventTypeCode,
+      p_prosecutor_id: input.prosecutorId,
+      p_event_date: input.eventDate,
+      p_event_time: input.eventTime?.trim() || null,
+      p_staff_id: input.staffId ?? null,
+      p_reason: input.reason?.trim() || null,
+      p_remarks: input.remarks?.trim() || null,
+      p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "editCaseAssignmentEvent", "case_assignments"));
+    return ok(Number(data));
+  } catch (error) {
+    return fail(toQueryError(error, "editCaseAssignmentEvent", "case_assignments"));
+  }
+}
+
 export async function editCaseEvent(
   input: EditCaseEventInput,
 ): Promise<SupabaseQueryResult<number>> {
