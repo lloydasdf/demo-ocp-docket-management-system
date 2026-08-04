@@ -34,11 +34,16 @@ BEGIN
   IF p_prosecutor_id IS NULL THEN RAISE EXCEPTION 'Assigned prosecutor is required'; END IF;
   IF p_event_date IS NULL THEN RAISE EXCEPTION 'Assignment date is required'; END IF;
 
-  SELECT ce, cet.code INTO v_event, v_code
-  FROM public.case_events ce JOIN public.case_event_types cet ON cet.id = ce.event_type_id
+  SELECT ce.* INTO v_event
+  FROM public.case_events ce
   WHERE ce.id = p_case_event_id AND ce.is_voided IS FALSE
-  FOR UPDATE OF ce;
+  FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'Active assignment event % not found', p_case_event_id; END IF;
+
+  SELECT cet.code INTO v_code
+  FROM public.case_event_types cet
+  WHERE cet.id = v_event.event_type_id;
+  IF v_code IS NULL THEN RAISE EXCEPTION 'Assignment event type cannot be resolved'; END IF;
   IF v_code IS DISTINCT FROM p_expected_event_type_code THEN RAISE EXCEPTION 'This activity is %, not %', v_code, p_expected_event_type_code; END IF;
   IF v_event.source_table IS DISTINCT FROM 'case_assignments' OR v_event.source_id IS NULL THEN RAISE EXCEPTION 'Assignment source record cannot be resolved'; END IF;
 
