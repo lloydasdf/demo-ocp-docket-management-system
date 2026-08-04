@@ -1,8 +1,7 @@
 -- Create prosecutors through the same audited RPC boundary used by other
--- creatable assignment-event lookups.
-CREATE UNIQUE INDEX IF NOT EXISTS prosecutors_active_full_name_norm_uidx
-  ON public.prosecutors (lower(regexp_replace(btrim(full_name), '\s+', ' ', 'g')))
-  WHERE is_active;
+-- creatable assignment-event lookups. The production data contains legacy
+-- duplicate names, so duplicate protection is scoped to this RPC rather than
+-- enforced by a table-wide unique index.
 
 CREATE OR REPLACE FUNCTION public.add_prosecutor(
   p_fiscal_code text,
@@ -25,6 +24,10 @@ BEGIN
   IF length(v_fiscal_code) > 100 THEN
     RAISE EXCEPTION 'Fiscal Code must be 100 characters or fewer.';
   END IF;
+
+  -- Serialize creation attempts for the same normalized Fiscal Code. This
+  -- closes the check/insert race without requiring legacy rows to be deduped.
+  PERFORM pg_advisory_xact_lock(hashtextextended(lower(v_fiscal_code), 0));
 
   IF EXISTS (
     SELECT 1 FROM public.prosecutors
@@ -50,9 +53,6 @@ BEGIN
   INSERT INTO public.audit_logs(actor_user_id, entity_name, entity_id, action, old_data, new_data, summary, metadata)
   VALUES (p_user_id, 'prosecutors', v_id, 'ADD_PROSECUTOR', NULL, v_new, 'Added prosecutor Fiscal Code ' || v_fiscal_code || '.', jsonb_build_object('fiscal_code', v_fiscal_code));
   RETURN v_id;
-EXCEPTION
-  WHEN unique_violation THEN
-    RAISE EXCEPTION 'An active prosecutor with this full name already exists.';
 END;
 $$;
 
