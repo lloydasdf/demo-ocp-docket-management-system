@@ -1291,17 +1291,17 @@ export function CaseTimeline({
   const [actionError, setActionError] = useState<string | null>(null);
   const [isProsecutorDialogOpen, setIsProsecutorDialogOpen] = useState(false);
   const [isCreatingProsecutor, setIsCreatingProsecutor] = useState(false);
-  const [prosecutorForm, setProsecutorForm] = useState({ firstName: "", middleName: "", lastName: "", suffix: "", shortName: "" });
+  const [prosecutorForm, setProsecutorForm] = useState({ fiscalCode: "" });
   const [prosecutorFormError, setProsecutorFormError] = useState<string | null>(null);
 
   const openProsecutorDialog = () => {
-    setProsecutorForm({ firstName: "", middleName: "", lastName: "", suffix: "", shortName: "" });
+    setProsecutorForm({ fiscalCode: "" });
     setProsecutorFormError(null);
     setIsProsecutorDialogOpen(true);
   };
 
   const handleCreateProsecutor = async () => {
-    if (!prosecutorForm.firstName.trim() || !prosecutorForm.lastName.trim()) return;
+    if (!prosecutorForm.fiscalCode.trim()) return;
     setIsCreatingProsecutor(true);
     setProsecutorFormError(null);
     try {
@@ -2217,17 +2217,13 @@ export function CaseTimeline({
             <DialogTitle>Add prosecutor</DialogTitle>
             <DialogDescription>Create an active prosecutor record and select it for this assignment.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-2 sm:grid-cols-2">
-            {prosecutorFormError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive sm:col-span-2">{prosecutorFormError}</p> : null}
-            <div className="space-y-2"><Label htmlFor="prosecutor-first-name">First name *</Label><Input id="prosecutor-first-name" autoFocus maxLength={100} value={prosecutorForm.firstName} onChange={(event) => setProsecutorForm((form) => ({ ...form, firstName: event.target.value }))} /></div>
-            <div className="space-y-2"><Label htmlFor="prosecutor-middle-name">Middle name</Label><Input id="prosecutor-middle-name" maxLength={100} value={prosecutorForm.middleName} onChange={(event) => setProsecutorForm((form) => ({ ...form, middleName: event.target.value }))} /></div>
-            <div className="space-y-2"><Label htmlFor="prosecutor-last-name">Last name *</Label><Input id="prosecutor-last-name" maxLength={100} value={prosecutorForm.lastName} onChange={(event) => setProsecutorForm((form) => ({ ...form, lastName: event.target.value }))} /></div>
-            <div className="space-y-2"><Label htmlFor="prosecutor-suffix">Suffix</Label><Input id="prosecutor-suffix" maxLength={100} placeholder="Jr., III" value={prosecutorForm.suffix} onChange={(event) => setProsecutorForm((form) => ({ ...form, suffix: event.target.value }))} /></div>
-            <div className="space-y-2 sm:col-span-2"><Label htmlFor="prosecutor-short-name">Display name <span className="font-normal text-muted-foreground">(optional)</span></Label><Input id="prosecutor-short-name" maxLength={100} placeholder="Generated automatically when blank" value={prosecutorForm.shortName} onChange={(event) => setProsecutorForm((form) => ({ ...form, shortName: event.target.value }))} /></div>
+          <div className="grid gap-4 py-2">
+            {prosecutorFormError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{prosecutorFormError}</p> : null}
+            <div className="space-y-2"><Label htmlFor="prosecutor-fiscal-code">Fiscal Code *</Label><Input id="prosecutor-fiscal-code" autoFocus maxLength={100} value={prosecutorForm.fiscalCode} onChange={(event) => setProsecutorForm({ fiscalCode: event.target.value })} /></div>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setIsProsecutorDialogOpen(false)} disabled={isCreatingProsecutor}>Cancel</Button>
-            <Button type="button" onClick={handleCreateProsecutor} disabled={isCreatingProsecutor || !prosecutorForm.firstName.trim() || !prosecutorForm.lastName.trim()}>{isCreatingProsecutor ? "Adding..." : "Add prosecutor"}</Button>
+            <Button type="button" onClick={handleCreateProsecutor} disabled={isCreatingProsecutor || !prosecutorForm.fiscalCode.trim()}>{isCreatingProsecutor ? "Adding..." : "Add prosecutor"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -1418,7 +1418,7 @@ export async function getProsecutors(limit?: number): Promise<SupabaseQueryResul
   }, []);
 }
 
-export async function addProsecutor(input: { firstName: string; lastName: string; middleName?: string | null; suffix?: string | null; shortName?: string | null }): Promise<SupabaseQueryResult<TableRow<"prosecutors">>> {
+export async function addProsecutor(input: { fiscalCode: string }): Promise<SupabaseQueryResult<TableRow<"prosecutors">>> {
   const environment = getSupabaseEnvironmentStatus();
   if (!environment.isConfigured) return fail({ message: "Supabase is not configured.", table: "prosecutors", operation: "addProsecutor" });
   try {
@@ -1426,11 +1426,7 @@ export async function addProsecutor(input: { firstName: string; lastName: string
     if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "addProsecutor", "users"));
     const supabase = await getSupabaseBrowserClient();
     const { data: prosecutorId, error } = await supabase.rpc("add_prosecutor" as never, {
-      p_first_name: input.firstName.trim(),
-      p_middle_name: input.middleName?.trim() || null,
-      p_last_name: input.lastName.trim(),
-      p_suffix: input.suffix?.trim() || null,
-      p_short_name: input.shortName?.trim() || null,
+      p_fiscal_code: input.fiscalCode.trim(),
       p_user_id: currentUserQuery.data.id,
     } as never);
     if (error) return fail(toQueryError(error, "addProsecutor", "prosecutors"));

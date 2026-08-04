@@ -5,11 +5,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS prosecutors_active_full_name_norm_uidx
   WHERE is_active;
 
 CREATE OR REPLACE FUNCTION public.add_prosecutor(
-  p_first_name text,
-  p_last_name text,
-  p_middle_name text DEFAULT NULL,
-  p_suffix text DEFAULT NULL,
-  p_short_name text DEFAULT NULL,
+  p_fiscal_code text,
   p_user_id bigint DEFAULT NULL
 )
 RETURNS bigint
@@ -18,30 +14,22 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_first_name text := nullif(regexp_replace(btrim(coalesce(p_first_name, '')), '\s+', ' ', 'g'), '');
-  v_middle_name text := nullif(regexp_replace(btrim(coalesce(p_middle_name, '')), '\s+', ' ', 'g'), '');
-  v_last_name text := nullif(regexp_replace(btrim(coalesce(p_last_name, '')), '\s+', ' ', 'g'), '');
-  v_suffix text := nullif(regexp_replace(btrim(coalesce(p_suffix, '')), '\s+', ' ', 'g'), '');
-  v_short_name text := nullif(regexp_replace(btrim(coalesce(p_short_name, '')), '\s+', ' ', 'g'), '');
-  v_full_name text;
+  v_fiscal_code text := nullif(regexp_replace(btrim(coalesce(p_fiscal_code, '')), '\s+', ' ', 'g'), '');
   v_position_id bigint;
   v_id bigint;
   v_new jsonb;
 BEGIN
-  IF v_first_name IS NULL OR v_last_name IS NULL THEN
-    RAISE EXCEPTION 'First name and last name are required.';
+  IF v_fiscal_code IS NULL THEN
+    RAISE EXCEPTION 'Fiscal Code is required.';
   END IF;
-  IF greatest(length(v_first_name), length(coalesce(v_middle_name, '')), length(v_last_name), length(coalesce(v_suffix, '')), length(coalesce(v_short_name, ''))) > 100 THEN
-    RAISE EXCEPTION 'Each name field must be 100 characters or fewer.';
+  IF length(v_fiscal_code) > 100 THEN
+    RAISE EXCEPTION 'Fiscal Code must be 100 characters or fewer.';
   END IF;
-
-  v_full_name := concat_ws(' ', v_first_name, v_middle_name, v_last_name, v_suffix);
-  v_short_name := coalesce(v_short_name, left(v_first_name, 1) || '. ' || v_last_name || CASE WHEN v_suffix IS NULL THEN '' ELSE ' ' || v_suffix END);
 
   IF EXISTS (
     SELECT 1 FROM public.prosecutors
     WHERE is_active
-      AND lower(regexp_replace(btrim(full_name), '\s+', ' ', 'g')) = lower(v_full_name)
+      AND lower(regexp_replace(btrim(full_name), '\s+', ' ', 'g')) = lower(v_fiscal_code)
   ) THEN
     RAISE EXCEPTION 'An active prosecutor with this full name already exists.';
   END IF;
@@ -52,13 +40,15 @@ BEGIN
   ORDER BY id
   LIMIT 1;
 
-  INSERT INTO public.prosecutors(first_name, middle_name, last_name, suffix, full_name, short_name, position_id, position_code, is_active)
-  VALUES (v_first_name, v_middle_name, v_last_name, v_suffix, v_full_name, v_short_name, v_position_id, 'PROSECUTOR', true)
+  -- first_name and last_name remain required by the production schema. Until
+  -- the full prosecutor profile is collected, retain the Fiscal Code in both.
+  INSERT INTO public.prosecutors(first_name, last_name, full_name, short_name, position_id, position_code, is_active)
+  VALUES (v_fiscal_code, v_fiscal_code, v_fiscal_code, v_fiscal_code, v_position_id, 'PROSECUTOR', true)
   RETURNING id INTO v_id;
 
   SELECT to_jsonb(p) INTO v_new FROM public.prosecutors p WHERE p.id = v_id;
   INSERT INTO public.audit_logs(actor_user_id, entity_name, entity_id, action, old_data, new_data, summary, metadata)
-  VALUES (p_user_id, 'prosecutors', v_id, 'ADD_PROSECUTOR', NULL, v_new, 'Added prosecutor ' || v_full_name || '.', jsonb_build_object('full_name', v_full_name));
+  VALUES (p_user_id, 'prosecutors', v_id, 'ADD_PROSECUTOR', NULL, v_new, 'Added prosecutor Fiscal Code ' || v_fiscal_code || '.', jsonb_build_object('fiscal_code', v_fiscal_code));
   RETURN v_id;
 EXCEPTION
   WHEN unique_violation THEN
@@ -66,5 +56,5 @@ EXCEPTION
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.add_prosecutor(text,text,text,text,text,bigint) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.add_prosecutor(text,text,text,text,text,bigint) TO authenticated;
+REVOKE ALL ON FUNCTION public.add_prosecutor(text,bigint) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.add_prosecutor(text,bigint) TO authenticated;
