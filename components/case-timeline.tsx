@@ -82,6 +82,7 @@ import {
   voidCaseEvent,
 } from "@/lib/supabase/queries";
 import { formatManilaClock, getManilaDateTimeInputValues } from "@/lib/philippine-time";
+import { createProsecutor } from "@/lib/supabase/prosecutors";
 import type { TableRow } from "@/lib/supabase/types";
 
 export type CaseTimelineProps = {
@@ -1288,6 +1289,32 @@ export function CaseTimeline({
   const [voidConfirmed, setVoidConfirmed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [isProsecutorDialogOpen, setIsProsecutorDialogOpen] = useState(false);
+  const [isCreatingProsecutor, setIsCreatingProsecutor] = useState(false);
+  const [prosecutorForm, setProsecutorForm] = useState({ firstName: "", middleName: "", lastName: "", suffix: "", shortName: "" });
+  const [prosecutorFormError, setProsecutorFormError] = useState<string | null>(null);
+
+  const openProsecutorDialog = () => {
+    setProsecutorForm({ firstName: "", middleName: "", lastName: "", suffix: "", shortName: "" });
+    setProsecutorFormError(null);
+    setIsProsecutorDialogOpen(true);
+  };
+
+  const handleCreateProsecutor = async () => {
+    if (!prosecutorForm.firstName.trim() || !prosecutorForm.lastName.trim()) return;
+    setIsCreatingProsecutor(true);
+    setProsecutorFormError(null);
+    try {
+      const prosecutor = await createProsecutor(prosecutorForm);
+      setProsecutors((current) => [...current, prosecutor].sort((left, right) => left.full_name.localeCompare(right.full_name)));
+      setAddForm((form) => ({ ...form, prosecutorId: String(prosecutor.id) }));
+      setIsProsecutorDialogOpen(false);
+    } catch (error) {
+      setProsecutorFormError(error instanceof Error ? error.message : "Unable to add prosecutor.");
+    } finally {
+      setIsCreatingProsecutor(false);
+    }
+  };
 
 
   useEffect(() => {
@@ -2034,7 +2061,14 @@ export function CaseTimeline({
             ) : null}
             {isAddingAssignmentLike ? (
               <>
-                <div className="space-y-2"><Label htmlFor="add-assigned-prosecutor">{isAddingReassignment ? "New Prosecutor" : "Assigned Prosecutor"}</Label><select id="add-assigned-prosecutor" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.prosecutorId} onChange={(e) => setAddForm((form) => ({ ...form, prosecutorId: e.target.value }))}><option value="">Select prosecutor</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select></div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor="add-assigned-prosecutor">{isAddingReassignment ? "New Prosecutor" : "Assigned Prosecutor"}</Label>
+                    <Button type="button" variant="outline" size="sm" onClick={openProsecutorDialog}>+ Add prosecutor</Button>
+                  </div>
+                  <select id="add-assigned-prosecutor" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.prosecutorId} onChange={(e) => setAddForm((form) => ({ ...form, prosecutorId: e.target.value }))}><option value="">Select prosecutor</option>{prosecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select>
+                  <p className="text-xs text-muted-foreground">Can’t find the prosecutor? Add them here and they will be selected automatically.</p>
+                </div>
                 <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="add-assignment-date">{isAddingReassignment ? "Reassignment Date" : "Assignment Date"}</Label><Input id="add-assignment-date" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div><div className="space-y-2"><Label htmlFor="add-assignment-time">{isAddingReassignment ? "Reassignment Time" : "Assignment Time"}</Label><Input id="add-assignment-time" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div></div>
                 <div className="space-y-2"><Label htmlFor="add-assigned-staff">{isAddingReassignment ? "New Staff" : "Assigned Staff"}</Label><select id="add-assigned-staff" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.staffId} onChange={(e) => setAddForm((form) => ({ ...form, staffId: e.target.value }))}><option value="">No staff selected</option>{staffMembers.map((staff) => <option key={staff.id} value={staff.id}>{staff.short_name ?? staff.full_name}</option>)}</select></div>
                 {isAddingReassignment ? <div className="space-y-2"><Label htmlFor="add-reassignment-reason">Reason</Label><Textarea id="add-reassignment-reason" value={addForm.reason} onChange={(e) => setAddForm((form) => ({ ...form, reason: e.target.value }))} /></div> : null}
@@ -2172,6 +2206,26 @@ export function CaseTimeline({
           <DialogFooter className="border-t pt-3">
             <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
             <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : isAddingCourtFiling ? !addForm.courtName.trim() || !addForm.chargeFiled.trim() : isAddingCourtStatusUpdate ? courtStatusStep !== 3 : isAddingMotionReceived ? !addForm.motionTitle.trim() || !addForm.filedByCode : isAddingMotionResolved ? !addForm.motionRecommendationId : isAddingMotionDecisionApproved ? addForm.motionDecisionStep !== 5 || (motionResolutionApprovalCandidates.length > 0 ? !addForm.motionResolutionId : !addForm.motionTitle.trim()) || !addForm.motionApprovalDecisionId || !addForm.motionApprovedByProsecutorId || !addForm.motionUpdateCaseStatus || (addForm.motionUpdateCaseStatus === "YES" && (!addForm.motionSelectedCaseStatusId || !addForm.motionSelectedCaseStageId)) : isAddingPetitionForReview ? !addForm.filedByCode : isAddingPetitionForReviewUpdate ? addForm.petitionUpdateStep !== 3 || !addForm.petitionStatus.trim() || !addForm.petitionUpdateCaseStatus || (addForm.petitionUpdateCaseStatus === "YES" && (!addForm.petitionSelectedCaseStatusId || !addForm.petitionSelectedCaseStageId)) : isAddingCustomEvent ? addForm.customStep !== 3 || !addForm.title.trim() || !addForm.eventTime || !addForm.customUpdateCaseStatus || (addForm.customUpdateCaseStatus === "YES" && (!addForm.customSelectedCaseStatusId || !addForm.customSelectedCaseStageId)) : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : isAddingCourtFiling ? "Record Court Filing" : isAddingCourtStatusUpdate ? "Save Court Status Update" : isAddingMotionReceived ? "Record Motion Received" : isAddingMotionResolved ? "Record Motion Resolved" : isAddingMotionDecisionApproved ? "Save Motion Decision Approval" : isAddingPetitionForReview ? "Record Petition for Review" : isAddingPetitionForReviewUpdate ? "Save Petition Update" : isAddingCustomEvent ? "Save Custom Event" : "Add event"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={isProsecutorDialogOpen} onOpenChange={setIsProsecutorDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add prosecutor</DialogTitle>
+            <DialogDescription>Create an active prosecutor record and select it for this assignment.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2 sm:grid-cols-2">
+            {prosecutorFormError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive sm:col-span-2">{prosecutorFormError}</p> : null}
+            <div className="space-y-2"><Label htmlFor="prosecutor-first-name">First name *</Label><Input id="prosecutor-first-name" autoFocus maxLength={100} value={prosecutorForm.firstName} onChange={(event) => setProsecutorForm((form) => ({ ...form, firstName: event.target.value }))} /></div>
+            <div className="space-y-2"><Label htmlFor="prosecutor-middle-name">Middle name</Label><Input id="prosecutor-middle-name" maxLength={100} value={prosecutorForm.middleName} onChange={(event) => setProsecutorForm((form) => ({ ...form, middleName: event.target.value }))} /></div>
+            <div className="space-y-2"><Label htmlFor="prosecutor-last-name">Last name *</Label><Input id="prosecutor-last-name" maxLength={100} value={prosecutorForm.lastName} onChange={(event) => setProsecutorForm((form) => ({ ...form, lastName: event.target.value }))} /></div>
+            <div className="space-y-2"><Label htmlFor="prosecutor-suffix">Suffix</Label><Input id="prosecutor-suffix" maxLength={100} placeholder="Jr., III" value={prosecutorForm.suffix} onChange={(event) => setProsecutorForm((form) => ({ ...form, suffix: event.target.value }))} /></div>
+            <div className="space-y-2 sm:col-span-2"><Label htmlFor="prosecutor-short-name">Display name <span className="font-normal text-muted-foreground">(optional)</span></Label><Input id="prosecutor-short-name" maxLength={100} placeholder="Generated automatically when blank" value={prosecutorForm.shortName} onChange={(event) => setProsecutorForm((form) => ({ ...form, shortName: event.target.value }))} /></div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsProsecutorDialogOpen(false)} disabled={isCreatingProsecutor}>Cancel</Button>
+            <Button type="button" onClick={handleCreateProsecutor} disabled={isCreatingProsecutor || !prosecutorForm.firstName.trim() || !prosecutorForm.lastName.trim()}>{isCreatingProsecutor ? "Adding..." : "Add prosecutor"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
