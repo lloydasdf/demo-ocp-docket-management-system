@@ -2,7 +2,7 @@
 
 import type React from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ExternalLink, Printer } from "lucide-react";
 
@@ -1800,7 +1800,9 @@ function sanitizePdfFilename(value: string) {
 
 export default function CaseDetailsPage() {
   const params = useParams<{ caseId: string }>();
+  const searchParams = useSearchParams();
   const caseId = Number.parseInt(params.caseId, 10);
+  const isQuickView = searchParams.get("quickview") === "1";
   const [data, setData] = useState<CaseDetailsState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -2023,9 +2025,9 @@ export default function CaseDetailsPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar />
-      <main style={isAttachmentPreviewActive ? { marginRight: `${attachmentPreviewWidth}vw` } : undefined} className="min-w-0 flex-1 overflow-y-auto p-3 pt-16 transition-[margin] duration-100 md:p-8 max-lg:!mr-0">
-        <div className="mx-auto flex w-full max-w-[900px] flex-col gap-4 md:gap-6">
+      {isQuickView ? null : <Sidebar />}
+      <main style={!isQuickView && isAttachmentPreviewActive ? { marginRight: `${attachmentPreviewWidth}vw` } : undefined} className={`${isQuickView ? "p-3" : "p-3 pt-16 md:p-8"} min-w-0 flex-1 overflow-y-auto transition-[margin] duration-100 max-lg:!mr-0`}>
+        <div className={`${isQuickView ? "max-w-none" : "max-w-[900px]"} mx-auto flex w-full flex-col gap-4 md:gap-6`}>
           {isLoading ? (
             <Card>
               <CardContent className="py-10 text-center text-sm text-muted-foreground">
@@ -2450,7 +2452,7 @@ export default function CaseDetailsPage() {
                     <CardTitle>Attachments</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <CaseDriveAttachments caseId={caseId} docketYear={data.details.docket_year} docketType={data.details.docket_type_prefix} docketNumber={data.details.docket_display_number} onPreviewChange={handleAttachmentPreviewChange} />
+                    <CaseDriveAttachments caseId={caseId} docketYear={data.details.docket_year} docketType={data.details.docket_type_prefix} docketNumber={data.details.docket_display_number} previewPlacement={isQuickView ? "modal" : "responsive"} onPreviewChange={handleAttachmentPreviewChange} />
                   </CardContent>
                 </Card>
               </div>
