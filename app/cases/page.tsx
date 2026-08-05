@@ -23,6 +23,7 @@ import { canExportCasesToExcel, canViewCaseAging, canViewLinkedDocket } from '@/
 import {
   getDocketCaseLabelsForCases,
   getDocketParticipantsForCases,
+  getDocketApprovalsForCases,
   canCurrentUserViewDocketQuickDetails,
   getDocketQuickDetailsForCases,
   getDocketShellDisplay,
@@ -30,6 +31,7 @@ import {
   type CasesDisplayRecord,
   type DocketCaseLabelsRecord,
   type DocketParticipantsRecord,
+  type DocketApprovalRecord,
   type DocketQuickDetailsRecord,
   type DocketShellRecord,
 } from '@/lib/supabase/queries';
@@ -67,6 +69,7 @@ const CASE_TABLE_COLUMNS = [
   { key: 'assignedProsecutor', label: 'Assigned Prosecutor', initialWidth: 240, minWidth: 180 },
   { key: 'currentStatus', label: 'Current Status', initialWidth: 180, minWidth: 150 },
   { key: 'currentStage', label: 'Current Stage', initialWidth: 200, minWidth: 160 },
+  { key: 'dateApproved', label: 'Date Approved', initialWidth: 150, minWidth: 120 },
   { key: 'dateReceived', label: 'Date Received', initialWidth: 150, minWidth: 120 },
   { key: 'aging', label: 'Aging', initialWidth: 120, minWidth: 100 },
 ] as const;
@@ -102,7 +105,7 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear' && column.key !== 'aging',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v21';
+const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v22';
 const casesPageMemoryCache = new Map<string, CasesPageCache>();
 
 function getCasesPageCacheKey(userId: string) {
@@ -119,6 +122,7 @@ function clearLegacyCasesPageCaches() {
   window.sessionStorage.removeItem('ocp-cases-page-cache-v18');
   window.sessionStorage.removeItem('ocp-cases-page-cache-v19');
   window.sessionStorage.removeItem('ocp-cases-page-cache-v20');
+  window.sessionStorage.removeItem('ocp-cases-page-cache-v21');
 }
 
 function docketMonthName(monthCode: string) {
@@ -248,6 +252,8 @@ function searchColumnValue(
       return currentStatusLabel(caseDetail) ?? '';
     case 'currentStage':
       return currentStageLabel(caseDetail) ?? '';
+    case 'dateApproved':
+      return `${caseDetail.date_approved ?? ''} ${formatDate(caseDetail.date_approved)}`;
     case 'dateReceived':
       return `${caseDetail.date_received ?? ''} ${formatDate(caseDetail.date_received)}`;
     default:
@@ -337,6 +343,8 @@ function getCaseColumnFilterValue(
       return assignedProsecutor(caseDetail) ?? '—';
     case 'currentStatus':
       return currentStatusLabel(caseDetail) ?? '—';
+    case 'dateApproved':
+      return formatDate(caseDetail.date_approved);
     case 'dateReceived':
       return formatDate(caseDetail.date_received);
     case 'aging':
@@ -397,12 +405,19 @@ const EMPTY_CASE_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, 'id'> = {
   prosecutor_short_name: null,
 };
 
+const EMPTY_CASE_APPROVAL = {
+  date_approved: null,
+  approval_case_event_id: null,
+  approval_event_type_code: null,
+};
+
 function withEmptyHydratedColumns(shellRows: DocketShellRecord[]): CompactCase[] {
   return shellRows.map((shellRow) => ({
     ...shellRow,
     ...EMPTY_CASE_PARTICIPANTS,
     ...EMPTY_CASE_LABELS,
     ...EMPTY_CASE_QUICK_DETAILS,
+    ...EMPTY_CASE_APPROVAL,
   }));
 }
 
@@ -441,6 +456,24 @@ function mergeQuickDetailsIntoCases(
     ...caseDetail,
     ...(quickDetailsByCaseId.get(caseDetail.id) ?? EMPTY_CASE_QUICK_DETAILS),
   }));
+}
+
+function mergeApprovalsIntoCases(
+  caseRows: CompactCase[],
+  approvals: DocketApprovalRecord[],
+): CompactCase[] {
+  const approvalsByCaseId = new Map(approvals.map((approval) => [approval.case_id, approval]));
+
+  return caseRows.map((caseDetail) => {
+    const approval = approvalsByCaseId.get(caseDetail.id);
+
+    return {
+      ...caseDetail,
+      date_approved: approval?.date_approved ?? null,
+      approval_case_event_id: approval?.case_event_id ?? null,
+      approval_event_type_code: approval?.approval_event_type_code ?? null,
+    };
+  });
 }
 
 function splitViewNames(value: string | null | undefined) {
@@ -642,7 +675,10 @@ export default function CasesPage() {
       return;
     }
 
-    const quickDetailsResult = await getDocketQuickDetailsForCases(caseIds);
+    const [quickDetailsResult, approvalsResult] = await Promise.all([
+      getDocketQuickDetailsForCases(caseIds),
+      getDocketApprovalsForCases(caseIds),
+    ]);
 
     if (!isMountedRef.current) {
       return;
@@ -650,11 +686,14 @@ export default function CasesPage() {
 
     setIsLoadingAllCases(false);
 
-    if (quickDetailsResult.error) {
+    if (quickDetailsResult.error || approvalsResult.error) {
       return;
     }
 
-    const hydratedCases = mergeQuickDetailsIntoCases(labeledCases, quickDetailsResult.data);
+    const hydratedCases = mergeApprovalsIntoCases(
+      mergeQuickDetailsIntoCases(labeledCases, quickDetailsResult.data),
+      approvalsResult.data,
+    );
     setCases(hydratedCases);
     cacheCasesPageState(hydratedCases, { hasAllCases: true });
   }, [cacheCasesPageState]);
@@ -1427,6 +1466,7 @@ export default function CasesPage() {
           violation: multilineViolation(caseViolations(caseDetail)),
           assignedProsecutor: assignedProsecutor(caseDetail) ?? '—',
           currentStatus: currentStatusLabel(caseDetail) ?? '—',
+          dateApproved: formatDate(caseDetail.date_approved),
           dateReceived: formatDate(caseDetail.date_received),
         };
       });
@@ -1853,6 +1893,7 @@ export default function CasesPage() {
                             <TableCell>
                               <StageBadge stage={currentStageLabel(caseDetail) ?? '—'} size="sm" />
                             </TableCell>
+                            <TableCell className="truncate text-sm">{formatDate(caseDetail.date_approved)}</TableCell>
                             <TableCell className="truncate text-sm">{formatDate(caseDetail.date_received)}</TableCell>
                             {canViewAging ? <TableCell className="truncate text-sm">{formatCaseAging(caseDetail)}</TableCell> : null}
                           </TableRow>

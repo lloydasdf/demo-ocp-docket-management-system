@@ -22,6 +22,7 @@ export const CASE_EXCEL_COLUMNS: WorkbookColumn[] = [
   { header: 'Respondents Attributes', key: 'respondent_attributes', width: 42 },
   { header: 'Violations', key: 'violations', width: 36 },
   { header: 'Case Classification', key: 'case_classification', width: 22 },
+  { header: 'Date Approved', key: 'date_approved', width: 16 },
   { header: 'Date Received', key: 'date_received', width: 16 },
   { header: 'Current Status', key: 'current_status', width: 22 },
   { header: 'Assigned Prosecutor', key: 'assigned_prosecutor', width: 26 },
@@ -220,7 +221,7 @@ function addCasesWorksheet(params: { workbook: Workbook; sheetName: string; rows
   const worksheet = params.workbook.addWorksheet(params.sheetName);
   worksheet.views = [{ state: 'frozen', ySplit: 1 }];
   worksheet.columns = CASE_EXCEL_COLUMNS.map((column) => ({ header: column.header, key: column.key, width: column.width }));
-  worksheet.autoFilter = `A1:W1`;
+  worksheet.autoFilter = `A1:X1`;
   worksheet.pageSetup = { orientation: 'landscape', printTitlesRow: '1:1' };
 
   worksheet.getRow(1).eachCell((cell) => {
@@ -229,7 +230,7 @@ function addCasesWorksheet(params: { workbook: Workbook; sheetName: string; rows
   });
 
   for (const row of [...params.rows].sort(sortRowsByDocket)) {
-    const excelRow = worksheet.addRow(CASE_EXCEL_COLUMNS.map((column) => column.key === 'date_received' ? parseDateOnly(row.date_received) : row[column.key] ?? ''));
+    const excelRow = worksheet.addRow(CASE_EXCEL_COLUMNS.map((column) => column.key === 'date_received' || column.key === 'date_approved' ? parseDateOnly(row[column.key]) : row[column.key] ?? ''));
     excelRow.eachCell((cell) => {
       cell.alignment = { wrapText: true, vertical: 'top' };
       if (cell.value instanceof Date) cell.numFmt = 'dd-mmm-yyyy';

@@ -479,7 +479,22 @@ export type DocketQuickDetailsRecord = {
   prosecutor_short_name: string | null;
 };
 
-export type CasesDisplayRecord = DocketShellRecord & DocketParticipantsRecord & DocketCaseLabelsRecord & DocketQuickDetailsRecord;
+export type DocketApprovalRecord = {
+  case_id: number;
+  case_event_id: number;
+  approval_event_type_code: string | null;
+  date_approved: string | null;
+  time_approved: string | null;
+  approved_by_prosecutor_id: number | null;
+  final_status_code: string | null;
+  approval_remarks: string | null;
+};
+
+export type CasesDisplayRecord = DocketShellRecord & DocketParticipantsRecord & DocketCaseLabelsRecord & DocketQuickDetailsRecord & {
+  date_approved?: string | null;
+  approval_case_event_id?: number | null;
+  approval_event_type_code?: string | null;
+};
 
 export type LinkedDocketRecord = {
   id: number;
@@ -500,6 +515,9 @@ const DOCKET_CASE_LABELS_COLUMNS =
 
 const DOCKET_QUICK_DETAILS_COLUMNS =
   "id, date_received, current_status_code, current_status_label, prosecutor_full_name, prosecutor_short_name, current_status_id, current_status_date, current_case_status_id, current_case_status_code, current_case_status_label, current_case_status_date, current_case_status_remarks, current_case_stage_id, current_case_stage_code, current_case_stage_label, current_case_stage_date, current_case_stage_remarks";
+
+const DOCKET_APPROVAL_COLUMNS =
+  "case_id, case_event_id, approval_event_type_code, date_approved, time_approved, approved_by_prosecutor_id, final_status_code, approval_remarks";
 
 const EMPTY_DOCKET_PARTICIPANTS: Omit<DocketParticipantsRecord, "id"> = {
   complainant: null,
@@ -532,6 +550,12 @@ const EMPTY_DOCKET_QUICK_DETAILS: Omit<DocketQuickDetailsRecord, "id"> = {
   prosecutor_short_name: null,
 };
 
+const EMPTY_DOCKET_APPROVAL = {
+  date_approved: null,
+  approval_case_event_id: null,
+  approval_event_type_code: null,
+};
+
 function mergeDocketViews(
   shellRows: DocketShellRecord[],
   participants: DocketParticipantsRecord[],
@@ -547,14 +571,16 @@ function mergeDocketViews(
     ...(participantsByCaseId.get(shellRow.id) ?? EMPTY_DOCKET_PARTICIPANTS),
     ...(labelsByCaseId.get(shellRow.id) ?? EMPTY_DOCKET_CASE_LABELS),
     ...(quickDetailsByCaseId.get(shellRow.id) ?? EMPTY_DOCKET_QUICK_DETAILS),
+    ...EMPTY_DOCKET_APPROVAL,
   }));
 }
 
-async function getRowsByCaseIds<Row extends { id: number }>(
+async function getRowsByCaseIds<Row extends { id?: number; case_id?: number }>(
   operation: string,
   viewName: string,
   columns: string,
   caseIds: number[],
+  idColumn: "id" | "case_id" = "id",
 ): Promise<SupabaseQueryResult<Row[]>> {
   const safeCaseIds = Array.from(new Set(caseIds.filter((caseId) => Number.isFinite(caseId))));
   const caseIdChunkSize = 1000;
@@ -578,7 +604,7 @@ async function getRowsByCaseIds<Row extends { id: number }>(
         const query = supabase
           .from(viewName as never)
           .select(columns)
-          .in("id" as never, caseIdChunk) as unknown as Promise<{
+          .in(idColumn as never, caseIdChunk) as unknown as Promise<{
             data: Row[] | null;
             error: unknown;
           }>;
@@ -634,6 +660,21 @@ export async function getDocketQuickDetailsForCases(
     DOCKET_QUICK_DETAILS_COLUMNS,
     caseIds,
   );
+}
+
+export async function getDocketApprovalsForCases(
+  caseIds: number[],
+): Promise<SupabaseQueryResult<DocketApprovalRecord[]>> {
+  const result = await getRowsByCaseIds<DocketApprovalRecord>(
+    "getDocketApprovalsForCases",
+    "v_case_latest_approval",
+    DOCKET_APPROVAL_COLUMNS,
+    caseIds,
+    "case_id",
+  );
+
+  if (result.error) return { data: null, error: result.error };
+  return { data: result.data, error: null };
 }
 
 export async function getLinkedDocketsForCases(caseIds: number[]): Promise<SupabaseQueryResult<LinkedDocketRecord[]>> {

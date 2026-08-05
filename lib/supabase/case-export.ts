@@ -17,6 +17,7 @@ export type CaseExcelExportRow = {
   respondent_attributes: string | null;
   violations: string | null;
   case_classification: string | null;
+  date_approved: string | null;
   date_received: string | null;
   current_status: string | null;
   assigned_prosecutor: string | null;

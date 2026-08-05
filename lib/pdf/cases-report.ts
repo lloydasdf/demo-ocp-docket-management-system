@@ -5,6 +5,7 @@ export type CasesReportRow = {
   violation: string;
   assignedProsecutor: string;
   currentStatus: string;
+  dateApproved: string;
   dateReceived: string;
 };
 
@@ -107,6 +108,7 @@ export async function generateCasesReportPdf({
       'Violation',
       'Assigned Prosecutor',
       'Current Status',
+      'Date Approved',
       'Date Received',
     ]],
     body: rows.map((row) => [
@@ -116,6 +118,7 @@ export async function generateCasesReportPdf({
       row.violation,
       row.assignedProsecutor,
       row.currentStatus,
+      row.dateApproved,
       row.dateReceived,
     ]),
     theme: 'grid',
@@ -127,10 +130,11 @@ export async function generateCasesReportPdf({
       0: { cellWidth: 78 },
       1: { cellWidth: 142 },
       2: { cellWidth: 142 },
-      3: { cellWidth: 170 },
-      4: { cellWidth: 104 },
-      5: { cellWidth: 76 },
+      3: { cellWidth: 150 },
+      4: { cellWidth: 96 },
+      5: { cellWidth: 70 },
       6: { cellWidth: 58 },
+      7: { cellWidth: 58 },
     },
     pageBreak: 'auto',
     rowPageBreak: 'auto',
