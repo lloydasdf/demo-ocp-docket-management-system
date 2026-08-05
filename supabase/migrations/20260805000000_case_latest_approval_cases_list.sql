@@ -1,6 +1,9 @@
 -- Add centralized latest approval date read model for the Cases list and exports.
 
-CREATE OR REPLACE VIEW public.v_case_latest_approval
+DROP FUNCTION IF EXISTS public.export_cases_excel_data(integer, bigint);
+DROP VIEW IF EXISTS public.v_case_latest_approval;
+
+CREATE VIEW public.v_case_latest_approval
 WITH (security_invoker = false)
 AS
 WITH approval_events AS (
@@ -49,8 +52,6 @@ WHERE approval_rank = 1;
 
 GRANT SELECT ON public.v_case_latest_approval TO authenticated, service_role;
 COMMENT ON VIEW public.v_case_latest_approval IS 'Cases page private latest approval read model. Security definer; available only to Developer, Chief, and Admin.';
-
-DROP FUNCTION IF EXISTS public.export_cases_excel_data(integer, bigint);
 
 CREATE OR REPLACE FUNCTION public.export_cases_excel_data(
   p_docket_year integer DEFAULT NULL,
