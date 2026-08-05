@@ -48,17 +48,11 @@ function formatGeneratedDateTime(date: Date) {
 }
 
 function buildFilterLines(filters: CasesReportFilters) {
-  const columnFilterLines = filters.activeColumnFilters.length > 0
-    ? filters.activeColumnFilters.map((filter) => `${filter.column}: ${printableValue(filter.values)}`).join('\n')
-    : 'None';
-
   return [
     ['Search term', printableValue(filters.searchTerm)],
-    ['Search columns', printableValue(filters.searchColumns)],
     ['Docket types', printableValue(filters.docketTypes)],
     ['Docket years', printableValue(filters.docketYears)],
     ['Docket months', filters.docketMonths.length > 0 ? filters.docketMonths.join('\n') : 'None'],
-    ['Active column filters', columnFilterLines],
     ['Sort order', filters.sortOrder],
   ];
 }
