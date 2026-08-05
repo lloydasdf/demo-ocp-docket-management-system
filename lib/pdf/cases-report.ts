@@ -49,11 +49,9 @@ function formatGeneratedDateTime(date: Date) {
 
 function buildFilterLines(filters: CasesReportFilters) {
   return [
-    ['Search term', printableValue(filters.searchTerm)],
     ['Docket types', printableValue(filters.docketTypes)],
     ['Docket years', printableValue(filters.docketYears)],
     ['Docket months', filters.docketMonths.length > 0 ? filters.docketMonths.join('\n') : 'None'],
-    ['Sort order', filters.sortOrder],
   ];
 }
 
