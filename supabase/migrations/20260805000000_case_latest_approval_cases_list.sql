@@ -18,7 +18,6 @@ WITH approval_events AS (
       CASE WHEN ce.details_jsonb->>'time_approved' ~ '^\d{2}:\d{2}(:\d{2})?$' THEN (ce.details_jsonb->>'time_approved')::time END,
       ce.event_time
     ) AS time_approved,
-    NULLIF(ce.details_jsonb->>'approved_by_prosecutor_id', '')::bigint AS approved_by_prosecutor_id,
     COALESCE(NULLIF(ce.details_jsonb->>'final_status_code', ''), NULLIF(ce.details_jsonb->>'event_final_status_code', ''), NULLIF(ce.details_jsonb->>'case_final_status_code', '')) AS final_status_code,
     COALESCE(NULLIF(ce.details_jsonb->>'remarks', ''), NULLIF(ce.description, '')) AS approval_remarks,
     ce.created_at
@@ -43,7 +42,6 @@ SELECT
   approval_event_type_code,
   date_approved,
   time_approved,
-  approved_by_prosecutor_id,
   final_status_code,
   approval_remarks
 FROM ranked

@@ -485,7 +485,6 @@ export type DocketApprovalRecord = {
   approval_event_type_code: string | null;
   date_approved: string | null;
   time_approved: string | null;
-  approved_by_prosecutor_id: number | null;
   final_status_code: string | null;
   approval_remarks: string | null;
 };
@@ -517,7 +516,7 @@ const DOCKET_QUICK_DETAILS_COLUMNS =
   "id, date_received, current_status_code, current_status_label, prosecutor_full_name, prosecutor_short_name, current_status_id, current_status_date, current_case_status_id, current_case_status_code, current_case_status_label, current_case_status_date, current_case_status_remarks, current_case_stage_id, current_case_stage_code, current_case_stage_label, current_case_stage_date, current_case_stage_remarks";
 
 const DOCKET_APPROVAL_COLUMNS =
-  "case_id, case_event_id, approval_event_type_code, date_approved, time_approved, approved_by_prosecutor_id, final_status_code, approval_remarks";
+  "case_id, case_event_id, approval_event_type_code, date_approved, time_approved, final_status_code, approval_remarks";
 
 const EMPTY_DOCKET_PARTICIPANTS: Omit<DocketParticipantsRecord, "id"> = {
   complainant: null,
