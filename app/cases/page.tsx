@@ -23,6 +23,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import { ChevronDown, ChevronRight, ExternalLink, Eye, Filter, GripVertical, Printer, RefreshCw, X } from 'lucide-react';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { ExportCasesDialog } from '@/components/cases/export-cases-dialog';
 import { useCurrentUserRole } from '@/hooks/use-current-user-role';
 import { canExportCasesToExcel, canViewCaseAging, canViewLinkedDocket } from '@/lib/auth/ui-permissions';
@@ -537,8 +538,7 @@ export default function CasesPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedCaseKey, setSelectedCaseKey] = useState<string | null>(null);
   const [quickViewCaseId, setQuickViewCaseId] = useState<number | null>(null);
-  const [quickViewWidth, setQuickViewWidth] = useState(30);
-  const [isQuickViewResizing, setIsQuickViewResizing] = useState(false);
+
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(() => getInitialColumnWidths());
   const [partyNamesByCase, setPartyNamesByCase] = useState<Record<number, CasePartyNames>>({});
   const [classificationsByCase, setClassificationsByCase] = useState<CaseClassificationByCase>({});
@@ -1339,30 +1339,6 @@ export default function CasesPage() {
     setQuickViewCaseId(caseId);
   }
 
-  function handleQuickViewResize(startX: number) {
-    const startWidth = quickViewWidth;
-    const viewportWidth = window.innerWidth || 1;
-
-    function handlePointerMove(event: PointerEvent) {
-      const deltaPercent = ((startX - event.clientX) / viewportWidth) * 100;
-      setQuickViewWidth(Math.min(70, Math.max(18, startWidth + deltaPercent)));
-    }
-
-    function handlePointerUp() {
-      document.removeEventListener('pointermove', handlePointerMove);
-      document.removeEventListener('pointerup', handlePointerUp);
-      setIsQuickViewResizing(false);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    }
-
-    setIsQuickViewResizing(true);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    document.addEventListener('pointermove', handlePointerMove);
-    document.addEventListener('pointerup', handlePointerUp);
-  }
-
   function renderColumnFilter(columnKey: CaseTableColumnKey) {
     if (!showColumnFilters) {
       return null;
@@ -1544,7 +1520,9 @@ export default function CasesPage() {
   return (
     <div className="flex h-[100dvh] overflow-hidden bg-background">
       <Sidebar collapseSignal={quickViewCaseId} />
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden p-4 pt-3 md:p-8">
+      <PanelGroup direction="horizontal" autoSaveId="case-list-quick-view-layout" className="min-w-0 flex-1">
+        <Panel id="cases-list" order={1} minSize={30} defaultSize={quickViewCaseId ? 70 : 100} className="min-w-0">
+      <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden p-4 pt-3 md:p-8">
         <div className={`${quickViewCaseId ? 'max-w-none' : 'max-w-[1400px]'} mx-auto flex min-h-0 w-full flex-1 flex-col gap-6`}>
           <div className="shrink-0 pl-12 md:pl-0">
             <div className="flex items-center justify-between gap-3 sm:items-start">
@@ -1988,25 +1966,19 @@ export default function CasesPage() {
           </Card>
         </div>
       </main>
+        </Panel>
       {quickViewCaseId ? (
-        <aside
-          className="relative h-full shrink-0 animate-in slide-in-from-right border-l bg-background shadow-2xl duration-300"
-          style={{ width: `${quickViewWidth}vw` }}
-          aria-label="Case details quick view"
-        >
-          <button
-            type="button"
-            className={`absolute left-0 top-0 z-20 flex h-full w-2 -translate-x-1 items-center justify-center bg-border/70 transition-colors hover:bg-primary/30 ${isQuickViewResizing ? 'cursor-col-resize bg-primary/30' : 'cursor-default'}`}
-            onPointerDown={(event) => {
-              event.preventDefault();
-              handleQuickViewResize(event.clientX);
-            }}
-            aria-label="Resize case quick view"
-          >
-            <span className="rounded border bg-background p-1 shadow">
+        <>
+          <PanelResizeHandle className="relative flex w-2 cursor-col-resize items-center justify-center bg-border transition-colors hover:bg-primary/30 data-[resize-handle-active]:bg-primary/40" aria-label="Resize case quick view">
+            <span className="absolute flex h-10 w-5 items-center justify-center rounded border bg-background shadow">
               <GripVertical className="size-4" />
             </span>
-          </button>
+          </PanelResizeHandle>
+          <Panel id="case-quick-view" order={2} defaultSize={30} minSize={20} maxSize={70} className="min-w-0 animate-in slide-in-from-right border-l bg-background shadow-2xl duration-300">
+        <aside
+          className="h-full"
+          aria-label="Case details quick view"
+        >
           <div className="flex h-12 items-center justify-between border-b px-4">
             <h2 className="truncate text-sm font-semibold">Case quick view</h2>
             <Button type="button" variant="ghost" size="icon" onClick={() => setQuickViewCaseId(null)} aria-label="Close quick view">
@@ -2020,7 +1992,10 @@ export default function CasesPage() {
             className="h-[calc(100%-3rem)] w-full border-0"
           />
         </aside>
+          </Panel>
+        </>
       ) : null}
+      </PanelGroup>
     </div>
   );
 }
