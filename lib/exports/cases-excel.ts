@@ -1,7 +1,29 @@
-import type { Workbook, Worksheet } from 'exceljs';
 import type { CaseExcelExportRow } from '@/lib/supabase/case-export';
 
+type ExcelCellLike = { value: unknown; font?: unknown; alignment?: unknown; numFmt?: string };
+type ExcelRowLike = { eachCell: (callback: (cell: ExcelCellLike) => void) => void };
+type ExcelWorksheetLike = {
+  views: unknown[];
+  columns: { header: string; key: keyof CaseExcelExportRow; width: number }[];
+  autoFilter: string;
+  pageSetup: unknown;
+  getRow: (rowNumber: number) => ExcelRowLike;
+  addRow: (values: unknown[]) => ExcelRowLike;
+};
+type ExcelWorkbookLike = {
+  creator: string;
+  created: Date;
+  addWorksheet: (sheetName: string) => ExcelWorksheetLike;
+  xlsx: { writeBuffer: () => Promise<BlobPart> };
+};
 type WorkbookColumn = { header: string; key: keyof CaseExcelExportRow; width: number };
+export type CasesWorkbookExportStep = 'building' | 'downloading';
+export type CasesWorkbookExportStatus = {
+  step: CasesWorkbookExportStep;
+  title: string;
+  detail: string;
+  progress: number;
+};
 type DocketTypeYearGroup = {
   docketTypeId: number | null;
   prefix: string;
@@ -217,7 +239,7 @@ function validateGroups(groups: DocketTypeYearGroup[]) {
   }
 }
 
-function addCasesWorksheet(params: { workbook: Workbook; sheetName: string; rows: CaseExcelExportRow[] }): Worksheet {
+function addCasesWorksheet(params: { workbook: ExcelWorkbookLike; sheetName: string; rows: CaseExcelExportRow[]; onRowsAdded?: (addedRows: number) => void }): ExcelWorksheetLike {
   const worksheet = params.workbook.addWorksheet(params.sheetName);
   worksheet.views = [{ state: 'frozen', ySplit: 1 }];
   worksheet.columns = CASE_EXCEL_COLUMNS.map((column) => ({ header: column.header, key: column.key, width: column.width }));
@@ -229,8 +251,11 @@ function addCasesWorksheet(params: { workbook: Workbook; sheetName: string; rows
     cell.alignment = { wrapText: true, vertical: 'middle', horizontal: 'center' };
   });
 
+  let addedRows = 0;
   for (const row of [...params.rows].sort(sortRowsByDocket)) {
     const excelRow = worksheet.addRow(CASE_EXCEL_COLUMNS.map((column) => column.key === 'date_received' || column.key === 'date_approved' ? parseDateOnly(row[column.key]) : row[column.key] ?? ''));
+    addedRows += 1;
+    params.onRowsAdded?.(addedRows);
     excelRow.eachCell((cell) => {
       cell.alignment = { wrapText: true, vertical: 'top' };
       if (cell.value instanceof Date) cell.numFmt = 'dd-mmm-yyyy';
@@ -247,9 +272,10 @@ export async function downloadCasesWorkbook(
     docketTypeLabel: string;
     docketTypeId: number | null;
   },
+  onStatus?: (status: CasesWorkbookExportStatus) => void,
 ): Promise<void> {
   const ExcelJS = await import('exceljs');
-  const workbook = new ExcelJS.Workbook();
+  const workbook = new ExcelJS.Workbook() as ExcelWorkbookLike;
   workbook.creator = 'OCP Docket Management System';
   workbook.created = new Date();
 
@@ -257,14 +283,37 @@ export async function downloadCasesWorkbook(
   const docketTypeYearGroups = groupRowsByDocketTypeAndYear(rows);
   validateGroups(docketTypeYearGroups);
 
-  for (const group of docketTypeYearGroups) {
+  let processedRows = 0;
+  for (const [groupIndex, group] of docketTypeYearGroups.entries()) {
+    const sheetName = sanitizeWorksheetName(preferredWorksheetName(group), existingWorksheetNames);
+    onStatus?.({
+      step: 'building',
+      title: `Building worksheet ${groupIndex + 1} of ${docketTypeYearGroups.length}`,
+      detail: `Writing ${group.rows.length.toLocaleString()} case(s) to ${sheetName}.`,
+      progress: 78 + (processedRows / Math.max(rows.length, 1)) * 15,
+    });
     addCasesWorksheet({
       workbook,
-      sheetName: sanitizeWorksheetName(preferredWorksheetName(group), existingWorksheetNames),
+      sheetName,
       rows: group.rows,
+      onRowsAdded: (addedRows) => {
+        onStatus?.({
+          step: 'building',
+          title: `Building worksheet ${groupIndex + 1} of ${docketTypeYearGroups.length}`,
+          detail: `Writing ${addedRows.toLocaleString()} of ${group.rows.length.toLocaleString()} case(s) to ${sheetName}.`,
+          progress: Math.min(93, 78 + ((processedRows + addedRows) / Math.max(rows.length, 1)) * 15),
+        });
+      },
     });
+    processedRows += group.rows.length;
   }
 
+  onStatus?.({
+    step: 'downloading',
+    title: 'Preparing browser download',
+    detail: 'Serializing the workbook to an .xlsx file.',
+    progress: 95,
+  });
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
@@ -274,5 +323,11 @@ export async function downloadCasesWorkbook(
   document.body.appendChild(link);
   link.click();
   link.remove();
+  onStatus?.({
+    step: 'downloading',
+    title: 'Starting browser download',
+    detail: 'The workbook is ready and the browser download has been triggered.',
+    progress: 99,
+  });
   setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
