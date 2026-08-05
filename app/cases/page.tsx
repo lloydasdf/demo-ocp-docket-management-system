@@ -538,6 +538,7 @@ export default function CasesPage() {
   const [selectedCaseKey, setSelectedCaseKey] = useState<string | null>(null);
   const [quickViewCaseId, setQuickViewCaseId] = useState<number | null>(null);
   const [quickViewWidth, setQuickViewWidth] = useState(30);
+  const [isQuickViewResizing, setIsQuickViewResizing] = useState(false);
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(() => getInitialColumnWidths());
   const [partyNamesByCase, setPartyNamesByCase] = useState<Record<number, CasePartyNames>>({});
   const [classificationsByCase, setClassificationsByCase] = useState<CaseClassificationByCase>({});
@@ -1344,16 +1345,18 @@ export default function CasesPage() {
 
     function handlePointerMove(event: PointerEvent) {
       const deltaPercent = ((startX - event.clientX) / viewportWidth) * 100;
-      setQuickViewWidth(Math.min(70, Math.max(30, startWidth + deltaPercent)));
+      setQuickViewWidth(Math.min(70, Math.max(18, startWidth + deltaPercent)));
     }
 
     function handlePointerUp() {
       document.removeEventListener('pointermove', handlePointerMove);
       document.removeEventListener('pointerup', handlePointerUp);
+      setIsQuickViewResizing(false);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     }
 
+    setIsQuickViewResizing(true);
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
     document.addEventListener('pointermove', handlePointerMove);
@@ -1540,7 +1543,7 @@ export default function CasesPage() {
 
   return (
     <div className="flex h-[100dvh] overflow-hidden bg-background">
-      {quickViewCaseId ? null : <Sidebar />}
+      <Sidebar collapseSignal={quickViewCaseId} />
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden p-4 pt-3 md:p-8">
         <div className={`${quickViewCaseId ? 'max-w-none' : 'max-w-[1400px]'} mx-auto flex min-h-0 w-full flex-1 flex-col gap-6`}>
           <div className="shrink-0 pl-12 md:pl-0">
@@ -1993,7 +1996,7 @@ export default function CasesPage() {
         >
           <button
             type="button"
-            className="absolute left-0 top-0 z-20 flex h-full w-2 -translate-x-1 cursor-col-resize items-center justify-center bg-border/70 transition-colors hover:bg-primary/30"
+            className={`absolute left-0 top-0 z-20 flex h-full w-2 -translate-x-1 items-center justify-center bg-border/70 transition-colors hover:bg-primary/30 ${isQuickViewResizing ? 'cursor-col-resize bg-primary/30' : 'cursor-default'}`}
             onPointerDown={(event) => {
               event.preventDefault();
               handleQuickViewResize(event.clientX);

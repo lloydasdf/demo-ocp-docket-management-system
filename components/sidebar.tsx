@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileText,
   FilePlus,
@@ -89,13 +89,14 @@ function getUserInitials(user: { email?: string | null } | null) {
   return namePart.slice(0, 2).toUpperCase();
 }
 
-export function Sidebar() {
+export function Sidebar({ collapseSignal }: { collapseSignal?: string | number | null } = {}) {
   const pathname = usePathname();
   const router = useRouter();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isCompactScreen, setIsCompactScreen] = useState(false);
   const [isCompactOpen, setIsCompactOpen] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const lastCollapseSignalRef = useRef<string | number | null | undefined>(collapseSignal);
   const { user, roles, isAuthLoading, isRoleLoading, isAuthenticated, roleError } = useAppAuthRole();
 
   useEffect(() => {
@@ -132,6 +133,21 @@ export function Sidebar() {
       hideQuery.removeEventListener('change', syncResponsiveState);
     };
   }, []);
+
+  useEffect(() => {
+    if (collapseSignal === null || collapseSignal === undefined) {
+      lastCollapseSignalRef.current = collapseSignal;
+      return;
+    }
+
+    if (collapseSignal === lastCollapseSignalRef.current) {
+      return;
+    }
+
+    lastCollapseSignalRef.current = collapseSignal;
+    setIsCollapsed(true);
+    setIsCompactOpen(false);
+  }, [collapseSignal]);
 
   const userInitials = useMemo(() => getUserInitials(user), [user]);
   const isIconOnly = !isCompactScreen && isCollapsed;
