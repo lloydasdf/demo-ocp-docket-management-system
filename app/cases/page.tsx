@@ -115,7 +115,9 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear' && column.key !== 'aging',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v25';
+// Keep this version in sync when filter defaults change so saved preferences do not
+// prevent users from receiving the new defaults.
+const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v26';
 const casesPageMemoryCache = new Map<string, CasesPageCache>();
 
 function getCasesPageCacheKey(userId: string) {
@@ -136,6 +138,7 @@ function clearLegacyCasesPageCaches() {
   window.sessionStorage.removeItem('ocp-cases-page-cache-v22');
   window.sessionStorage.removeItem('ocp-cases-page-cache-v23');
   window.sessionStorage.removeItem('ocp-cases-page-cache-v24');
+  window.sessionStorage.removeItem('ocp-cases-page-cache-v25');
 }
 
 function docketMonthName(monthCode: string) {
