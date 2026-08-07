@@ -26,7 +26,7 @@ import { ChevronDown, ChevronRight, ExternalLink, Eye, Filter, GripVertical, Pri
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { ExportCasesDialog } from '@/components/cases/export-cases-dialog';
 import { useCurrentUserRole } from '@/hooks/use-current-user-role';
-import { canExportCasesToExcel, canViewCaseAging, canViewLinkedDocket } from '@/lib/auth/ui-permissions';
+import { canExportCasesToExcel, canViewCaseAging, canViewCriminalCaseNumbers, canViewLinkedDocket } from '@/lib/auth/ui-permissions';
 import {
   getDocketCaseLabelsForCases,
   getCriminalCaseNumbersForCases,
@@ -69,7 +69,6 @@ const docketNumberCollator = new Intl.Collator(undefined, { numeric: true, sensi
 
 const CASE_TABLE_COLUMNS = [
   { key: 'docketNumber', label: 'Docket number', initialWidth: 220, minWidth: 160 },
-  { key: 'criminalCaseNumber', label: 'CC. No.', initialWidth: 180, minWidth: 140 },
   { key: 'docketType', label: 'Docket type', initialWidth: 150, minWidth: 120 },
   { key: 'docketYear', label: 'Year', initialWidth: 100, minWidth: 80 },
   { key: 'complainant', label: 'Complainant', initialWidth: 300, minWidth: 200 },
@@ -79,6 +78,7 @@ const CASE_TABLE_COLUMNS = [
   { key: 'assignedProsecutor', label: 'Assigned Prosecutor', initialWidth: 240, minWidth: 180 },
   { key: 'currentStatus', label: 'Current Status', initialWidth: 180, minWidth: 150 },
   { key: 'currentStage', label: 'Current Stage', initialWidth: 200, minWidth: 160 },
+  { key: 'criminalCaseNumber', label: 'CC. No.', initialWidth: 180, minWidth: 140 },
   { key: 'dateApproved', label: 'Date Approved', initialWidth: 150, minWidth: 120 },
   { key: 'dateReceived', label: 'Date Received', initialWidth: 150, minWidth: 120 },
   { key: 'aging', label: 'Aging', initialWidth: 120, minWidth: 100 },
@@ -574,11 +574,28 @@ export default function CasesPage() {
   const { roles: currentRoles, isLoading: isRoleLoading, error: roleError } = useCurrentUserRole();
   const canShowExcelExport = !isRoleLoading && !roleError && canExportCasesToExcel(currentRoles);
   const canViewLinkedDockets = !isRoleLoading && !roleError && canViewLinkedDocket(currentRoles);
+  const canViewCriminalCaseNo = !isRoleLoading && !roleError && canViewCriminalCaseNumbers(currentRoles);
   const canViewAging = !isRoleLoading && !roleError && canViewCaseAging(currentRoles);
   const visibleCaseTableColumns = useMemo(
-    () => CASE_TABLE_COLUMNS.filter((column) => column.key !== 'aging' || canViewAging),
-    [canViewAging],
+    () => CASE_TABLE_COLUMNS.filter((column) =>
+      (column.key !== 'aging' || canViewAging) &&
+      (column.key !== 'criminalCaseNumber' || canViewCriminalCaseNo),
+    ),
+    [canViewAging, canViewCriminalCaseNo],
   );
+  const availableSearchColumnOptions = useMemo(
+    () => SEARCH_COLUMN_OPTIONS.filter((column) => column.key !== 'criminalCaseNumber' || canViewCriminalCaseNo),
+    [canViewCriminalCaseNo],
+  );
+  const availableSearchColumns = useMemo(
+    () => availableSearchColumnOptions.map((column) => column.key),
+    [availableSearchColumnOptions],
+  );
+
+  useEffect(() => {
+    if (isRoleLoading) return;
+    setSelectedSearchColumns((columns) => columns.filter((column) => availableSearchColumns.includes(column)));
+  }, [availableSearchColumns, isRoleLoading]);
   const renderedColumnCount = visibleCaseTableColumns.length + (canViewLinkedDockets ? 1 : 0);
 
   useEffect(() => {
@@ -667,7 +684,9 @@ export default function CasesPage() {
     const caseIds = shellCases.map((caseDetail) => caseDetail.id);
     const [participantsResult, criminalCaseNumbersResult] = await Promise.all([
       getDocketParticipantsForCases(caseIds),
-      getCriminalCaseNumbersForCases(caseIds),
+      canViewCriminalCaseNo
+        ? getCriminalCaseNumbersForCases(caseIds)
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
     if (!isMountedRef.current) {
@@ -734,7 +753,7 @@ export default function CasesPage() {
     );
     setCases(hydratedCases);
     cacheCasesPageState(hydratedCases, { hasAllCases: true });
-  }, [cacheCasesPageState]);
+  }, [cacheCasesPageState, canViewCriminalCaseNo]);
 
   const loadCases = useCallback(async (options: { preserveExistingRows: boolean }) => {
     if (options.preserveExistingRows) {
@@ -1093,7 +1112,7 @@ export default function CasesPage() {
       return 'No columns';
     }
 
-    if (selectedSearchColumns.length === DEFAULT_SEARCH_COLUMNS.length) {
+    if (allOptionsSelected(selectedSearchColumns, availableSearchColumns)) {
       return 'All columns';
     }
 
@@ -1102,7 +1121,7 @@ export default function CasesPage() {
     }
 
     return `${selectedSearchColumns.length} columns`;
-  }, [selectedSearchColumns]);
+  }, [availableSearchColumns, selectedSearchColumns]);
 
   const docketTypeSummary = useMemo(() => {
     if (selectedDocketTypes.length === 0) {
@@ -1225,7 +1244,7 @@ export default function CasesPage() {
 
   function toggleSearchAllColumns() {
     setSelectedSearchColumns((currentColumns) =>
-      allOptionsSelected(currentColumns, DEFAULT_SEARCH_COLUMNS) ? [] : [...DEFAULT_SEARCH_COLUMNS],
+      allOptionsSelected(currentColumns, availableSearchColumns) ? [] : [...availableSearchColumns],
     );
   }
 
@@ -1644,13 +1663,13 @@ export default function CasesPage() {
                         <DropdownMenuContent align="end" className="w-56">
                           <DropdownMenuLabel>Search columns</DropdownMenuLabel>
                           <DropdownMenuCheckboxItem
-                            checked={allOptionsSelected(selectedSearchColumns, DEFAULT_SEARCH_COLUMNS)}
+                            checked={allOptionsSelected(selectedSearchColumns, availableSearchColumns)}
                             onCheckedChange={toggleSearchAllColumns}
                             onSelect={(event) => event.preventDefault()}
                           >
                             Search all columns
                           </DropdownMenuCheckboxItem>
-                          {SEARCH_COLUMN_OPTIONS.map((column) => (
+                          {availableSearchColumnOptions.map((column) => (
                             <DropdownMenuCheckboxItem
                               key={column.key}
                               checked={selectedSearchColumns.includes(column.key)}
@@ -1673,13 +1692,13 @@ export default function CasesPage() {
                       <DropdownMenuContent align="end" className="w-56">
                         <DropdownMenuLabel>Search columns</DropdownMenuLabel>
                         <DropdownMenuCheckboxItem
-                          checked={allOptionsSelected(selectedSearchColumns, DEFAULT_SEARCH_COLUMNS)}
+                          checked={allOptionsSelected(selectedSearchColumns, availableSearchColumns)}
                           onCheckedChange={toggleSearchAllColumns}
                           onSelect={(event) => event.preventDefault()}
                         >
                           Search all columns
                         </DropdownMenuCheckboxItem>
-                        {SEARCH_COLUMN_OPTIONS.map((column) => (
+                        {availableSearchColumnOptions.map((column) => (
                           <DropdownMenuCheckboxItem
                             key={column.key}
                             checked={selectedSearchColumns.includes(column.key)}
@@ -1925,7 +1944,6 @@ export default function CasesPage() {
                             <TableCell className="truncate font-medium text-primary">
                               {formatDisplayDocketNumber(caseDetail)}
                             </TableCell>
-                            <TableCell className="truncate text-sm">{caseDetail.criminal_case_numbers ?? '—'}</TableCell>
                             <TableCell className="truncate text-sm">{caseDetail.docket_type_name ?? caseDetail.docket_type_prefix ?? '—'}</TableCell>
                             <TableCell className="truncate text-sm">{caseDetail.docket_year ?? '—'}</TableCell>
                             <TableCell className={isSelected ? 'whitespace-pre-line text-sm leading-6' : 'truncate text-sm'}>
@@ -1943,6 +1961,7 @@ export default function CasesPage() {
                             <TableCell>
                               <StageBadge stage={currentStageLabel(caseDetail) ?? '—'} size="sm" />
                             </TableCell>
+                            {canViewCriminalCaseNo ? <TableCell className="truncate text-sm">{caseDetail.criminal_case_numbers ?? '—'}</TableCell> : null}
                             <TableCell className="truncate text-sm">{formatDate(caseDetail.date_approved)}</TableCell>
                             <TableCell className="truncate text-sm">{formatDate(caseDetail.date_received)}</TableCell>
                             {canViewAging ? <TableCell className="truncate text-sm">{formatCaseAging(caseDetail)}</TableCell> : null}

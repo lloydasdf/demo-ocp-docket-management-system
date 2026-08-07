@@ -77,6 +77,11 @@ export function canViewLinkedDocket(role: RoleInput) {
   return roles.includes('ADMIN') || roles.includes('DEVELOPER');
 }
 
+export function canViewCriminalCaseNumbers(role: RoleInput) {
+  const roles = normalizeRoleCodes(role);
+  return roles.includes('ADMIN') || roles.includes('DEVELOPER');
+}
+
 export function canViewCaseAging(role: RoleInput) {
   const roles = normalizeRoleCodes(role);
   return roles.includes('ADMIN') || roles.includes('DEVELOPER') || roles.includes('CHIEF');

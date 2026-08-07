@@ -29,7 +29,7 @@ SELECT
   case_id,
   string_agg(criminal_case_no, ', ' ORDER BY criminal_case_no) AS criminal_case_numbers
 FROM deduplicated
-WHERE public.has_any_app_role(ARRAY['DEVELOPER', 'CHIEF', 'ADMIN', 'PROSECUTOR'])
+WHERE public.has_any_app_role(ARRAY['DEVELOPER', 'ADMIN'])
 GROUP BY case_id;
 
 REVOKE ALL ON TABLE public.v_case_criminal_case_numbers FROM anon, authenticated;
