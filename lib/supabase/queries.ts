@@ -451,6 +451,11 @@ export type DocketParticipantsRecord = {
   respondent: string | null;
 };
 
+export type CaseCriminalCaseNumbersRecord = {
+  case_id: number;
+  criminal_case_numbers: string | null;
+};
+
 export type DocketCaseLabelsRecord = {
   id: number;
   violations: string | null;
@@ -490,6 +495,7 @@ export type DocketApprovalRecord = {
 };
 
 export type CasesDisplayRecord = DocketShellRecord & DocketParticipantsRecord & DocketCaseLabelsRecord & DocketQuickDetailsRecord & {
+  criminal_case_numbers?: string | null;
   date_approved?: string | null;
   approval_case_event_id?: number | null;
   approval_event_type_code?: string | null;
@@ -571,6 +577,7 @@ function mergeDocketViews(
     ...(labelsByCaseId.get(shellRow.id) ?? EMPTY_DOCKET_CASE_LABELS),
     ...(quickDetailsByCaseId.get(shellRow.id) ?? EMPTY_DOCKET_QUICK_DETAILS),
     ...EMPTY_DOCKET_APPROVAL,
+    criminal_case_numbers: null,
   }));
 }
 
@@ -636,6 +643,18 @@ export async function getDocketParticipantsForCases(
     "v_docket_participants",
     DOCKET_PARTICIPANTS_COLUMNS,
     caseIds,
+  );
+}
+
+export async function getCriminalCaseNumbersForCases(
+  caseIds: number[],
+): Promise<SupabaseQueryResult<CaseCriminalCaseNumbersRecord[]>> {
+  return getRowsByCaseIds<CaseCriminalCaseNumbersRecord>(
+    "getCriminalCaseNumbersForCases",
+    "v_case_criminal_case_numbers",
+    "case_id, criminal_case_numbers",
+    caseIds,
+    "case_id",
   );
 }
 

@@ -29,6 +29,7 @@ import { useCurrentUserRole } from '@/hooks/use-current-user-role';
 import { canExportCasesToExcel, canViewCaseAging, canViewLinkedDocket } from '@/lib/auth/ui-permissions';
 import {
   getDocketCaseLabelsForCases,
+  getCriminalCaseNumbersForCases,
   getDocketParticipantsForCases,
   getDocketApprovalsForCases,
   canCurrentUserViewDocketQuickDetails,
@@ -41,6 +42,7 @@ import {
   type DocketApprovalRecord,
   type DocketQuickDetailsRecord,
   type DocketShellRecord,
+  type CaseCriminalCaseNumbersRecord,
 } from '@/lib/supabase/queries';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { CasesReportFilters, CasesReportRow } from '@/lib/pdf/cases-report';
@@ -67,6 +69,7 @@ const docketNumberCollator = new Intl.Collator(undefined, { numeric: true, sensi
 
 const CASE_TABLE_COLUMNS = [
   { key: 'docketNumber', label: 'Docket number', initialWidth: 220, minWidth: 160 },
+  { key: 'criminalCaseNumber', label: 'CC. No.', initialWidth: 180, minWidth: 140 },
   { key: 'docketType', label: 'Docket type', initialWidth: 150, minWidth: 120 },
   { key: 'docketYear', label: 'Year', initialWidth: 100, minWidth: 80 },
   { key: 'complainant', label: 'Complainant', initialWidth: 300, minWidth: 200 },
@@ -112,7 +115,7 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear' && column.key !== 'aging',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v22';
+const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v23';
 const casesPageMemoryCache = new Map<string, CasesPageCache>();
 
 function getCasesPageCacheKey(userId: string) {
@@ -130,6 +133,7 @@ function clearLegacyCasesPageCaches() {
   window.sessionStorage.removeItem('ocp-cases-page-cache-v19');
   window.sessionStorage.removeItem('ocp-cases-page-cache-v20');
   window.sessionStorage.removeItem('ocp-cases-page-cache-v21');
+  window.sessionStorage.removeItem('ocp-cases-page-cache-v22');
 }
 
 function docketMonthName(monthCode: string) {
@@ -245,6 +249,8 @@ function searchColumnValue(
   switch (columnKey) {
     case 'docketNumber':
       return formatDisplayDocketNumber(caseDetail);
+    case 'criminalCaseNumber':
+      return caseDetail.criminal_case_numbers ?? '';
     case 'complainant':
       return partyNames?.complainants.join(' ') ?? '';
     case 'respondent':
@@ -334,6 +340,8 @@ function getCaseColumnFilterValue(
   switch (columnKey) {
     case 'docketNumber':
       return formatDisplayDocketNumber(caseDetail);
+    case 'criminalCaseNumber':
+      return caseDetail.criminal_case_numbers ?? '—';
     case 'docketType':
       return caseDetail.docket_type_name ?? caseDetail.docket_type_prefix ?? '—';
     case 'docketYear':
@@ -418,6 +426,8 @@ const EMPTY_CASE_APPROVAL = {
   approval_event_type_code: null,
 };
 
+const EMPTY_CRIMINAL_CASE_NUMBERS = { criminal_case_numbers: null };
+
 function withEmptyHydratedColumns(shellRows: DocketShellRecord[]): CompactCase[] {
   return shellRows.map((shellRow) => ({
     ...shellRow,
@@ -425,6 +435,7 @@ function withEmptyHydratedColumns(shellRows: DocketShellRecord[]): CompactCase[]
     ...EMPTY_CASE_LABELS,
     ...EMPTY_CASE_QUICK_DETAILS,
     ...EMPTY_CASE_APPROVAL,
+    ...EMPTY_CRIMINAL_CASE_NUMBERS,
   }));
 }
 
@@ -437,6 +448,18 @@ function mergeParticipantsIntoCases(
   return caseRows.map((caseDetail) => ({
     ...caseDetail,
     ...(participantsByCaseId.get(caseDetail.id) ?? EMPTY_CASE_PARTICIPANTS),
+  }));
+}
+
+function mergeCriminalCaseNumbersIntoCases(
+  caseRows: CompactCase[],
+  criminalCaseNumbers: CaseCriminalCaseNumbersRecord[],
+): CompactCase[] {
+  const numbersByCaseId = new Map(criminalCaseNumbers.map((row) => [row.case_id, row.criminal_case_numbers]));
+
+  return caseRows.map((caseDetail) => ({
+    ...caseDetail,
+    criminal_case_numbers: numbersByCaseId.get(caseDetail.id) ?? null,
   }));
 }
 
@@ -642,18 +665,24 @@ export default function CasesPage() {
   const hydrateParticipantsLabelsAndQuickDetails = useCallback(async (shellCases: CompactCase[]) => {
     setIsLoadingAllCases(true);
     const caseIds = shellCases.map((caseDetail) => caseDetail.id);
-    const participantsResult = await getDocketParticipantsForCases(caseIds);
+    const [participantsResult, criminalCaseNumbersResult] = await Promise.all([
+      getDocketParticipantsForCases(caseIds),
+      getCriminalCaseNumbersForCases(caseIds),
+    ]);
 
     if (!isMountedRef.current) {
       return;
     }
 
-    if (participantsResult.error) {
+    if (participantsResult.error || criminalCaseNumbersResult.error) {
       setIsLoadingAllCases(false);
       return;
     }
 
-    const participantCases = mergeParticipantsIntoCases(shellCases, participantsResult.data);
+    const participantCases = mergeCriminalCaseNumbersIntoCases(
+      mergeParticipantsIntoCases(shellCases, participantsResult.data),
+      criminalCaseNumbersResult.data,
+    );
     setCases(participantCases);
     cacheCasesPageState(participantCases);
 
@@ -1896,6 +1925,7 @@ export default function CasesPage() {
                             <TableCell className="truncate font-medium text-primary">
                               {formatDisplayDocketNumber(caseDetail)}
                             </TableCell>
+                            <TableCell className="truncate text-sm">{caseDetail.criminal_case_numbers ?? '—'}</TableCell>
                             <TableCell className="truncate text-sm">{caseDetail.docket_type_name ?? caseDetail.docket_type_prefix ?? '—'}</TableCell>
                             <TableCell className="truncate text-sm">{caseDetail.docket_year ?? '—'}</TableCell>
                             <TableCell className={isSelected ? 'whitespace-pre-line text-sm leading-6' : 'truncate text-sm'}>
