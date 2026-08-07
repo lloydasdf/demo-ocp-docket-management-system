@@ -693,10 +693,18 @@ export default function CasesPage() {
       return;
     }
 
-    if (participantsResult.error || criminalCaseNumbersResult.error) {
+    if (criminalCaseNumbersResult.error) {
+      setErrorMessage(`Unable to load criminal case numbers: ${criminalCaseNumbersResult.error.message}`);
       setIsLoadingAllCases(false);
       return;
     }
+
+    if (participantsResult.error) {
+      setIsLoadingAllCases(false);
+      return;
+    }
+
+    setErrorMessage(null);
 
     const participantCases = mergeCriminalCaseNumbersIntoCases(
       mergeParticipantsIntoCases(shellCases, participantsResult.data),
@@ -1615,7 +1623,7 @@ export default function CasesPage() {
 
           {errorMessage ? (
             <Alert variant="destructive" className="shrink-0">
-              <AlertTitle>Unable to load live PostgreSQL cases</AlertTitle>
+              <AlertTitle>Unable to fully load cases</AlertTitle>
               <AlertDescription>{errorMessage}</AlertDescription>
             </Alert>
           ) : null}
