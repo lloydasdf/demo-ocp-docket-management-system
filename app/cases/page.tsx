@@ -115,7 +115,7 @@ const SEARCH_COLUMN_OPTIONS = CASE_TABLE_COLUMNS.filter(
     column.key !== 'docketType' && column.key !== 'docketYear' && column.key !== 'aging',
 );
 const DEFAULT_SEARCH_COLUMNS = SEARCH_COLUMN_OPTIONS.map((column) => column.key);
-const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v23';
+const CASES_PAGE_CACHE_KEY_PREFIX = 'ocp-cases-page-cache-v24';
 const casesPageMemoryCache = new Map<string, CasesPageCache>();
 
 function getCasesPageCacheKey(userId: string) {
@@ -134,6 +134,7 @@ function clearLegacyCasesPageCaches() {
   window.sessionStorage.removeItem('ocp-cases-page-cache-v20');
   window.sessionStorage.removeItem('ocp-cases-page-cache-v21');
   window.sessionStorage.removeItem('ocp-cases-page-cache-v22');
+  window.sessionStorage.removeItem('ocp-cases-page-cache-v23');
 }
 
 function docketMonthName(monthCode: string) {
@@ -147,7 +148,8 @@ function docketMonthShortName(monthCode: string) {
 }
 
 function readCasesPageCache(userId: string) {
-  const memoryCache = casesPageMemoryCache.get(userId);
+  const cacheKey = getCasesPageCacheKey(userId);
+  const memoryCache = casesPageMemoryCache.get(cacheKey);
   if (memoryCache) {
     return memoryCache;
   }
@@ -163,7 +165,7 @@ function readCasesPageCache(userId: string) {
     }
 
     const cache = JSON.parse(cachedValue) as CasesPageCache;
-    casesPageMemoryCache.set(userId, cache);
+    casesPageMemoryCache.set(cacheKey, cache);
     return cache;
   } catch {
     return null;
@@ -179,13 +181,12 @@ function hasUsableCasesCache(cache: CasesPageCache | null) {
 }
 
 function writeCasesPageCache(userId: string, cache: CasesPageCache) {
-  casesPageMemoryCache.set(userId, cache);
+  const cacheKey = getCasesPageCacheKey(userId);
+  casesPageMemoryCache.set(cacheKey, cache);
 
   if (typeof window === 'undefined') {
     return;
   }
-
-  const cacheKey = getCasesPageCacheKey(userId);
 
   try {
     window.sessionStorage.setItem(cacheKey, JSON.stringify(cache));
