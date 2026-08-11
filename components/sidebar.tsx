@@ -13,6 +13,8 @@ import {
   Users,
   BarChart3,
   HardDrive,
+  ScrollText,
+  Workflow,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -50,6 +52,20 @@ const navigation = [
     href: '/user-management',
     icon: Users,
     description: 'Manage application users and roles',
+  },
+  {
+    key: 'case-stage-monitor' as const,
+    name: 'Case Stage Monitor',
+    href: '/developer/case-stage-monitor',
+    icon: Workflow,
+    description: 'Monitor case stages and pending workflow items',
+  },
+  {
+    key: 'audit-logs' as const,
+    name: 'Audit Logs',
+    href: '/developer/audit-logs',
+    icon: ScrollText,
+    description: 'Review system activity and data changes',
   },
   {
     key: 'gdrive-configuration' as const,

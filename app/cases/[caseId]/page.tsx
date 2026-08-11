@@ -2436,16 +2436,18 @@ export default function CaseDetailsPage() {
                 </Card>
 
 
-                <CaseTimeline
-                  caseId={caseId}
-                  courts={data.courts}
-                  events={data.timeline}
-                  motions={data.motions}
-                  onChanged={loadCase}
-                  onUpdateStatus={() => openOverviewEditor("status")}
-                  canShowCaseManagementActions={canShowCaseManagementActions}
-                  petitionsForReview={data.petitionsForReview}
-                />
+                <div id="case-timeline" className="scroll-mt-20">
+                  <CaseTimeline
+                    caseId={caseId}
+                    courts={data.courts}
+                    events={data.timeline}
+                    motions={data.motions}
+                    onChanged={loadCase}
+                    onUpdateStatus={() => openOverviewEditor("status")}
+                    canShowCaseManagementActions={canShowCaseManagementActions}
+                    petitionsForReview={data.petitionsForReview}
+                  />
+                </div>
 
                 <Card>
                   <CardHeader>

@@ -3103,6 +3103,567 @@ export async function getRecentAuditLogs(limit?: number): Promise<SupabaseQueryR
   }, []);
 }
 
+export type DeveloperAuditLogRecord = {
+  id: number;
+  created_at: string;
+  actor_user_id: number | null;
+  actor_display: string;
+  actor_email: string | null;
+  case_id: number | null;
+  docket_display_number: string | null;
+  entity_name: string;
+  entity_id: number | null;
+  action: string;
+  summary: string | null;
+  old_data: Json | null;
+  new_data: Json | null;
+  metadata: Json | null;
+  ip_address: string | null;
+};
+
+export type DeveloperAuditActivitySummaryRecord = {
+  entity_name: string;
+  action: string;
+  log_count: number;
+  first_recorded_at: string | null;
+  latest_recorded_at: string | null;
+};
+
+export type DeveloperAuditLogOverview = {
+  total_log_count: number;
+  last_24_hours_count: number;
+  last_7_days_count: number;
+  actor_count: number;
+  latest_log_at: string | null;
+};
+
+export type DeveloperAuditActorSummaryRecord = {
+  actor_user_id: number;
+  actor_display: string;
+  actor_email: string | null;
+  log_count: number;
+  first_recorded_at: string | null;
+  latest_recorded_at: string | null;
+};
+
+export type DeveloperAuditLogFilters = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  actorUserId?: number | null;
+  action?: string | null;
+  entityName?: string | null;
+  entityId?: number | null;
+  since?: string | null;
+};
+
+export type DeveloperAuditLogPage = {
+  rows: DeveloperAuditLogRecord[];
+  total: number;
+};
+
+export async function getDeveloperAuditLogs(
+  filters: DeveloperAuditLogFilters = {},
+): Promise<SupabaseQueryResult<DeveloperAuditLogPage>> {
+  const pageSize = normalizeLimit(filters.pageSize, 25, 100);
+  const page = Number.isFinite(filters.page) ? Math.max(Math.trunc(filters.page ?? 1), 1) : 1;
+  const from = (page - 1) * pageSize;
+  const search = escapeIlikeTerm(filters.search ?? "").replace(/[().*"'\\:]/g, " ").replace(/\s+/g, " ").trim();
+
+  return runSupabaseQuery(
+    "getDeveloperAuditLogs",
+    "v_developer_audit_logs" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      let query = supabase
+        .from("v_developer_audit_logs" as never)
+        .select("*" as never, { count: "exact" });
+
+      if (search) {
+        query = query.or([
+          `summary.ilike.%${search}%`,
+          `action.ilike.%${search}%`,
+          `entity_name.ilike.%${search}%`,
+          `actor_display.ilike.%${search}%`,
+          `docket_display_number.ilike.%${search}%`,
+        ].join(","));
+      }
+
+      if (filters.action) {
+        query = query.eq("action" as never, filters.action);
+      }
+
+      if (Number.isFinite(filters.actorUserId)) {
+        query = query.eq("actor_user_id" as never, filters.actorUserId as number);
+      }
+
+      if (filters.entityName) {
+        query = query.eq("entity_name" as never, filters.entityName);
+      }
+
+      if (Number.isFinite(filters.entityId)) {
+        query = query.eq("entity_id" as never, filters.entityId as number);
+      }
+
+      if (filters.since) {
+        query = query.gte("created_at" as never, filters.since);
+      }
+
+      const { data, error, count } = await query
+        .order("created_at" as never, { ascending: false })
+        .range(from, from + pageSize - 1);
+
+      return {
+        data: { rows: (data ?? []) as unknown as DeveloperAuditLogRecord[], total: count ?? 0 },
+        error,
+      };
+    },
+    { rows: [], total: 0 },
+  );
+}
+
+export async function getDeveloperAuditLog(
+  auditLogId: number,
+): Promise<SupabaseQueryResult<DeveloperAuditLogRecord | null>> {
+  if (!Number.isSafeInteger(auditLogId) || auditLogId <= 0) {
+    return fail(toQueryError(new Error("Invalid audit log ID."), "getDeveloperAuditLog", "v_developer_audit_logs" as RelationName));
+  }
+
+  return runSupabaseQuery(
+    "getDeveloperAuditLog",
+    "v_developer_audit_logs" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return (await supabase
+        .from("v_developer_audit_logs" as never)
+        .select("*" as never)
+        .eq("id" as never, auditLogId)
+        .maybeSingle()) as unknown as {
+        data: DeveloperAuditLogRecord | null;
+        error: unknown;
+      };
+    },
+    null,
+  );
+}
+
+export async function getDeveloperAuditActivitySummary(): Promise<SupabaseQueryResult<DeveloperAuditActivitySummaryRecord[]>> {
+  return runSupabaseQuery(
+    "getDeveloperAuditActivitySummary",
+    "v_developer_audit_activity_summary" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return (await supabase
+        .from("v_developer_audit_activity_summary" as never)
+        .select("*" as never)
+        .order("log_count" as never, { ascending: false })
+        .order("latest_recorded_at" as never, { ascending: false })) as unknown as {
+        data: DeveloperAuditActivitySummaryRecord[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
+export async function getDeveloperAuditActorSummary(): Promise<SupabaseQueryResult<DeveloperAuditActorSummaryRecord[]>> {
+  return runSupabaseQuery(
+    "getDeveloperAuditActorSummary",
+    "v_developer_audit_actor_summary" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return (await supabase
+        .from("v_developer_audit_actor_summary" as never)
+        .select("*" as never)
+        .order("log_count" as never, { ascending: false })
+        .order("latest_recorded_at" as never, { ascending: false })) as unknown as {
+        data: DeveloperAuditActorSummaryRecord[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
+export async function getDeveloperAuditLogOverview(): Promise<SupabaseQueryResult<DeveloperAuditLogOverview>> {
+  const emptyOverview: DeveloperAuditLogOverview = {
+    actor_count: 0,
+    last_24_hours_count: 0,
+    last_7_days_count: 0,
+    latest_log_at: null,
+    total_log_count: 0,
+  };
+
+  return runSupabaseQuery(
+    "getDeveloperAuditLogOverview",
+    "v_developer_audit_log_overview" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return (await supabase
+        .from("v_developer_audit_log_overview" as never)
+        .select("*" as never)
+        .single()) as unknown as {
+        data: DeveloperAuditLogOverview | null;
+        error: unknown;
+      };
+    },
+    emptyOverview,
+  );
+}
+
+export type DeveloperCaseStageQueue =
+  | "all"
+  | "attention"
+  | "unassigned"
+  | "unapproved_resolution"
+  | "unfiled_for_filing"
+  | "unresolved_motion"
+  | "motion_resolution_for_approval"
+  | "pending_petition";
+
+export type DeveloperCaseStageMonitorRecord = {
+  case_id: number;
+  docket_year: number;
+  docket_type_id: number;
+  docket_type_prefix: string;
+  docket_type_name: string;
+  docket_display_number: string;
+  date_received: string;
+  case_age_days: number;
+  case_classification_label: string | null;
+  violations: string | null;
+  current_case_status_id: number | null;
+  current_case_status_code: string | null;
+  current_case_status_label: string | null;
+  current_case_status_date: string | null;
+  current_case_status_remarks: string | null;
+  current_case_stage_id: number | null;
+  current_case_stage_code: string | null;
+  current_case_stage_label: string | null;
+  current_case_stage_date: string | null;
+  current_case_stage_remarks: string | null;
+  current_case_stage_sort_order: number | null;
+  is_final_stage: boolean | null;
+  is_milestone: boolean | null;
+  days_in_current_stage: number;
+  current_prosecutor_id: number | null;
+  prosecutor_display: string | null;
+  current_assigned_at: string | null;
+  unapproved_case_resolution_count: number;
+  oldest_unapproved_case_resolution_date: string | null;
+  unfiled_for_filing_count: number;
+  oldest_unfiled_for_filing_date: string | null;
+  unresolved_motion_count: number;
+  oldest_unresolved_motion_date: string | null;
+  unapproved_motion_resolution_count: number;
+  oldest_unapproved_motion_resolution_date: string | null;
+  latest_event_id: number | null;
+  latest_event_type_code: string | null;
+  latest_event_type_label: string | null;
+  latest_event_title: string | null;
+  latest_event_date: string | null;
+  latest_event_time: string | null;
+  latest_event_at: string | null;
+  has_no_active_prosecutor: boolean;
+  has_unapproved_case_resolution: boolean;
+  has_unfiled_for_filing: boolean;
+  has_unresolved_motion: boolean;
+  has_unapproved_motion_resolution: boolean;
+  is_pending_petition_for_review: boolean;
+  has_attention: boolean;
+  attention_item_count: number;
+  oldest_attention_date: string | null;
+};
+
+export type DeveloperCaseStageMonitorOverview = {
+  docket_year: number | null;
+  docket_type_id: number | null;
+  docket_type_prefix: string | null;
+  docket_type_name: string | null;
+  total_active_case_count: number;
+  attention_case_count: number;
+  unassigned_prosecutor_count: number;
+  unapproved_case_resolution_count: number;
+  unfiled_for_filing_count: number;
+  unresolved_motion_count: number;
+  unapproved_motion_resolution_count: number;
+  pending_petition_for_review_count: number;
+  oldest_attention_date: string | null;
+  latest_event_at: string | null;
+};
+
+export type DeveloperCaseStageDistributionRecord = {
+  docket_year: number | null;
+  docket_type_id: number | null;
+  docket_type_prefix: string | null;
+  docket_type_name: string | null;
+  stage_code: string;
+  stage_label: string;
+  stage_sort_order: number;
+  is_final_stage: boolean;
+  case_count: number;
+  attention_case_count: number;
+  latest_event_at: string | null;
+};
+
+export type DeveloperCaseStageMonitorFilters = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  caseSearch?: string;
+  prosecutorSearch?: string;
+  latestEventSearch?: string;
+  queue?: DeveloperCaseStageQueue;
+  stageCode?: string | null;
+  docketYear?: number | null;
+  docketTypeId?: number | null;
+  minStageDays?: number | null;
+  maxStageDays?: number | null;
+};
+
+export type DeveloperCaseStageYearSummary = Pick<
+  DeveloperCaseStageMonitorOverview,
+  "docket_year" | "total_active_case_count" | "attention_case_count"
+>;
+
+export type DeveloperCaseStageDocketTypeSummary = Pick<
+  DeveloperCaseStageMonitorOverview,
+  "docket_type_id" | "docket_type_prefix" | "docket_type_name" | "total_active_case_count" | "attention_case_count"
+>;
+
+export type DeveloperCaseStageMonitorPage = {
+  rows: DeveloperCaseStageMonitorRecord[];
+  total: number;
+};
+
+export async function getDeveloperCaseStageMonitor(
+  filters: DeveloperCaseStageMonitorFilters = {},
+): Promise<SupabaseQueryResult<DeveloperCaseStageMonitorPage>> {
+  const pageSize = normalizeLimit(filters.pageSize, 25, 100);
+  const page = Number.isFinite(filters.page) ? Math.max(Math.trunc(filters.page ?? 1), 1) : 1;
+  const from = (page - 1) * pageSize;
+  const search = escapeIlikeTerm(filters.search ?? "").replace(/[().*"'\\:]/g, " ").replace(/\s+/g, " ").trim();
+  const caseSearch = escapeIlikeTerm(filters.caseSearch ?? "").replace(/[().*"'\\:]/g, " ").replace(/\s+/g, " ").trim();
+  const prosecutorSearch = escapeIlikeTerm(filters.prosecutorSearch ?? "").replace(/[().*"'\\:]/g, " ").replace(/\s+/g, " ").trim();
+  const latestEventSearch = escapeIlikeTerm(filters.latestEventSearch ?? "").replace(/[().*"'\\:]/g, " ").replace(/\s+/g, " ").trim();
+
+  return runSupabaseQuery(
+    "getDeveloperCaseStageMonitor",
+    "v_developer_case_stage_monitor" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      let query = supabase
+        .from("v_developer_case_stage_monitor" as never)
+        .select("*" as never, { count: "exact" });
+
+      if (search) {
+        query = query.or([
+          `docket_display_number.ilike.%${search}%`,
+          `docket_type_prefix.ilike.%${search}%`,
+          `docket_type_name.ilike.%${search}%`,
+          `case_classification_label.ilike.%${search}%`,
+          `violations.ilike.%${search}%`,
+          `prosecutor_display.ilike.%${search}%`,
+          `current_case_stage_label.ilike.%${search}%`,
+          `latest_event_title.ilike.%${search}%`,
+        ].join(","));
+      }
+
+      if (caseSearch) {
+        query = query.or([
+          `docket_display_number.ilike.%${caseSearch}%`,
+          `docket_type_prefix.ilike.%${caseSearch}%`,
+          `docket_type_name.ilike.%${caseSearch}%`,
+          `case_classification_label.ilike.%${caseSearch}%`,
+          `violations.ilike.%${caseSearch}%`,
+        ].join(","));
+      }
+
+      if (prosecutorSearch) {
+        const normalizedProsecutorSearch = prosecutorSearch.toLowerCase();
+        if (["unassigned", "none", "no prosecutor"].includes(normalizedProsecutorSearch)) {
+          query = query.is("prosecutor_display" as never, null);
+        } else if (normalizedProsecutorSearch === "assigned") {
+          query = query.not("prosecutor_display" as never, "is", null);
+        } else {
+          query = query.ilike("prosecutor_display" as never, `%${prosecutorSearch}%`);
+        }
+      }
+
+      if (latestEventSearch) {
+        const normalizedLatestEventSearch = latestEventSearch.toLowerCase();
+        if (["none", "no event"].includes(normalizedLatestEventSearch)) {
+          query = query.is("latest_event_id" as never, null);
+        } else {
+          query = query.or([
+            `latest_event_title.ilike.%${latestEventSearch}%`,
+            `latest_event_type_code.ilike.%${latestEventSearch}%`,
+            `latest_event_type_label.ilike.%${latestEventSearch}%`,
+          ].join(","));
+        }
+      }
+
+      const queueColumnByKey: Partial<Record<DeveloperCaseStageQueue, keyof DeveloperCaseStageMonitorRecord>> = {
+        attention: "has_attention",
+        unassigned: "has_no_active_prosecutor",
+        unapproved_resolution: "has_unapproved_case_resolution",
+        unfiled_for_filing: "has_unfiled_for_filing",
+        unresolved_motion: "has_unresolved_motion",
+        motion_resolution_for_approval: "has_unapproved_motion_resolution",
+        pending_petition: "is_pending_petition_for_review",
+      };
+      const queueColumn = queueColumnByKey[filters.queue ?? "all"];
+      if (queueColumn) {
+        query = query.eq(queueColumn as never, true);
+      }
+
+      if (filters.stageCode) {
+        query = query.eq("current_case_stage_code" as never, filters.stageCode);
+      }
+
+      if (Number.isFinite(filters.docketYear)) {
+        query = query.eq("docket_year" as never, Math.trunc(filters.docketYear as number));
+      }
+
+      if (Number.isFinite(filters.docketTypeId)) {
+        query = query.eq("docket_type_id" as never, Math.trunc(filters.docketTypeId as number));
+      }
+
+      if (Number.isFinite(filters.minStageDays)) {
+        query = query.gte("days_in_current_stage" as never, Math.max(Math.trunc(filters.minStageDays as number), 0));
+      }
+
+      if (Number.isFinite(filters.maxStageDays)) {
+        query = query.lte("days_in_current_stage" as never, Math.max(Math.trunc(filters.maxStageDays as number), 0));
+      }
+
+      const { data, error, count } = await query
+        .order("has_attention" as never, { ascending: false })
+        .order("oldest_attention_date" as never, { ascending: true, nullsFirst: false })
+        .order("days_in_current_stage" as never, { ascending: false })
+        .order("docket_display_number" as never, { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      return {
+        data: { rows: (data ?? []) as unknown as DeveloperCaseStageMonitorRecord[], total: count ?? 0 },
+        error,
+      };
+    },
+    { rows: [], total: 0 },
+  );
+}
+
+export async function getDeveloperCaseStageMonitorOverview(
+  docketYear: number | null = null,
+  docketTypeId: number | null = null,
+): Promise<SupabaseQueryResult<DeveloperCaseStageMonitorOverview>> {
+  const emptyOverview: DeveloperCaseStageMonitorOverview = {
+    docket_year: docketYear,
+    docket_type_id: docketTypeId,
+    docket_type_prefix: null,
+    docket_type_name: null,
+    total_active_case_count: 0,
+    attention_case_count: 0,
+    unassigned_prosecutor_count: 0,
+    unapproved_case_resolution_count: 0,
+    unfiled_for_filing_count: 0,
+    unresolved_motion_count: 0,
+    unapproved_motion_resolution_count: 0,
+    pending_petition_for_review_count: 0,
+    oldest_attention_date: null,
+    latest_event_at: null,
+  };
+
+  return runSupabaseQuery(
+    "getDeveloperCaseStageMonitorOverview",
+    "v_developer_case_stage_monitor_overview" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      let query = supabase
+        .from("v_developer_case_stage_monitor_overview" as never)
+        .select("*" as never);
+      query = Number.isFinite(docketYear)
+        ? query.eq("docket_year" as never, Math.trunc(docketYear as number))
+        : query.is("docket_year" as never, null);
+      query = Number.isFinite(docketTypeId)
+        ? query.eq("docket_type_id" as never, Math.trunc(docketTypeId as number))
+        : query.is("docket_type_id" as never, null);
+      return (await query.maybeSingle()) as unknown as { data: DeveloperCaseStageMonitorOverview | null; error: unknown };
+    },
+    emptyOverview,
+  );
+}
+
+export async function getDeveloperCaseStageDistribution(
+  docketYear: number | null = null,
+  docketTypeId: number | null = null,
+): Promise<SupabaseQueryResult<DeveloperCaseStageDistributionRecord[]>> {
+  return runSupabaseQuery(
+    "getDeveloperCaseStageDistribution",
+    "v_developer_case_stage_distribution" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      let query = supabase
+        .from("v_developer_case_stage_distribution" as never)
+        .select("*" as never);
+      query = Number.isFinite(docketYear)
+        ? query.eq("docket_year" as never, Math.trunc(docketYear as number))
+        : query.is("docket_year" as never, null);
+      query = Number.isFinite(docketTypeId)
+        ? query.eq("docket_type_id" as never, Math.trunc(docketTypeId as number))
+        : query.is("docket_type_id" as never, null);
+      return (await query
+        .order("stage_sort_order" as never, { ascending: true })
+        .order("stage_label" as never, { ascending: true })) as unknown as {
+        data: DeveloperCaseStageDistributionRecord[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
+export async function getDeveloperCaseStageYears(): Promise<SupabaseQueryResult<DeveloperCaseStageYearSummary[]>> {
+  return runSupabaseQuery(
+    "getDeveloperCaseStageYears",
+    "v_developer_case_stage_monitor_overview" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return (await supabase
+        .from("v_developer_case_stage_monitor_overview" as never)
+        .select("docket_year,total_active_case_count,attention_case_count" as never)
+        .not("docket_year" as never, "is", null)
+        .is("docket_type_id" as never, null)
+        .order("docket_year" as never, { ascending: false })) as unknown as {
+        data: DeveloperCaseStageYearSummary[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
+export async function getDeveloperCaseStageDocketTypes(): Promise<SupabaseQueryResult<DeveloperCaseStageDocketTypeSummary[]>> {
+  return runSupabaseQuery(
+    "getDeveloperCaseStageDocketTypes",
+    "v_developer_case_stage_monitor_overview" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      return (await supabase
+        .from("v_developer_case_stage_monitor_overview" as never)
+        .select("docket_type_id,docket_type_prefix,docket_type_name,total_active_case_count,attention_case_count" as never)
+        .is("docket_year" as never, null)
+        .not("docket_type_id" as never, "is", null)
+        .order("docket_type_name" as never, { ascending: true })
+        .order("docket_type_prefix" as never, { ascending: true })) as unknown as {
+        data: DeveloperCaseStageDocketTypeSummary[] | null;
+        error: unknown;
+      };
+    },
+    [],
+  );
+}
+
 export async function getDashboardStats(): Promise<
   SupabaseQueryResult<{
     totalCases: number;
