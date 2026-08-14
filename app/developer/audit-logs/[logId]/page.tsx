@@ -7,12 +7,14 @@ import { ArrowLeft, FileClock, RefreshCw } from 'lucide-react';
 
 import {
   AuditLogDataDetails,
+  EMPTY_AUDIT_REFERENCE_DATA,
   formatAuditDateTime,
   formatAuditIdentifier,
   getAuditActionBadgeVariant,
   getAuditActionHref,
   getAuditActorHref,
   getAuditEntityHref,
+  type AuditReferenceData,
 } from '@/components/audit-logs/audit-log-ui';
 import { RoleRouteGuard } from '@/components/auth/role-route-guard';
 import { Sidebar } from '@/components/sidebar';
@@ -20,7 +22,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { getDeveloperAuditLog, type DeveloperAuditLogRecord } from '@/lib/supabase/queries';
+import { getCaseStages, getCaseStatuses, getDeveloperAuditLog, type DeveloperAuditLogRecord } from '@/lib/supabase/queries';
 
 function DetailValue({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -35,6 +37,7 @@ export default function AuditLogDetailPage() {
   const params = useParams<{ logId: string }>();
   const auditLogId = Number(params.logId);
   const [record, setRecord] = useState<DeveloperAuditLogRecord | null>(null);
+  const [referenceData, setReferenceData] = useState<AuditReferenceData>(EMPTY_AUDIT_REFERENCE_DATA);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,7 +51,15 @@ export default function AuditLogDetailPage() {
 
     setIsLoading(true);
     setError(null);
-    const result = await getDeveloperAuditLog(auditLogId);
+    const [result, statusesResult, stagesResult] = await Promise.all([
+      getDeveloperAuditLog(auditLogId),
+      getCaseStatuses(),
+      getCaseStages(),
+    ]);
+    setReferenceData((current) => ({
+      caseStatuses: statusesResult.error ? current.caseStatuses : statusesResult.data,
+      caseStages: stagesResult.error ? current.caseStages : stagesResult.data,
+    }));
     if (result.error) {
       setRecord(null);
       setError(result.error.message);
@@ -130,7 +141,7 @@ export default function AuditLogDetailPage() {
                   </CardContent>
                 </Card>
 
-                <AuditLogDataDetails oldValue={record.old_data} newValue={record.new_data} metadata={record.metadata} />
+                <AuditLogDataDetails oldValue={record.old_data} newValue={record.new_data} metadata={record.metadata} referenceData={referenceData} />
 
                 <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
                   <CardHeader className="px-4 sm:px-6"><CardTitle>Continue exploring</CardTitle><CardDescription>Follow this event through its related audit histories.</CardDescription></CardHeader>

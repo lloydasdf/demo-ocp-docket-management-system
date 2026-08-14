@@ -8,6 +8,7 @@ import {
   Info,
   PencilLine,
 } from 'lucide-react';
+import Link from 'next/link';
 
 import type { Json } from '@/lib/supabase/types';
 import { cn } from '@/lib/utils';
@@ -77,8 +78,54 @@ type AuditChange = {
   path: string[];
   before?: Json;
   after?: Json;
+  beforeReference?: AuditIdReference;
+  afterReference?: AuditIdReference;
   kind: 'added' | 'removed' | 'updated';
 };
+
+export type AuditReferenceItem = {
+  id: number;
+  code: string;
+  display_label: string;
+};
+
+export type AuditReferenceData = {
+  caseStatuses: readonly AuditReferenceItem[];
+  caseStages: readonly AuditReferenceItem[];
+};
+
+export const EMPTY_AUDIT_REFERENCE_DATA: AuditReferenceData = {
+  caseStatuses: [],
+  caseStages: [],
+};
+
+type AuditReferenceKind = 'case-status' | 'case-stage' | 'person' | 'organization' | 'court' | 'user' | 'prosecutor' | 'participant-role' | 'violation';
+
+type AuditIdReference = {
+  label: string;
+  typeLabel: string;
+  code?: string;
+  href?: string;
+};
+
+const STATUS_ID_FIELDS = new Set([
+  'status_id',
+  'case_status_id',
+  'current_status_id',
+  'current_case_status_id',
+  'selected_case_status_id',
+  'from_status_id',
+  'to_status_id',
+]);
+
+const STAGE_ID_FIELDS = new Set([
+  'stage_id',
+  'case_stage_id',
+  'current_case_stage_id',
+  'selected_case_stage_id',
+  'from_stage_id',
+  'to_stage_id',
+]);
 
 function pathKey(path: string[]) {
   return JSON.stringify(path);
@@ -119,9 +166,137 @@ function valuesMatch(left: Json, right: Json) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function getAuditChanges(oldValue: Json | null, newValue: Json | null): AuditChange[] {
+function getContainerReferenceKind(segment: string | undefined): AuditReferenceKind | null {
+  const normalized = segment?.toLowerCase();
+  if (normalized === 'person' || normalized === 'persons') return 'person';
+  if (normalized === 'organization' || normalized === 'organizations') return 'organization';
+  if (normalized === 'court' || normalized === 'courts') return 'court';
+  if (normalized === 'user' || normalized === 'users') return 'user';
+  if (normalized === 'prosecutor' || normalized === 'prosecutors') return 'prosecutor';
+  if (normalized === 'participant_role' || normalized === 'participant_roles') return 'participant-role';
+  if (normalized === 'violation' || normalized === 'violations') return 'violation';
+  if (normalized === 'case_status' || normalized === 'case_statuses') return 'case-status';
+  if (normalized === 'case_stage' || normalized === 'case_stages') return 'case-stage';
+  return null;
+}
+
+function getIdReferenceKind(path: string[]): AuditReferenceKind | null {
+  const field = path.at(-1)?.toLowerCase() ?? '';
+  if (STATUS_ID_FIELDS.has(field)) return 'case-status';
+  if (STAGE_ID_FIELDS.has(field)) return 'case-stage';
+  if (field === 'id') return getContainerReferenceKind(path.at(-2));
+  if (field === 'person_id' || field.endsWith('_person_id')) return 'person';
+  if (field === 'organization_id' || field.endsWith('_organization_id')) return 'organization';
+  if (field === 'court_id' || field.endsWith('_court_id')) return 'court';
+  if (field === 'user_id' || field.endsWith('_user_id')) return 'user';
+  if (field === 'prosecutor_id' || field.endsWith('_prosecutor_id')) return 'prosecutor';
+  if (field === 'role_id' || field.endsWith('_role_id')) return 'participant-role';
+  if (field === 'violation_id' || field.endsWith('_violation_id')) return 'violation';
+  return null;
+}
+
+function referenceKey(kind: AuditReferenceKind, id: number) {
+  return `${kind}:${id}`;
+}
+
+function getNumericId(value: Json) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value);
+  return null;
+}
+
+function getReferenceTypeLabel(kind: AuditReferenceKind) {
+  return {
+    'case-status': 'Case status',
+    'case-stage': 'Case stage',
+    person: 'Person',
+    organization: 'Organization',
+    court: 'Court',
+    user: 'User',
+    prosecutor: 'Prosecutor',
+    'participant-role': 'Participant role',
+    violation: 'Violation',
+  }[kind];
+}
+
+function getEmbeddedDisplayLabel(value: { [key: string]: Json | undefined }) {
+  const candidates = [
+    value.display_label,
+    value.full_name,
+    value.organization_name,
+    value.court_name,
+    value.title,
+    value.name,
+    value.email,
+    value.code,
+  ];
+
+  return candidates.find((candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0)?.trim() ?? null;
+}
+
+function collectEmbeddedReferences(value: Json | null, path: string[], output: Map<string, AuditIdReference>) {
+  if (value === null) return;
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectEmbeddedReferences(item, [...path, `Item ${index + 1}`], output));
+    return;
+  }
+  if (typeof value !== 'object') return;
+
+  const label = getEmbeddedDisplayLabel(value);
+  if (label) {
+    Object.entries(value).forEach(([field, item]) => {
+      if (item === undefined || item === null) return;
+      const kind = getIdReferenceKind([...path, field]);
+      const id = getNumericId(item);
+      if (!kind || id === null) return;
+
+      const href = kind === 'person'
+        ? `/persons/${id}`
+        : kind === 'organization'
+          ? `/organizations/${id}`
+          : undefined;
+      output.set(referenceKey(kind, id), { label, typeLabel: getReferenceTypeLabel(kind), href });
+    });
+  }
+
+  Object.entries(value).forEach(([field, item]) => {
+    if (item !== undefined) collectEmbeddedReferences(item, [...path, field], output);
+  });
+}
+
+function buildReferenceMap(value: Json | null, referenceData: AuditReferenceData) {
+  const output = new Map<string, AuditIdReference>();
+
+  referenceData.caseStatuses.forEach((item) => {
+    output.set(referenceKey('case-status', item.id), {
+      label: item.display_label,
+      code: item.code,
+      typeLabel: getReferenceTypeLabel('case-status'),
+    });
+  });
+  referenceData.caseStages.forEach((item) => {
+    output.set(referenceKey('case-stage', item.id), {
+      label: item.display_label,
+      code: item.code,
+      typeLabel: getReferenceTypeLabel('case-stage'),
+    });
+  });
+  collectEmbeddedReferences(value, [], output);
+  return output;
+}
+
+function getIdReference(path: string[], value: Json | undefined, references: Map<string, AuditIdReference>) {
+  if (value === undefined || value === null) return undefined;
+  const kind = getIdReferenceKind(path);
+  const id = getNumericId(value);
+  return kind && id !== null ? references.get(referenceKey(kind, id)) : undefined;
+}
+
+function getAuditChanges(oldValue: Json | null, newValue: Json | null, referenceData: AuditReferenceData): AuditChange[] {
   const before = flattenSnapshot(oldValue);
   const after = flattenSnapshot(newValue);
+  const beforeReferences = buildReferenceMap(oldValue, referenceData);
+  const afterReferences = buildReferenceMap(newValue, referenceData);
   const keys = [...after.keys(), ...[...before.keys()].filter((key) => !after.has(key))];
 
   return keys.flatMap((key) => {
@@ -134,6 +309,8 @@ function getAuditChanges(oldValue: Json | null, newValue: Json | null): AuditCha
       path: next?.path ?? previous?.path ?? [],
       before: previous?.value,
       after: next?.value,
+      beforeReference: previous ? getIdReference(previous.path, previous.value, beforeReferences) : undefined,
+      afterReference: next ? getIdReference(next.path, next.value, afterReferences) : undefined,
       kind: !previous ? 'added' : !next ? 'removed' : 'updated',
     }];
   });
@@ -182,7 +359,29 @@ function AuditFieldPath({ path }: { path: string[] }) {
   );
 }
 
-function AuditValue({ value, empty, tone }: { value: Json | undefined; empty?: boolean; tone: 'before' | 'after' }) {
+function AuditValueContent({ value, reference }: { value: Json | undefined; reference?: AuditIdReference }) {
+  if (!reference || value === undefined || value === null) {
+    return <span className="break-words [overflow-wrap:anywhere]">{formatAuditValue(value)}</span>;
+  }
+
+  const id = getNumericId(value);
+  const label = reference.href ? (
+    <Link className="font-semibold underline-offset-2 hover:underline" href={reference.href}>{reference.label}</Link>
+  ) : (
+    <span className="font-semibold">{reference.label}</span>
+  );
+
+  return (
+    <span className="flex min-w-0 flex-col gap-0.5">
+      <span className="break-words [overflow-wrap:anywhere]">{label}</span>
+      <span className="break-words text-xs opacity-70 [overflow-wrap:anywhere]">
+        {reference.code ? `${reference.code} · ` : ''}{reference.typeLabel} ID {id?.toLocaleString('en-PH') ?? formatAuditValue(value)}
+      </span>
+    </span>
+  );
+}
+
+function AuditValue({ value, empty, tone, reference }: { value: Json | undefined; empty?: boolean; tone: 'before' | 'after'; reference?: AuditIdReference }) {
   return (
     <div
       className={cn(
@@ -194,7 +393,7 @@ function AuditValue({ value, empty, tone }: { value: Json | undefined; empty?: b
             : 'border-emerald-200 bg-emerald-50/70 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/25 dark:text-emerald-100',
       )}
     >
-      <span className="break-words [overflow-wrap:anywhere]">{empty ? 'Not present' : formatAuditValue(value)}</span>
+      {empty ? <span>Not present</span> : <AuditValueContent value={value} reference={reference} />}
     </div>
   );
 }
@@ -215,8 +414,8 @@ function ChangeKind({ kind }: { kind: AuditChange['kind'] }) {
   );
 }
 
-function AuditChangesPanel({ oldValue, newValue }: { oldValue: Json | null; newValue: Json | null }) {
-  const changes = getAuditChanges(oldValue, newValue);
+function AuditChangesPanel({ oldValue, newValue, referenceData }: { oldValue: Json | null; newValue: Json | null; referenceData: AuditReferenceData }) {
+  const changes = getAuditChanges(oldValue, newValue, referenceData);
 
   return (
     <section className="min-w-0 overflow-hidden rounded-xl border bg-card">
@@ -258,12 +457,12 @@ function AuditChangesPanel({ oldValue, newValue }: { oldValue: Json | null; newV
                 </div>
                 <div className="min-w-0">
                   <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">Previous value</p>
-                  <AuditValue value={change.before} empty={change.kind === 'added'} tone="before" />
+                  <AuditValue value={change.before} empty={change.kind === 'added'} tone="before" reference={change.beforeReference} />
                 </div>
                 <ArrowRight className="mx-auto hidden h-4 w-4 text-muted-foreground sm:block" />
                 <div className="min-w-0">
                   <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">New value</p>
-                  <AuditValue value={change.after} empty={change.kind === 'removed'} tone="after" />
+                  <AuditValue value={change.after} empty={change.kind === 'removed'} tone="after" reference={change.afterReference} />
                 </div>
               </article>
             ))}
@@ -274,8 +473,9 @@ function AuditChangesPanel({ oldValue, newValue }: { oldValue: Json | null; newV
   );
 }
 
-function AuditMetadataPanel({ value }: { value: Json | null }) {
+function AuditMetadataPanel({ value, referenceData }: { value: Json | null; referenceData: AuditReferenceData }) {
   const items = [...flattenSnapshot(value).values()];
+  const references = buildReferenceMap(value, referenceData);
 
   return (
     <section className="min-w-0 rounded-xl border bg-card p-4">
@@ -296,7 +496,9 @@ function AuditMetadataPanel({ value }: { value: Json | null }) {
           {items.map((item) => (
             <div className="min-w-0 rounded-lg border bg-muted/15 px-3 py-2.5" key={pathKey(item.path)}>
               <dt className="text-xs text-muted-foreground"><AuditFieldPath path={item.path} /></dt>
-              <dd className="mt-1 break-words text-sm font-medium [overflow-wrap:anywhere]">{formatAuditValue(item.value)}</dd>
+              <dd className="mt-1 break-words text-sm font-medium [overflow-wrap:anywhere]">
+                <AuditValueContent value={item.value} reference={getIdReference(item.path, item.value, references)} />
+              </dd>
             </div>
           ))}
         </dl>
@@ -323,15 +525,17 @@ export function AuditLogDataDetails({
   oldValue,
   newValue,
   metadata,
+  referenceData = EMPTY_AUDIT_REFERENCE_DATA,
 }: {
   oldValue: Json | null;
   newValue: Json | null;
   metadata: Json | null;
+  referenceData?: AuditReferenceData;
 }) {
   return (
     <div className="min-w-0 space-y-4">
-      <AuditChangesPanel oldValue={oldValue} newValue={newValue} />
-      <AuditMetadataPanel value={metadata} />
+      <AuditChangesPanel oldValue={oldValue} newValue={newValue} referenceData={referenceData} />
+      <AuditMetadataPanel value={metadata} referenceData={referenceData} />
 
       <details className="group min-w-0 rounded-xl border bg-card">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium transition-colors hover:bg-muted/30 [&::-webkit-details-marker]:hidden">

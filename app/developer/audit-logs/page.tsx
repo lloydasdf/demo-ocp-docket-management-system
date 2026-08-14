@@ -20,11 +20,13 @@ import { RoleRouteGuard } from '@/components/auth/role-route-guard';
 import { AuditLogRecordsTable } from '@/components/audit-logs/audit-log-records-table';
 import {
   AuditLogDataDetails,
+  EMPTY_AUDIT_REFERENCE_DATA,
   getAuditActionHref,
   getAuditActivityHref,
   getAuditActorHref,
   getAuditEntityHref,
   getAuditLogHref,
+  type AuditReferenceData,
 } from '@/components/audit-logs/audit-log-ui';
 import { Sidebar } from '@/components/sidebar';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -42,6 +44,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
+  getCaseStages,
+  getCaseStatuses,
   getDeveloperAuditActivitySummary,
   getDeveloperAuditLogOverview,
   getDeveloperAuditLogs,
@@ -138,6 +142,7 @@ export default function DeveloperAuditLogsPage() {
   const [entityName, setEntityName] = useState('all');
   const [action, setAction] = useState('all');
   const [selectedLog, setSelectedLog] = useState<DeveloperAuditLogRecord | null>(null);
+  const [referenceData, setReferenceData] = useState<AuditReferenceData>(EMPTY_AUDIT_REFERENCE_DATA);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshingSummary, setIsRefreshingSummary] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -158,10 +163,17 @@ export default function DeveloperAuditLogsPage() {
 
   const loadSummary = useCallback(async () => {
     setIsRefreshingSummary(true);
-    const [overviewResult, summaryResult] = await Promise.all([
+    const [overviewResult, summaryResult, statusesResult, stagesResult] = await Promise.all([
       getDeveloperAuditLogOverview(),
       getDeveloperAuditActivitySummary(),
+      getCaseStatuses(),
+      getCaseStages(),
     ]);
+
+    setReferenceData((current) => ({
+      caseStatuses: statusesResult.error ? current.caseStatuses : statusesResult.data,
+      caseStages: stagesResult.error ? current.caseStages : stagesResult.data,
+    }));
 
     if (overviewResult.error || summaryResult.error) {
       setError(overviewResult.error?.message ?? summaryResult.error?.message ?? 'Unable to load audit summary.');
@@ -478,7 +490,7 @@ export default function DeveloperAuditLogsPage() {
                 <p className="mt-2 text-sm text-muted-foreground">{selectedLog.summary ?? 'No summary recorded.'}</p>
               </section>
 
-              <AuditLogDataDetails oldValue={selectedLog.old_data} newValue={selectedLog.new_data} metadata={selectedLog.metadata} />
+              <AuditLogDataDetails oldValue={selectedLog.old_data} newValue={selectedLog.new_data} metadata={selectedLog.metadata} referenceData={referenceData} />
               <div className="flex justify-end">
                 <Button className="w-full sm:w-auto" asChild><Link href={getAuditLogHref(selectedLog.id)}>Open full audit record</Link></Button>
               </div>
