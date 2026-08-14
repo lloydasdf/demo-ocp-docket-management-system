@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { ArrowLeft, FileClock, RefreshCw } from 'lucide-react';
 
 import {
-  AuditJsonPanel,
+  AuditLogDataDetails,
   formatAuditDateTime,
   formatAuditIdentifier,
   getAuditActionBadgeVariant,
@@ -130,11 +130,7 @@ export default function AuditLogDetailPage() {
                   </CardContent>
                 </Card>
 
-                <div className="grid min-w-0 gap-4 sm:gap-6 lg:grid-cols-2">
-                  <AuditJsonPanel title="Before" value={record.old_data} />
-                  <AuditJsonPanel title="After" value={record.new_data} />
-                </div>
-                <AuditJsonPanel title="Metadata" value={record.metadata} />
+                <AuditLogDataDetails oldValue={record.old_data} newValue={record.new_data} metadata={record.metadata} />
 
                 <Card className="gap-4 py-4 sm:gap-6 sm:py-6">
                   <CardHeader className="px-4 sm:px-6"><CardTitle>Continue exploring</CardTitle><CardDescription>Follow this event through its related audit histories.</CardDescription></CardHeader>

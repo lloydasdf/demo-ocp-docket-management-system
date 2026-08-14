@@ -9,7 +9,6 @@ import {
   ChevronRight,
   Clock3,
   Eye,
-  FileJson2,
   RefreshCw,
   RotateCcw,
   Search,
@@ -20,6 +19,7 @@ import {
 import { RoleRouteGuard } from '@/components/auth/role-route-guard';
 import { AuditLogRecordsTable } from '@/components/audit-logs/audit-log-records-table';
 import {
+  AuditLogDataDetails,
   getAuditActionHref,
   getAuditActivityHref,
   getAuditActorHref,
@@ -49,7 +49,6 @@ import {
   type DeveloperAuditLogOverview,
   type DeveloperAuditLogRecord,
 } from '@/lib/supabase/queries';
-import type { Json } from '@/lib/supabase/types';
 
 const PAGE_SIZE = 25;
 const EMPTY_OVERVIEW: DeveloperAuditLogOverview = {
@@ -81,11 +80,6 @@ function formatIdentifier(value: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
-}
-
-function formatJson(value: Json | null) {
-  if (value === null) return 'No data recorded.';
-  return JSON.stringify(value, null, 2);
 }
 
 function getActionBadgeVariant(action: string): 'default' | 'secondary' | 'destructive' | 'outline' {
@@ -129,20 +123,6 @@ function StatCard({
         </CardContent>
       </Card>
     </Link>
-  );
-}
-
-function JsonPanel({ title, value }: { title: string; value: Json | null }) {
-  return (
-    <section className="min-w-0 space-y-2">
-      <div className="flex items-center gap-2">
-        <FileJson2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <h3 className="text-sm font-semibold">{title}</h3>
-      </div>
-      <pre className="max-h-80 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-lg border bg-muted/50 p-3 text-[11px] leading-5 sm:text-xs">
-        {formatJson(value)}
-      </pre>
-    </section>
   );
 }
 
@@ -498,11 +478,7 @@ export default function DeveloperAuditLogsPage() {
                 <p className="mt-2 text-sm text-muted-foreground">{selectedLog.summary ?? 'No summary recorded.'}</p>
               </section>
 
-              <div className="grid min-w-0 gap-3 sm:gap-5 lg:grid-cols-2">
-                <JsonPanel title="Before" value={selectedLog.old_data} />
-                <JsonPanel title="After" value={selectedLog.new_data} />
-              </div>
-              <JsonPanel title="Metadata" value={selectedLog.metadata} />
+              <AuditLogDataDetails oldValue={selectedLog.old_data} newValue={selectedLog.new_data} metadata={selectedLog.metadata} />
               <div className="flex justify-end">
                 <Button className="w-full sm:w-auto" asChild><Link href={getAuditLogHref(selectedLog.id)}>Open full audit record</Link></Button>
               </div>
