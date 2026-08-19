@@ -1222,7 +1222,35 @@ export type CaseTimelineEventRecord = {
   voided_at: string | null;
   voided_by_user_id: number | null;
   voided_by_email: string | null;
+  created_at: string | null;
 };
+
+function compareCaseTimelineEvents(
+  left: CaseTimelineEventRecord,
+  right: CaseTimelineEventRecord,
+): number {
+  const priority = (event: CaseTimelineEventRecord) => {
+    if (event.event_type_code === "CASE_RECEIVED") return 0;
+    if (event.event_type_code === "CASE_ASSIGNMENT") return 1;
+    return 2;
+  };
+
+  const priorityDifference = priority(left) - priority(right);
+  if (priorityDifference !== 0) return priorityDifference;
+
+  const timestamp = (event: CaseTimelineEventRecord) => {
+    if (!event.event_date) return Number.POSITIVE_INFINITY;
+    const createdTime = event.created_at?.split("T")[1]?.replace(/Z$/, "");
+    return Date.parse(
+      `${event.event_date}T${event.event_time ?? createdTime ?? "23:59:59"}`,
+    );
+  };
+
+  const timestampDifference = timestamp(left) - timestamp(right);
+  if (timestampDifference !== 0) return timestampDifference;
+
+  return left.case_event_id - right.case_event_id;
+}
 
 export type PersonDetailsRecord = TableRow<"persons"> & {
   person_aliases:
@@ -2237,7 +2265,7 @@ export async function getCaseTimelineEvents(
     "v_case_timeline" as RelationName,
     async () => {
       const supabase = await getSupabaseBrowserClient();
-      return (await supabase
+      const result = (await supabase
         .from("v_case_timeline" as never)
         .select("*")
         .eq("case_id", caseId)
@@ -2248,6 +2276,12 @@ export async function getCaseTimelineEvents(
         data: CaseTimelineEventRecord[] | null;
         error: unknown;
       };
+
+      if (result.data) {
+        result.data.sort(compareCaseTimelineEvents);
+      }
+
+      return result;
     },
     [],
   );
