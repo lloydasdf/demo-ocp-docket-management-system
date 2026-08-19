@@ -1619,7 +1619,10 @@ export function CaseTimeline({
     }
     setIsAddDialogOpen(false);
     await onChanged?.();
-    if (isReassignment) {
+    const recordedWithoutPrerequisite =
+      (isDecisionApproved && !addForm.caseResolutionId) ||
+      (isCourtFiling && !addForm.courtFilingDecisionId);
+    if (isReassignment || recordedWithoutPrerequisite) {
       onUpdateStatus?.();
     }
   };
