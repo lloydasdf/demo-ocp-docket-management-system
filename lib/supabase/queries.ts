@@ -2686,17 +2686,33 @@ export type CourtFilingDecisionRecord = {
 export async function getAvailableCourtFilingDecisions(caseId: number): Promise<SupabaseQueryResult<CourtFilingDecisionRecord[]>> {
   return runSupabaseQuery("getAvailableCourtFilingDecisions", "case_resolution_approval_actions" as RelationName, async () => {
     const supabase = await getSupabaseBrowserClient();
-    const result = await supabase
-      .from("case_resolution_approval_actions" as never)
-      .select("id, approval_id, case_id, charge_text, decision_code, case_resolution_approvals!inner(id, case_resolution_id, date_approved, is_voided, case_resolutions!inner(id, is_voided))" as never)
-      .eq("case_id" as never, caseId)
-      .eq("decision_code" as never, "FOR_FILING")
-      .eq("case_resolution_approvals.is_voided" as never, false)
-      .eq("case_resolution_approvals.case_resolutions.is_voided" as never, false) as unknown as { data: any[] | null; error: unknown };
+    const [result, linkedFilingsResult] = await Promise.all([
+      supabase
+        .from("case_resolution_approval_actions" as never)
+        .select("id, approval_id, case_id, charge_text, decision_code, case_resolution_approvals!inner(id, case_resolution_id, date_approved, is_voided, case_resolutions!inner(id, is_voided))" as never)
+        .eq("case_id" as never, caseId)
+        .eq("decision_code" as never, "FOR_FILING")
+        .eq("case_resolution_approvals.is_voided" as never, false)
+        .eq("case_resolution_approvals.case_resolutions.is_voided" as never, false) as unknown as Promise<{ data: any[] | null; error: unknown }>,
+      supabase
+        .from("case_court_filings" as never)
+        .select("case_resolution_approval_action_id" as never)
+        .eq("case_id" as never, caseId)
+        .eq("is_voided" as never, false)
+        .not("case_resolution_approval_action_id" as never, "is", null) as unknown as Promise<{ data: Array<{ case_resolution_approval_action_id: number | null }> | null; error: unknown }>,
+    ]);
 
     if (result.error) return { data: [], error: result.error };
+    if (linkedFilingsResult.error) return { data: [], error: linkedFilingsResult.error };
+
+    const linkedApprovalActionIds = new Set(
+      (linkedFilingsResult.data ?? [])
+        .map((filing) => Number(filing.case_resolution_approval_action_id))
+        .filter(Number.isFinite),
+    );
 
     const data = (result.data ?? [])
+      .filter((row) => !linkedApprovalActionIds.has(Number(row.id)))
       .map((row) => ({
         id: Number(row.id),
         approval_id: Number(row.approval_id),
