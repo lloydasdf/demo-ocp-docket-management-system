@@ -3485,6 +3485,44 @@ export type DeveloperCaseStageMonitorPage = {
   total: number;
 };
 
+export type AutoUpdateCaseStateFilters = {
+  docketYear: number;
+  docketMonthCode: string;
+  docketTypeId: number;
+};
+
+export type AutoUpdateCaseStateCandidate = {
+  case_id: number;
+  docket_year: number;
+  docket_month_code: string;
+  docket_type_id: number;
+  docket_type_prefix: string;
+  docket_type_name: string;
+  docket_display_number: string;
+  date_received: string;
+  complainant: string | null;
+  respondent: string | null;
+  violations: string | null;
+  current_case_status_id: number | null;
+  current_case_status_code: string | null;
+  current_case_status_label: string | null;
+  current_case_stage_id: number | null;
+  current_case_stage_code: string | null;
+  current_case_stage_label: string | null;
+  computed_case_status_id: number;
+  computed_case_status_code: string;
+  computed_case_status_label: string;
+  computed_case_stage_id: number;
+  computed_case_stage_code: string;
+  computed_case_stage_label: string;
+  will_update_status: boolean;
+  will_update_stage: boolean;
+};
+
+export type AppliedAutoUpdateCaseState = {
+  case_id: number;
+};
+
 export async function getDeveloperCaseStageMonitor(
   filters: DeveloperCaseStageMonitorFilters = {},
 ): Promise<SupabaseQueryResult<DeveloperCaseStageMonitorPage>> {
@@ -3707,6 +3745,58 @@ export async function getDeveloperCaseStageDocketTypes(): Promise<SupabaseQueryR
         .order("docket_type_prefix" as never, { ascending: true })) as unknown as {
         data: DeveloperCaseStageDocketTypeSummary[] | null;
         error: unknown;
+      };
+    },
+    [],
+  );
+}
+
+export async function previewAutoUpdateCaseStates(
+  filters: AutoUpdateCaseStateFilters,
+): Promise<SupabaseQueryResult<AutoUpdateCaseStateCandidate[]>> {
+  return runSupabaseQuery(
+    "previewAutoUpdateCaseStates",
+    "case_private_details" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      const { data, error } = await supabase.rpc(
+        "preview_auto_update_case_states" as never,
+        {
+          p_docket_year: Math.trunc(filters.docketYear),
+          p_docket_month_code: filters.docketMonthCode.trim().toUpperCase(),
+          p_docket_type_id: Math.trunc(filters.docketTypeId),
+        } as never,
+      );
+
+      return {
+        data: (data ?? []) as AutoUpdateCaseStateCandidate[],
+        error,
+      };
+    },
+    [],
+  );
+}
+
+export async function applyAutoUpdateCaseStates(
+  caseIds: number[],
+): Promise<SupabaseQueryResult<AppliedAutoUpdateCaseState[]>> {
+  const normalizedCaseIds = Array.from(
+    new Set(caseIds.filter(Number.isFinite).map((caseId) => Math.trunc(caseId))),
+  );
+
+  return runSupabaseQuery(
+    "applyAutoUpdateCaseStates",
+    "case_private_details" as RelationName,
+    async () => {
+      const supabase = await getSupabaseBrowserClient();
+      const { data, error } = await supabase.rpc(
+        "apply_auto_update_case_states" as never,
+        { p_case_ids: normalizedCaseIds } as never,
+      );
+
+      return {
+        data: (data ?? []) as AppliedAutoUpdateCaseState[],
+        error,
       };
     },
     [],

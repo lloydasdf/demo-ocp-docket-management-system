@@ -15,6 +15,7 @@ import {
   HardDrive,
   ScrollText,
   Workflow,
+  DatabaseZap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -59,6 +60,13 @@ const navigation = [
     href: '/developer/case-stage-monitor',
     icon: Workflow,
     description: 'Monitor case stages and pending workflow items',
+  },
+  {
+    key: 'auto-update-cases-status' as const,
+    name: 'Auto Update Cases Status',
+    href: '/developer/auto-update-cases-status',
+    icon: DatabaseZap,
+    description: 'Preview and synchronize computed case states',
   },
   {
     key: 'audit-logs' as const,

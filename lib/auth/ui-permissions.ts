@@ -1,7 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 
 export type AppRoleCode = 'DEVELOPER' | 'CHIEF' | 'ADMIN' | 'PROSECUTOR' | 'STAFF' | (string & {});
-export type NavigationKey = 'new-docket' | 'cases' | 'clearance-search' | 'user-management' | 'admin-reports' | 'audit-logs' | 'case-stage-monitor' | 'gdrive-configuration';
+export type NavigationKey = 'new-docket' | 'cases' | 'clearance-search' | 'user-management' | 'admin-reports' | 'audit-logs' | 'case-stage-monitor' | 'auto-update-cases-status' | 'gdrive-configuration';
 export type RoleInput = string | string[] | null | undefined;
 
 export type NavigationDefinition = {
@@ -34,14 +34,14 @@ const ROLE_NAVIGATION: Record<string, NavigationKey[]> = {
   CHIEF: ['cases', 'clearance-search', 'user-management'],
   ADMIN: ['new-docket', 'cases', 'clearance-search', 'admin-reports'],
   PROSECUTOR: ['cases'],
-  DEVELOPER: ['new-docket', 'cases', 'clearance-search', 'user-management', 'case-stage-monitor', 'audit-logs', 'gdrive-configuration'],
+  DEVELOPER: ['new-docket', 'cases', 'clearance-search', 'user-management', 'case-stage-monitor', 'auto-update-cases-status', 'audit-logs', 'gdrive-configuration'],
 };
 
 const ROLE_ROUTES: Record<string, string[]> = {
   CHIEF: ['/cases', '/clearance-search', '/user-management'],
   ADMIN: ['/new-docket', '/cases', '/clearance-search', '/admin-reports'],
   PROSECUTOR: ['/cases'],
-  DEVELOPER: ['/new-docket', '/cases', '/clearance-search', '/user-management', '/developer/case-stage-monitor', '/developer/audit-logs', '/developer/gdrive-configuration'],
+  DEVELOPER: ['/new-docket', '/cases', '/clearance-search', '/user-management', '/developer/case-stage-monitor', '/developer/auto-update-cases-status', '/developer/audit-logs', '/developer/gdrive-configuration'],
 };
 
 function getAllowedNavigationKeys(roleInput: RoleInput) {
