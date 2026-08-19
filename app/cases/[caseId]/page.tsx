@@ -722,6 +722,12 @@ function OverviewSectionEditor({ title, description, section, caseId, initialDat
 
   async function save() {
     if (section === "status" && (!String(formData.statusId ?? "").trim() || !String(formData.stageId ?? "").trim() || !String(formData.statusDate ?? "").trim())) { setError("Case Status, Case Stage, and Status Date are required."); return; }
+    if (section === "status" &&
+      String(formData.statusId ?? "") === String(initialData.statusId ?? "") &&
+      String(formData.stageId ?? "") === String(initialData.stageId ?? "")) {
+      onOpenChange(false);
+      return;
+    }
     setIsSaving(true);
     setError(null);
     const result = await editCaseOverviewSection({ caseId, section, reason: reason.trim(), data: formData });
