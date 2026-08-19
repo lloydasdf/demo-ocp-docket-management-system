@@ -57,7 +57,7 @@ import {
   addCourt,
   type CourtFilingDecisionRecord,
   type CourtReferenceRecord,
-  recordCourtFilingEvent,
+  recordCourtFilingEvents,
   recordMotionReceivedEvent,
   recordMotionResolvedEvent,
   getMotionResolutionRecommendations,
@@ -1272,6 +1272,7 @@ export function CaseTimeline({
   const [assignments, setAssignments] = useState<CaseAssignmentRecord[]>([]);
   const [caseResolutions, setCaseResolutions] = useState<CaseResolutionWithActionsRecord[]>([]);
   const [courtFilingDecisions, setCourtFilingDecisions] = useState<CourtFilingDecisionRecord[]>([]);
+  const [hasInitializedCourtFilingDecisions, setHasInitializedCourtFilingDecisions] = useState(false);
   const [courtOptions, setCourtOptions] = useState<CourtReferenceRecord[]>([]);
   const [courtStatusCandidates, setCourtStatusCandidates] = useState<CourtStatusUpdateCandidateRecord[]>([]);
   const [courtStatusStep, setCourtStatusStep] = useState(1);
@@ -1288,7 +1289,7 @@ export function CaseTimeline({
   const [isCourtDialogOpen, setIsCourtDialogOpen] = useState(false);
   const [courtCreateForm, setCourtCreateForm] = useState({ name: "", error: "" });
   const initialManilaDateTime = getManilaDateTimeInputValues();
-  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", caseMotionId: "", motionResolutionId: "", filedByCode: "", assignedProsecutorId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[], petitionStatus: "", petitionUpdateStep: 1, petitionUpdatePetitionId: "", petitionUpdateCaseStatus: "", petitionSelectedCaseStatusId: "", petitionSelectedCaseStageId: "", petitionDetails: [] as MotionDetailRow[], customStep: 1, customUpdateCaseStatus: "", customSelectedCaseStatusId: "", customSelectedCaseStageId: "", customDetails: [] as MotionDetailRow[] });
+  const [addForm, setAddForm] = useState({ eventTypeCode: "", eventDate: initialManilaDateTime.date, eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null as number | null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionIds: [] as string[], courtFilingCharges: {} as Record<string, string>, courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNumbers: [{ criminal_case_no: "" }] as CriminalCaseNumberRow[], motionTitle: "", caseMotionId: "", motionResolutionId: "", filedByCode: "", assignedProsecutorId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[], petitionStatus: "", petitionUpdateStep: 1, petitionUpdatePetitionId: "", petitionUpdateCaseStatus: "", petitionSelectedCaseStatusId: "", petitionSelectedCaseStageId: "", petitionDetails: [] as MotionDetailRow[], customStep: 1, customUpdateCaseStatus: "", customSelectedCaseStatusId: "", customSelectedCaseStageId: "", customDetails: [] as MotionDetailRow[] });
   const [manilaNow, setManilaNow] = useState(() => new Date());
   const [isAddDateTimeDirty, setIsAddDateTimeDirty] = useState(false);
   const [editForm, setEditForm] = useState({ eventDate: "", eventTime: "", title: "", description: "", remarks: "", reason: "", editReason: "", prosecutorId: "", staffId: "", assignedProsecutorId: "", filedByCode: "", petitionStatus: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", criminalCaseNumbers: [{ criminal_case_no: "" }] as CriminalCaseNumberRow[], courtStatuses: [] as CourtStatusRow[], approvedFilingDecision: "", approvedByProsecutorId: "", motionTitle: "", additionalDetails: [] as MotionDetailRow[] });
@@ -1369,6 +1370,7 @@ export function CaseTimeline({
     setEventTypesError(null);
     setCaseResolutions([]);
     setCourtFilingDecisions([]);
+    setHasInitializedCourtFilingDecisions(false);
     setCourtStatusCandidates([]);
     setMotionResolutionApprovalCandidates([]);
     setCourtStatusStep(1);
@@ -1377,7 +1379,7 @@ export function CaseTimeline({
     const currentManilaDateTime = getManilaDateTimeInputValues();
     setManilaNow(new Date());
     setIsAddDateTimeDirty(false);
-    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: currentManilaDateTime.date, eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionId: "", courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNo: "", motionTitle: "", caseMotionId: "", motionResolutionId: "", filedByCode: "", assignedProsecutorId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[], petitionStatus: "", petitionUpdateStep: 1, petitionUpdatePetitionId: "", petitionUpdateCaseStatus: "", petitionSelectedCaseStatusId: "", petitionSelectedCaseStageId: "", petitionDetails: [] as MotionDetailRow[], customStep: 1, customUpdateCaseStatus: "", customSelectedCaseStatusId: "", customSelectedCaseStageId: "", customDetails: [] as MotionDetailRow[] });
+    setAddForm({ eventTypeCode: addableEventTypes(eventTypes)[0]?.code ?? "", eventDate: currentManilaDateTime.date, eventTime: "", title: "", description: "", prosecutorId: "", staffId: "", reason: "", recommendationCode: "", caseResolutionId: null, chargesForFiling: [emptyResolutionCharge()], chargesForDismissal: [emptyResolutionCharge()], approvalActions: [emptyApprovalAction()], courtFilingDecisionIds: [] as string[], courtFilingCharges: {} as Record<string, string>, courtId: null as number | null, courtName: "", courtBranch: "", chargeFiled: "", informationCount: "", criminalCaseNumbers: [{ criminal_case_no: "" }] as CriminalCaseNumberRow[], motionTitle: "", caseMotionId: "", motionResolutionId: "", filedByCode: "", assignedProsecutorId: "", motionRecommendationId: "", motionDecisionStep: 1, motionApprovalDecisionId: "", motionApprovedByProsecutorId: "", motionUpdateCaseStatus: "", motionSelectedCaseStatusId: "", motionSelectedCaseStageId: "", motionDetails: [] as MotionDetailRow[], petitionStatus: "", petitionUpdateStep: 1, petitionUpdatePetitionId: "", petitionUpdateCaseStatus: "", petitionSelectedCaseStatusId: "", petitionSelectedCaseStageId: "", petitionDetails: [] as MotionDetailRow[], customStep: 1, customUpdateCaseStatus: "", customSelectedCaseStatusId: "", customSelectedCaseStageId: "", customDetails: [] as MotionDetailRow[] });
     setIsAddDialogOpen(true);
 
     if (eventTypes.length === 0) {
@@ -1472,7 +1474,7 @@ export function CaseTimeline({
     if ((isAssignment || isReassignment) && !addForm.prosecutorId) return;
     if (isResolved && !addForm.recommendationCode) return;
     if (isDecisionApproved && (!addForm.prosecutorId || !addForm.approvalActions.some((action) => action.chargeText.trim()))) return;
-    if (isCourtFiling && (!addForm.courtName.trim() || !addForm.chargeFiled.trim())) return;
+    if (isCourtFiling && (!addForm.courtName.trim() || (addForm.courtFilingDecisionIds.length ? addForm.courtFilingDecisionIds.some((id) => !addForm.courtFilingCharges[id]?.trim()) : !addForm.chargeFiled.trim()))) return;
     if (isCourtStatusUpdate && courtStatusStep !== 3) return;
     if (isMotionReceived && (!addForm.motionTitle.trim() || !addForm.filedByCode)) return;
     if (isMotionResolved && !addForm.motionRecommendationId) return;
@@ -1521,17 +1523,16 @@ export function CaseTimeline({
               remarks: addForm.description,
             })
             : isCourtFiling
-              ? await recordCourtFilingEvent({
+              ? await recordCourtFilingEvents({
                 caseId,
-                caseResolutionApprovalActionId: addForm.courtFilingDecisionId ? Number(addForm.courtFilingDecisionId) : null,
+                filings: addForm.courtFilingDecisionIds.length ? addForm.courtFilingDecisionIds.map((id) => ({ caseResolutionApprovalActionId: Number(id), chargeFiled: addForm.courtFilingCharges[id] })) : [{ caseResolutionApprovalActionId: null, chargeFiled: addForm.chargeFiled }],
                 courtId: addForm.courtId,
                 courtName: addForm.courtName,
                 courtBranch: addForm.courtBranch,
-                chargeFiled: addForm.chargeFiled,
                 dateFiled: addForm.eventDate,
                 timeFiled: addForm.eventTime || null,
                 informationCount: addForm.informationCount ? Number(addForm.informationCount) : null,
-                criminalCaseNo: addForm.criminalCaseNo,
+                criminalCaseNumbers: addForm.criminalCaseNumbers.map((row) => row.criminal_case_no.trim()).filter(Boolean),
                 remarks: addForm.description,
               })
               : isCourtStatusUpdate
@@ -1621,7 +1622,7 @@ export function CaseTimeline({
     await onChanged?.();
     const recordedWithoutPrerequisite =
       (isDecisionApproved && !addForm.caseResolutionId) ||
-      (isCourtFiling && !addForm.courtFilingDecisionId);
+      (isCourtFiling && addForm.courtFilingDecisionIds.length === 0);
     if (isReassignment || recordedWithoutPrerequisite) {
       onUpdateStatus?.();
     }
@@ -1915,16 +1916,14 @@ export function CaseTimeline({
   }, [addForm.caseResolutionId, addForm.eventTypeCode, caseResolutions]);
 
   useEffect(() => {
-    if (addForm.eventTypeCode !== "COURT_FILING" || courtFilingDecisions.length === 0) return;
-    if (courtFilingDecisions.some((decision) => String(decision.id) === addForm.courtFilingDecisionId)) return;
-
-    const firstDecision = courtFilingDecisions[0];
+    if (addForm.eventTypeCode !== "COURT_FILING" || courtFilingDecisions.length === 0 || hasInitializedCourtFilingDecisions) return;
     setAddForm((form) => ({
       ...form,
-      courtFilingDecisionId: String(firstDecision.id),
-      chargeFiled: firstDecision.charge_text,
+      courtFilingDecisionIds: courtFilingDecisions.map((decision) => String(decision.id)),
+      courtFilingCharges: Object.fromEntries(courtFilingDecisions.map((decision) => [String(decision.id), decision.charge_text])),
     }));
-  }, [addForm.courtFilingDecisionId, addForm.eventTypeCode, courtFilingDecisions]);
+    setHasInitializedCourtFilingDecisions(true);
+  }, [addForm.eventTypeCode, courtFilingDecisions, hasInitializedCourtFilingDecisions]);
 
 
   const handleAddRecommendationSave = async () => {
@@ -2176,12 +2175,12 @@ export function CaseTimeline({
               </>
             ) : isAddingCourtFiling ? (
               <>
-                {courtFilingDecisions.length > 0 ? <div className="space-y-2"><Label htmlFor="add-court-filing-decision">Approved Filing Decision</Label><select id="add-court-filing-decision" className={`border-input w-full rounded-md border bg-transparent px-3 py-2 text-sm ${courtFilingDecisions.length > 1 ? "" : "h-9"}`} size={courtFilingDecisions.length > 1 ? courtFilingDecisions.length : undefined} value={addForm.courtFilingDecisionId} onChange={(e) => { const decision = courtFilingDecisions.find((item) => item.id === Number(e.target.value)); setAddForm((form) => ({ ...form, courtFilingDecisionId: e.target.value, chargeFiled: decision?.charge_text ?? form.chargeFiled })); }}>{courtFilingDecisions.map((decision) => <option key={decision.id} value={decision.id}>{decision.charge_text} • Approved {formatDate(decision.date_approved)}</option>)}</select></div> : null}
+                {courtFilingDecisions.length > 0 ? <div className="space-y-2"><div className="flex items-center justify-between"><Label>Approved Filing Decisions</Label><span className="text-xs text-muted-foreground">Selected {addForm.courtFilingDecisionIds.length} of {courtFilingDecisions.length}</span></div><div className="space-y-2 rounded-md border p-3">{courtFilingDecisions.map((decision) => { const id = String(decision.id); const checked = addForm.courtFilingDecisionIds.includes(id); return <label key={decision.id} className="flex items-start gap-2 text-sm"><Checkbox checked={checked} onCheckedChange={(value) => setAddForm((form) => ({ ...form, courtFilingDecisionIds: value === true ? [...form.courtFilingDecisionIds, id] : form.courtFilingDecisionIds.filter((item) => item !== id), courtFilingCharges: { ...form.courtFilingCharges, [id]: form.courtFilingCharges[id] ?? decision.charge_text } }))} /><span>{decision.charge_text} • Approved {formatDate(decision.date_approved)}</span></label>; })}</div></div> : null}
                 <div className="space-y-2"><Label htmlFor="add-court">Court</Label><div className="flex rounded-md shadow-sm"><Input id="add-court" value={addForm.courtName} className="rounded-r-none" placeholder="Search or type new court" onFocus={() => setIsCourtPickerOpen(true)} onChange={(e) => { setIsCourtPickerOpen(true); setAddForm((form) => ({ ...form, courtName: e.target.value, courtId: null })); }} /><Button type="button" variant="outline" className="rounded-l-none border-l-0 px-3" aria-label="Show courts" onClick={() => setIsCourtPickerOpen((open) => !open)}>▼</Button></div>{isCourtPickerOpen ? <div className="max-h-44 overflow-y-auto rounded-md border bg-popover p-1 shadow-md">{filteredCourts.length === 0 ? <p className="px-2 py-1 text-xs text-muted-foreground">No matching courts. You can type a manual court name or add it to the list.</p> : null}<button type="button" className="block w-full rounded-sm px-2 py-1 text-left text-sm font-medium text-primary hover:bg-accent hover:text-accent-foreground" onClick={openAddCourtDialog}>+ Add Court</button>{filteredCourts.map((court) => <button key={court.id} type="button" className="block w-full rounded-sm px-2 py-1 text-left text-sm hover:bg-accent hover:text-accent-foreground" onClick={() => { setAddForm((form) => ({ ...form, courtId: Number(court.id), courtName: court.name })); setIsCourtPickerOpen(false); }}>{court.name}{court.court_type ? <span className="text-muted-foreground"> • {court.court_type}</span> : null}</button>)}{addForm.courtName.trim() && !hasExactCourtMatch ? <button type="button" className="block w-full rounded-sm px-2 py-1 text-left text-sm font-medium text-primary hover:bg-accent hover:text-accent-foreground" onClick={() => setIsCourtPickerOpen(false)}>Use “{addForm.courtName.trim()}” as new court</button> : null}</div> : null}</div>
                 <div className="space-y-2"><Label htmlFor="add-court-branch">Court Branch</Label><Input id="add-court-branch" value={addForm.courtBranch} onChange={(e) => setAddForm((form) => ({ ...form, courtBranch: e.target.value }))} /></div>
-                <div className="space-y-2"><Label htmlFor="add-charge-filed">Charge Filed</Label><Input id="add-charge-filed" value={addForm.chargeFiled} onChange={(e) => setAddForm((form) => ({ ...form, chargeFiled: e.target.value }))} /></div>
+                {addForm.courtFilingDecisionIds.length ? <div className="space-y-3">{addForm.courtFilingDecisionIds.map((id, index) => <div key={id} className="space-y-1"><Label htmlFor={`add-charge-filed-${id}`}>Charge Filed {addForm.courtFilingDecisionIds.length > 1 ? index + 1 : ""}</Label><Input id={`add-charge-filed-${id}`} value={addForm.courtFilingCharges[id] ?? ""} onChange={(e) => setAddForm((form) => ({ ...form, courtFilingCharges: { ...form.courtFilingCharges, [id]: e.target.value } }))} /></div>)}</div> : <div className="space-y-2"><Label htmlFor="add-charge-filed">Charge Filed</Label><Input id="add-charge-filed" value={addForm.chargeFiled} onChange={(e) => setAddForm((form) => ({ ...form, chargeFiled: e.target.value }))} /></div>}
                 <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-date-filed">Date Filed</Label><Input id="add-date-filed" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div><div className="space-y-1"><Label htmlFor="add-time-filed">Time Filed</Label><Input id="add-time-filed" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div></div>
-                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-information-count">Information Count</Label><Input id="add-information-count" type="number" min="0" value={addForm.informationCount} onChange={(e) => setAddForm((form) => ({ ...form, informationCount: e.target.value }))} /></div><div className="space-y-1"><Label htmlFor="add-criminal-case-no">Criminal Case No.</Label><Input id="add-criminal-case-no" value={addForm.criminalCaseNo} onChange={(e) => setAddForm((form) => ({ ...form, criminalCaseNo: e.target.value }))} /></div></div>
+                <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-information-count">Information Count</Label><Input id="add-information-count" type="number" min="0" value={addForm.informationCount} onChange={(e) => setAddForm((form) => ({ ...form, informationCount: e.target.value }))} /></div><div className="space-y-1"><Label>Criminal Case No.</Label>{addForm.criminalCaseNumbers.map((row, index) => <div key={index} className="mt-2 flex gap-2"><Input aria-label={`Criminal Case Number ${index + 1}`} value={row.criminal_case_no} onChange={(e) => setAddForm((form) => ({ ...form, criminalCaseNumbers: form.criminalCaseNumbers.map((item, itemIndex) => itemIndex === index ? { criminal_case_no: e.target.value } : item) }))} /><Button type="button" size="sm" variant="outline" className="shrink-0" onClick={() => setAddForm((form) => ({ ...form, criminalCaseNumbers: index === 0 ? [...form.criminalCaseNumbers, { criminal_case_no: "" }] : form.criminalCaseNumbers.filter((_, itemIndex) => itemIndex !== index) }))}>{index === 0 ? "Add" : "Remove"}</Button></div>)}</div></div>
                 <div className="space-y-2"><Label htmlFor="add-court-filing-remarks">Remarks</Label><Textarea id="add-court-filing-remarks" value={addForm.description} onChange={(e) => setAddForm((form) => ({ ...form, description: e.target.value }))} /></div>
               </>
             ) : isAddingCourtStatusUpdate ? (
@@ -2289,7 +2288,7 @@ export function CaseTimeline({
           </div>
           <DialogFooter className="border-t pt-3">
             <Button type="button" variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
-            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : isAddingCourtFiling ? !addForm.courtName.trim() || !addForm.chargeFiled.trim() : isAddingCourtStatusUpdate ? courtStatusStep !== 3 : isAddingMotionReceived ? !addForm.motionTitle.trim() || !addForm.filedByCode : isAddingMotionResolved ? !addForm.motionRecommendationId : isAddingMotionDecisionApproved ? addForm.motionDecisionStep !== 5 || (motionResolutionApprovalCandidates.length > 0 ? !addForm.motionResolutionId : !addForm.motionTitle.trim()) || !addForm.motionApprovalDecisionId || !addForm.motionApprovedByProsecutorId || !addForm.motionUpdateCaseStatus || (addForm.motionUpdateCaseStatus === "YES" && (!addForm.motionSelectedCaseStatusId || !addForm.motionSelectedCaseStageId)) : isAddingPetitionForReview ? !addForm.filedByCode : isAddingPetitionForReviewUpdate ? addForm.petitionUpdateStep !== 3 || !addForm.petitionStatus.trim() || !addForm.petitionUpdateCaseStatus || (addForm.petitionUpdateCaseStatus === "YES" && (!addForm.petitionSelectedCaseStatusId || !addForm.petitionSelectedCaseStageId)) : isAddingCustomEvent ? addForm.customStep !== 3 || !addForm.title.trim() || !addForm.eventTime || !addForm.customUpdateCaseStatus || (addForm.customUpdateCaseStatus === "YES" && (!addForm.customSelectedCaseStatusId || !addForm.customSelectedCaseStageId)) : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : isAddingCourtFiling ? "Record Court Filing" : isAddingCourtStatusUpdate ? "Save Court Status Update" : isAddingMotionReceived ? "Record Motion Received" : isAddingMotionResolved ? "Record Motion Resolved" : isAddingMotionDecisionApproved ? "Save Motion Decision Approval" : isAddingPetitionForReview ? "Record Petition for Review" : isAddingPetitionForReviewUpdate ? "Save Petition Update" : isAddingCustomEvent ? "Save Custom Event" : "Add event"}</Button>
+            <Button type="button" onClick={handleAddSave} disabled={isSaving || !addForm.eventTypeCode || !addForm.eventDate || (isAddingAssignmentLike ? !addForm.prosecutorId : isAddingResolved ? !addForm.recommendationCode : isAddingDecisionApproved ? !addForm.prosecutorId || !addForm.approvalActions.some((action) => action.chargeText.trim()) : isAddingCourtFiling ? !addForm.courtName.trim() || (addForm.courtFilingDecisionIds.length ? addForm.courtFilingDecisionIds.some((id) => !addForm.courtFilingCharges[id]?.trim()) : !addForm.chargeFiled.trim()) : isAddingCourtStatusUpdate ? courtStatusStep !== 3 : isAddingMotionReceived ? !addForm.motionTitle.trim() || !addForm.filedByCode : isAddingMotionResolved ? !addForm.motionRecommendationId : isAddingMotionDecisionApproved ? addForm.motionDecisionStep !== 5 || (motionResolutionApprovalCandidates.length > 0 ? !addForm.motionResolutionId : !addForm.motionTitle.trim()) || !addForm.motionApprovalDecisionId || !addForm.motionApprovedByProsecutorId || !addForm.motionUpdateCaseStatus || (addForm.motionUpdateCaseStatus === "YES" && (!addForm.motionSelectedCaseStatusId || !addForm.motionSelectedCaseStageId)) : isAddingPetitionForReview ? !addForm.filedByCode : isAddingPetitionForReviewUpdate ? addForm.petitionUpdateStep !== 3 || !addForm.petitionStatus.trim() || !addForm.petitionUpdateCaseStatus || (addForm.petitionUpdateCaseStatus === "YES" && (!addForm.petitionSelectedCaseStatusId || !addForm.petitionSelectedCaseStageId)) : isAddingCustomEvent ? addForm.customStep !== 3 || !addForm.title.trim() || !addForm.eventTime || !addForm.customUpdateCaseStatus || (addForm.customUpdateCaseStatus === "YES" && (!addForm.customSelectedCaseStatusId || !addForm.customSelectedCaseStageId)) : !addForm.title.trim())}>{isSaving ? "Saving..." : isAddingReassignment ? "Confirm Reassignment" : isAddingAssignment ? "Confirm Assignment" : isAddingResolved ? "Resolve Case" : isAddingDecisionApproved ? "Approve Decision" : isAddingCourtFiling ? "Record Court Filing" : isAddingCourtStatusUpdate ? "Save Court Status Update" : isAddingMotionReceived ? "Record Motion Received" : isAddingMotionResolved ? "Record Motion Resolved" : isAddingMotionDecisionApproved ? "Save Motion Decision Approval" : isAddingPetitionForReview ? "Record Petition for Review" : isAddingPetitionForReviewUpdate ? "Save Petition Update" : isAddingCustomEvent ? "Save Custom Event" : "Add event"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

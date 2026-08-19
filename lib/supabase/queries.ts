@@ -2811,6 +2811,27 @@ export async function recordCourtFilingEvent(input: RecordCourtFilingEventInput)
   }
 }
 
+export interface RecordCourtFilingEventsInput extends Omit<RecordCourtFilingEventInput, "caseResolutionApprovalActionId" | "chargeFiled" | "criminalCaseNo"> {
+  filings: Array<{ caseResolutionApprovalActionId: number | null; chargeFiled: string }>;
+  criminalCaseNumbers: string[];
+}
+
+export async function recordCourtFilingEvents(input: RecordCourtFilingEventsInput): Promise<SupabaseQueryResult<number>> {
+  try {
+    const currentUserQuery = await getCurrentDatabaseUserRecord();
+    if (currentUserQuery.error || !currentUserQuery.data) return fail(toQueryError(currentUserQuery.error ?? new Error("No active user available."), "recordCourtFilingEvents", "users"));
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("record_court_filing_events_batch" as never, {
+      p_case_id: input.caseId, p_filings: input.filings.map((filing) => ({ case_resolution_approval_action_id: filing.caseResolutionApprovalActionId, charge_filed: filing.chargeFiled.trim() })),
+      p_court_id: input.courtId ?? null, p_court_name: input.courtName.trim(), p_court_branch: input.courtBranch?.trim() || null,
+      p_date_filed: input.dateFiled, p_time_filed: input.timeFiled?.trim() || null, p_information_count: input.informationCount ?? null,
+      p_criminal_case_numbers: input.criminalCaseNumbers, p_remarks: input.remarks?.trim() || null, p_user_id: currentUserQuery.data.id,
+    } as never);
+    if (error) return fail(toQueryError(error, "recordCourtFilingEvents", "case_court_filings" as RelationName));
+    return ok(Number(data));
+  } catch (error) { return fail(toQueryError(error, "recordCourtFilingEvents", "case_court_filings" as RelationName)); }
+}
+
 
 export type MotionDetailInput = { detail: string; value: string };
 
