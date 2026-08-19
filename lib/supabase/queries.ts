@@ -2710,6 +2710,28 @@ export async function getAvailableCourtFilingDecisions(caseId: number): Promise<
   }, []);
 }
 
+export async function getCourtFilingLinkCorrectionCandidates(caseEventId: number): Promise<SupabaseQueryResult<CourtFilingDecisionRecord[]>> {
+  try {
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("get_court_filing_link_correction_candidates" as never, { p_case_event_id: caseEventId } as never);
+    if (error) return fail(toQueryError(error, "getCourtFilingLinkCorrectionCandidates", "case_court_filings" as RelationName));
+    return ok((data ?? []) as CourtFilingDecisionRecord[]);
+  } catch (error) {
+    return fail(toQueryError(error, "getCourtFilingLinkCorrectionCandidates", "case_court_filings" as RelationName));
+  }
+}
+
+export async function correctCourtFilingApprovalLink(caseEventId: number, approvalActionId: number): Promise<SupabaseQueryResult<number>> {
+  try {
+    const supabase = await getSupabaseBrowserClient();
+    const { data, error } = await supabase.rpc("correct_court_filing_approval_link" as never, { p_case_event_id: caseEventId, p_case_resolution_approval_action_id: approvalActionId } as never);
+    if (error) return fail(toQueryError(error, "correctCourtFilingApprovalLink", "case_court_filings" as RelationName));
+    return ok(Number(data));
+  } catch (error) {
+    return fail(toQueryError(error, "correctCourtFilingApprovalLink", "case_court_filings" as RelationName));
+  }
+}
+
 export interface RecordCourtFilingEventInput {
   caseId: number;
   caseResolutionApprovalActionId?: number | null;

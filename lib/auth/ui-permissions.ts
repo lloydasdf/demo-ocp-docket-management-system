@@ -86,3 +86,7 @@ export function canViewCaseAging(role: RoleInput) {
   const roles = normalizeRoleCodes(role);
   return roles.includes('ADMIN') || roles.includes('DEVELOPER') || roles.includes('CHIEF');
 }
+
+export function canCorrectCourtFilingLinks(role: RoleInput) {
+  return normalizeRoleCodes(role).includes('DEVELOPER');
+}

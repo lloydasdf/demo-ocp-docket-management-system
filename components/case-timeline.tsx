@@ -82,6 +82,8 @@ import {
   editCourtFilingEvent,
   getCaseEventTypes,
   voidCaseEvent,
+  correctCourtFilingApprovalLink,
+  getCourtFilingLinkCorrectionCandidates,
 } from "@/lib/supabase/queries";
 import { formatManilaClock, getManilaDateTimeInputValues } from "@/lib/philippine-time";
 import type { TableRow } from "@/lib/supabase/types";
@@ -95,6 +97,7 @@ export type CaseTimelineProps = {
   onChanged?: () => void | Promise<void>;
   onUpdateStatus?: () => void;
   canShowCaseManagementActions?: boolean;
+  canCorrectCourtFilingLinks?: boolean;
 };
 
 function toDateInputValue(value: string | null | undefined) {
@@ -1251,10 +1254,14 @@ export function CaseTimeline({
   onUpdateStatus,
   petitionsForReview = [],
   canShowCaseManagementActions = true,
+  canCorrectCourtFilingLinks = false,
 }: CaseTimelineProps) {
   const [showVoided, setShowVoided] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CaseTimelineEventRecord | null>(null);
   const [voidingEvent, setVoidingEvent] = useState<CaseTimelineEventRecord | null>(null);
+  const [correctingFilingEvent, setCorrectingFilingEvent] = useState<CaseTimelineEventRecord | null>(null);
+  const [correctionCandidates, setCorrectionCandidates] = useState<CourtFilingDecisionRecord[]>([]);
+  const [correctionActionId, setCorrectionActionId] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [eventTypes, setEventTypes] = useState<CaseEventTypeReference[]>([]);
   const [eventTypesError, setEventTypesError] = useState<string | null>(null);
@@ -1677,6 +1684,28 @@ export function CaseTimeline({
     setVoidingEvent(event);
   };
 
+  const openFilingCorrectionDialog = async (event: CaseTimelineEventRecord) => {
+    setActionError(null);
+    setCorrectionCandidates([]);
+    setCorrectionActionId("");
+    setCorrectingFilingEvent(event);
+    const result = await getCourtFilingLinkCorrectionCandidates(event.case_event_id);
+    if (result.error) return setActionError(result.error.message);
+    setCorrectionCandidates(result.data);
+    if (result.data.length === 1) setCorrectionActionId(String(result.data[0].id));
+  };
+
+  const handleFilingCorrectionSave = async () => {
+    if (!correctingFilingEvent || !correctionActionId) return;
+    setIsSaving(true);
+    setActionError(null);
+    const result = await correctCourtFilingApprovalLink(correctingFilingEvent.case_event_id, Number(correctionActionId));
+    setIsSaving(false);
+    if (result.error) return setActionError(result.error.message);
+    setCorrectingFilingEvent(null);
+    await onChanged?.();
+  };
+
   const handleEditSave = async () => {
     if (!editingEvent || !editForm.eventDate) return;
     const code = editingEvent.event_type_code ?? "LEGACY_EVENT";
@@ -2062,6 +2091,7 @@ export function CaseTimeline({
                               <div className="flex gap-2 border-t pt-3">
                                 {(!EDIT_WORKFLOW_TEMPORARILY_DISABLED || event.event_type_code === "CASE_RECEIVED" || event.event_type_code === "COURT_FILING" || event.event_type_code === "CASE_ASSIGNMENT" || event.event_type_code === "CASE_REASSIGNMENT") ? <Button type="button" variant="outline" size="sm" onClick={() => openEditDialog(event)}>Edit</Button> : null}
                                 {event.event_type_code !== "CASE_RECEIVED" ? <Button type="button" variant="destructive" size="sm" onClick={() => openVoidDialog(event)}>Void</Button> : null}
+                                {canCorrectCourtFilingLinks && isCourtFilingEvent(event) && !stringDetail((event.details_jsonb as Record<string, unknown> | null)?.case_resolution_approval_action_id) ? <Button type="button" variant="secondary" size="sm" onClick={() => openFilingCorrectionDialog(event)}>Link filing decision</Button> : null}
                               </div>
                             ) : null}
                           </AccordionContent>
@@ -2379,6 +2409,22 @@ export function CaseTimeline({
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setEditingEvent(null)}>Cancel</Button>
             <Button type="button" onClick={handleEditSave} disabled={isSaving || !editForm.eventDate || ((editingEvent?.event_type_code === "CASE_ASSIGNMENT" || editingEvent?.event_type_code === "CASE_REASSIGNMENT") && !editForm.prosecutorId)}>{isSaving ? "Saving..." : editingEvent?.event_type_code === "CASE_REASSIGNMENT" ? "Confirm Reassignment Update" : editingEvent?.event_type_code === "CASE_ASSIGNMENT" ? "Confirm Assignment Update" : "Save Corrections"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={Boolean(correctingFilingEvent)} onOpenChange={(open) => !open && setCorrectingFilingEvent(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Link approved filing decision</DialogTitle>
+            <DialogDescription>Developer correction only. This keeps the existing Court Filing event and assigns it to an unused active FOR_FILING action from this case.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {actionError ? <p className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-sm text-destructive">{actionError}</p> : null}
+            {correctionCandidates.length ? <div className="space-y-2"><Label htmlFor="filing-correction-action">Approved FOR_FILING action</Label><select id="filing-correction-action" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={correctionActionId} onChange={(event) => setCorrectionActionId(event.target.value)}><option value="">Select filing decision</option>{correctionCandidates.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.charge_text} • approved {formatDate(candidate.date_approved)}</option>)}</select></div> : !actionError ? <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">No unused active FOR_FILING action is available for this case.</p> : null}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setCorrectingFilingEvent(null)}>Cancel</Button>
+            <Button type="button" onClick={handleFilingCorrectionSave} disabled={isSaving || !correctionActionId}>{isSaving ? "Linking..." : "Link decision"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

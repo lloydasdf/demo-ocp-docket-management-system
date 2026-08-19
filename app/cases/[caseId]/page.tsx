@@ -9,7 +9,7 @@ import { ChevronDown, ExternalLink, Printer } from "lucide-react";
 import { CaseTimeline } from "@/components/case-timeline";
 import { CaseDriveAttachments } from "@/components/case-drive-attachments";
 import { useCurrentUserRole } from "@/hooks/use-current-user-role";
-import { canShowCaseManagementActions as canShowCaseManagementActionsForRole, canViewLinkedDocket } from "@/lib/auth/ui-permissions";
+import { canCorrectCourtFilingLinks, canShowCaseManagementActions as canShowCaseManagementActionsForRole, canViewLinkedDocket } from "@/lib/auth/ui-permissions";
 import { StageBadge, StatusBadge } from "@/components/status-badge";
 import { Sidebar } from "@/components/sidebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -2013,6 +2013,7 @@ export default function CaseDetailsPage() {
   }, [roleError]);
 
   const canShowCaseManagementActions = !isRoleLoading && !roleError && canShowCaseManagementActionsForRole(currentRoles);
+  const canCorrectFilingLinks = !isRoleLoading && !roleError && canCorrectCourtFilingLinks(currentRoles);
   const canCreateLinkedDocket = !isRoleLoading && !roleError && canViewLinkedDocket(currentRoles) && data?.details?.docket_type_prefix?.toUpperCase() === "PE" && !linkedDocketNumber;
 
   const activeSectionEditor =
@@ -2445,6 +2446,7 @@ export default function CaseDetailsPage() {
                     onChanged={loadCase}
                     onUpdateStatus={() => openOverviewEditor("status")}
                     canShowCaseManagementActions={canShowCaseManagementActions}
+                    canCorrectCourtFilingLinks={canCorrectFilingLinks}
                     petitionsForReview={data.petitionsForReview}
                   />
                 </div>
