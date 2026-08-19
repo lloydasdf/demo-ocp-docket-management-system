@@ -363,6 +363,8 @@ function getCaseColumnFilterValue(
       return assignedProsecutor(caseDetail) ?? '—';
     case 'currentStatus':
       return currentStatusLabel(caseDetail) ?? '—';
+    case 'currentStage':
+      return currentStageLabel(caseDetail) ?? '—';
     case 'dateApproved':
       return formatDate(caseDetail.date_approved);
     case 'dateReceived':
