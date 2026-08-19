@@ -1225,31 +1225,40 @@ export type CaseTimelineEventRecord = {
   created_at: string | null;
 };
 
+function getCaseTimelineEventTimestamp(event: CaseTimelineEventRecord): number {
+  if (!event.event_date) return Number.POSITIVE_INFINITY;
+  const createdTime = event.created_at?.split("T")[1]?.replace(/Z$/, "");
+  return Date.parse(
+    `${event.event_date}T${event.event_time ?? createdTime ?? "23:59:59"}`,
+  );
+}
+
+function compareCaseTimelineEventsChronologically(
+  left: CaseTimelineEventRecord,
+  right: CaseTimelineEventRecord,
+): number {
+  const timestampDifference =
+    getCaseTimelineEventTimestamp(left) - getCaseTimelineEventTimestamp(right);
+  if (timestampDifference !== 0) return timestampDifference;
+
+  return left.case_event_id - right.case_event_id;
+}
+
 function compareCaseTimelineEvents(
+  initialAssignmentId: number | undefined,
   left: CaseTimelineEventRecord,
   right: CaseTimelineEventRecord,
 ): number {
   const priority = (event: CaseTimelineEventRecord) => {
     if (event.event_type_code === "CASE_RECEIVED") return 0;
-    if (event.event_type_code === "CASE_ASSIGNMENT") return 1;
+    if (event.case_event_id === initialAssignmentId) return 1;
     return 2;
   };
 
   const priorityDifference = priority(left) - priority(right);
   if (priorityDifference !== 0) return priorityDifference;
 
-  const timestamp = (event: CaseTimelineEventRecord) => {
-    if (!event.event_date) return Number.POSITIVE_INFINITY;
-    const createdTime = event.created_at?.split("T")[1]?.replace(/Z$/, "");
-    return Date.parse(
-      `${event.event_date}T${event.event_time ?? createdTime ?? "23:59:59"}`,
-    );
-  };
-
-  const timestampDifference = timestamp(left) - timestamp(right);
-  if (timestampDifference !== 0) return timestampDifference;
-
-  return left.case_event_id - right.case_event_id;
+  return compareCaseTimelineEventsChronologically(left, right);
 }
 
 export type PersonDetailsRecord = TableRow<"persons"> & {
@@ -2278,7 +2287,13 @@ export async function getCaseTimelineEvents(
       };
 
       if (result.data) {
-        result.data.sort(compareCaseTimelineEvents);
+        const initialAssignmentId = result.data
+          .filter((event) => event.event_type_code === "CASE_ASSIGNMENT")
+          .sort(compareCaseTimelineEventsChronologically)[0]?.case_event_id;
+
+        result.data.sort((left, right) =>
+          compareCaseTimelineEvents(initialAssignmentId, left, right),
+        );
       }
 
       return result;
