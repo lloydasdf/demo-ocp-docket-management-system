@@ -1862,6 +1862,18 @@ export function CaseTimeline({
     setAddForm((form) => ({ ...form, petitionUpdatePetitionId: String(petition.id), petitionStatus: petition.petition_status ?? "", eventDate: toDateInputValue(petition.status_date ?? petition.date_filed ?? petition.date_received), description: petition.remarks ?? "", petitionDetails: petition.additional_details_jsonb ?? [] }));
   }, [addForm.eventTypeCode, addForm.petitionUpdatePetitionId, activePetitionsForReview]);
 
+  useEffect(() => {
+    if (addForm.eventTypeCode !== "COURT_FILING" || courtFilingDecisions.length === 0) return;
+    if (courtFilingDecisions.some((decision) => String(decision.id) === addForm.courtFilingDecisionId)) return;
+
+    const firstDecision = courtFilingDecisions[0];
+    setAddForm((form) => ({
+      ...form,
+      courtFilingDecisionId: String(firstDecision.id),
+      chargeFiled: firstDecision.charge_text,
+    }));
+  }, [addForm.courtFilingDecisionId, addForm.eventTypeCode, courtFilingDecisions]);
+
 
   const handleAddRecommendationSave = async () => {
     if (!recommendationLabel.trim()) return;
@@ -2111,7 +2123,7 @@ export function CaseTimeline({
               </>
             ) : isAddingCourtFiling ? (
               <>
-                {courtFilingDecisions.length > 0 ? <div className="space-y-2"><Label htmlFor="add-court-filing-decision">Approved Filing Decision (optional)</Label><select id="add-court-filing-decision" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.courtFilingDecisionId} onChange={(e) => { const decision = courtFilingDecisions.find((item) => item.id === Number(e.target.value)); setAddForm((form) => ({ ...form, courtFilingDecisionId: e.target.value, chargeFiled: decision?.charge_text ?? form.chargeFiled })); }}><option value="">Select approved filing decision</option>{courtFilingDecisions.map((decision) => <option key={decision.id} value={decision.id}>{decision.charge_text} • Approved {formatDate(decision.date_approved)}</option>)}</select></div> : null}
+                {courtFilingDecisions.length > 0 ? <div className="space-y-2"><Label htmlFor="add-court-filing-decision">Approved Filing Decision</Label><select id="add-court-filing-decision" className={`border-input w-full rounded-md border bg-transparent px-3 py-2 text-sm ${courtFilingDecisions.length > 1 ? "" : "h-9"}`} size={courtFilingDecisions.length > 1 ? courtFilingDecisions.length : undefined} value={addForm.courtFilingDecisionId} onChange={(e) => { const decision = courtFilingDecisions.find((item) => item.id === Number(e.target.value)); setAddForm((form) => ({ ...form, courtFilingDecisionId: e.target.value, chargeFiled: decision?.charge_text ?? form.chargeFiled })); }}>{courtFilingDecisions.map((decision) => <option key={decision.id} value={decision.id}>{decision.charge_text} • Approved {formatDate(decision.date_approved)}</option>)}</select></div> : null}
                 <div className="space-y-2"><Label htmlFor="add-court">Court</Label><div className="flex rounded-md shadow-sm"><Input id="add-court" value={addForm.courtName} className="rounded-r-none" placeholder="Search or type new court" onFocus={() => setIsCourtPickerOpen(true)} onChange={(e) => { setIsCourtPickerOpen(true); setAddForm((form) => ({ ...form, courtName: e.target.value, courtId: null })); }} /><Button type="button" variant="outline" className="rounded-l-none border-l-0 px-3" aria-label="Show courts" onClick={() => setIsCourtPickerOpen((open) => !open)}>▼</Button></div>{isCourtPickerOpen ? <div className="max-h-44 overflow-y-auto rounded-md border bg-popover p-1 shadow-md">{filteredCourts.length === 0 ? <p className="px-2 py-1 text-xs text-muted-foreground">No matching courts. You can type a manual court name or add it to the list.</p> : null}<button type="button" className="block w-full rounded-sm px-2 py-1 text-left text-sm font-medium text-primary hover:bg-accent hover:text-accent-foreground" onClick={openAddCourtDialog}>+ Add Court</button>{filteredCourts.map((court) => <button key={court.id} type="button" className="block w-full rounded-sm px-2 py-1 text-left text-sm hover:bg-accent hover:text-accent-foreground" onClick={() => { setAddForm((form) => ({ ...form, courtId: Number(court.id), courtName: court.name })); setIsCourtPickerOpen(false); }}>{court.name}{court.court_type ? <span className="text-muted-foreground"> • {court.court_type}</span> : null}</button>)}{addForm.courtName.trim() && !hasExactCourtMatch ? <button type="button" className="block w-full rounded-sm px-2 py-1 text-left text-sm font-medium text-primary hover:bg-accent hover:text-accent-foreground" onClick={() => setIsCourtPickerOpen(false)}>Use “{addForm.courtName.trim()}” as new court</button> : null}</div> : null}</div>
                 <div className="space-y-2"><Label htmlFor="add-court-branch">Court Branch</Label><Input id="add-court-branch" value={addForm.courtBranch} onChange={(e) => setAddForm((form) => ({ ...form, courtBranch: e.target.value }))} /></div>
                 <div className="space-y-2"><Label htmlFor="add-charge-filed">Charge Filed</Label><Input id="add-charge-filed" value={addForm.chargeFiled} onChange={(e) => setAddForm((form) => ({ ...form, chargeFiled: e.target.value }))} /></div>
