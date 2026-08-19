@@ -419,8 +419,10 @@ function courtFilingEventDetails(event: CaseTimelineEventRecord, court: CaseCour
       return `${stringDetail(item.detail) ?? ""}: ${stringDetail(item.value) ?? ""}`.trim();
     }).filter(Boolean).join("; ")
     : null;
+  const filingActions = Array.isArray(details.filing_actions) ? details.filing_actions as Record<string, unknown>[] : [];
+  const approvedFilingDecisions = filingActions.map((action) => stringDetail(action.charge_filed)).filter(Boolean).join("; ");
   return [
-    { label: "Approved Filing Decision", value: stringDetail(details.approved_filing_decision_label) ?? stringDetail(details.approved_filing_decision) },
+    { label: "Approved Filing Decision", value: approvedFilingDecisions || (stringDetail(details.approved_filing_decision_label) ?? stringDetail(details.approved_filing_decision)) },
     { label: "Court", value: stringDetail(details.court) ?? event.court_name ?? court?.courts?.name ?? court?.raw_court_text },
     { label: "Court Branch", value: stringDetail(details.court_branch) ?? court?.court_branch },
     { label: "Charge Filed", value: stringDetail(details.charge_filed) ?? court?.charge_filed },

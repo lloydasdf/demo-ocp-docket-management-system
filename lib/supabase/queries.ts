@@ -2686,7 +2686,7 @@ export type CourtFilingDecisionRecord = {
 export async function getAvailableCourtFilingDecisions(caseId: number): Promise<SupabaseQueryResult<CourtFilingDecisionRecord[]>> {
   return runSupabaseQuery("getAvailableCourtFilingDecisions", "case_resolution_approval_actions" as RelationName, async () => {
     const supabase = await getSupabaseBrowserClient();
-    const [result, linkedFilingsResult] = await Promise.all([
+    const [result, linkedFilingsResult, linkedFilingActionsResult] = await Promise.all([
       supabase
         .from("case_resolution_approval_actions" as never)
         .select("id, approval_id, case_id, charge_text, decision_code, case_resolution_approvals!inner(id, case_resolution_id, date_approved, is_voided)" as never)
@@ -2699,10 +2699,12 @@ export async function getAvailableCourtFilingDecisions(caseId: number): Promise<
         .eq("case_id" as never, caseId)
         .eq("is_voided" as never, false)
         .not("case_resolution_approval_action_id" as never, "is", null) as unknown as Promise<{ data: Array<{ case_resolution_approval_action_id: number | null }> | null; error: unknown }>,
+      supabase.from("case_court_filing_actions" as never).select("case_resolution_approval_action_id, case_court_filings!inner(is_voided)" as never).eq("case_court_filings.is_voided" as never, false) as unknown as Promise<{ data: Array<{ case_resolution_approval_action_id: number }> | null; error: unknown }>,
     ]);
 
     if (result.error) return { data: [], error: result.error };
     if (linkedFilingsResult.error) return { data: [], error: linkedFilingsResult.error };
+    if (linkedFilingActionsResult.error) return { data: [], error: linkedFilingActionsResult.error };
 
     const linkedResolutionIds = Array.from(new Set(
       (result.data ?? [])
@@ -2725,6 +2727,7 @@ export async function getAvailableCourtFilingDecisions(caseId: number): Promise<
     const linkedApprovalActionIds = new Set(
       (linkedFilingsResult.data ?? [])
         .map((filing) => Number(filing.case_resolution_approval_action_id))
+        .concat((linkedFilingActionsResult.data ?? []).map((filing) => Number(filing.case_resolution_approval_action_id)))
         .filter(Number.isFinite),
     );
 
