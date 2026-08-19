@@ -256,47 +256,43 @@ BEGIN
     v_automatic_stage_code := 'FOR_RAFFLE';
   END IF;
 
-  SELECT automatic_state.event_date, automatic_state.event_time, automatic_state.case_event_id
-  INTO v_automatic_event_date, v_automatic_event_time, v_automatic_case_event_id
-  FROM (
-    SELECT ce.event_date, ce.event_time, ce.id AS case_event_id
+  IF v_automatic_status_code IN ('FILED', 'MIXED_RESULT') THEN
+    SELECT ce.event_date, ce.event_time, ce.id
+    INTO v_automatic_event_date, v_automatic_event_time, v_automatic_case_event_id
     FROM public.case_court_filings cf
     JOIN public.case_events ce ON ce.id = cf.case_event_id AND ce.is_voided = false
     WHERE cf.case_id = p_case_id
       AND cf.is_voided = false
-      AND v_automatic_status_code IN ('FILED', 'MIXED_RESULT')
-
-    UNION ALL
-
+    ORDER BY ce.event_date DESC, ce.event_time DESC NULLS LAST, ce.id DESC
+    LIMIT 1;
+  ELSIF v_automatic_status_code = 'DISMISSED' THEN
     SELECT ce.event_date, ce.event_time, ce.id
+    INTO v_automatic_event_date, v_automatic_event_time, v_automatic_case_event_id
     FROM public.case_resolution_approval_actions aa
     JOIN public.case_resolution_approvals a ON a.id = aa.approval_id AND a.is_voided = false
     JOIN public.case_resolutions cr ON cr.id = a.case_resolution_id AND cr.is_voided = false
     JOIN public.case_events ce ON ce.id = a.case_event_id AND ce.is_voided = false
     WHERE aa.case_id = p_case_id
       AND aa.decision_code = 'DISMISSAL'
-      AND v_automatic_status_code IN ('DISMISSED', 'MIXED_RESULT')
-
-    UNION ALL
-
+    ORDER BY ce.event_date DESC, ce.event_time DESC NULLS LAST, ce.id DESC
+    LIMIT 1;
+  ELSIF v_automatic_stage_code = 'CASE_RAFFLED' THEN
     SELECT ce.event_date, ce.event_time, ce.id
+    INTO v_automatic_event_date, v_automatic_event_time, v_automatic_case_event_id
     FROM public.case_assignments ca
     JOIN public.case_events ce ON ce.id = ca.case_event_id AND ce.is_voided = false
     WHERE ca.case_id = p_case_id
       AND ca.unassigned_at IS NULL
       AND ca.is_voided IS FALSE
-      AND v_automatic_stage_code = 'CASE_RAFFLED'
-  ) automatic_state
-  ORDER BY automatic_state.event_date DESC,
-           automatic_state.event_time DESC NULLS LAST,
-           automatic_state.case_event_id DESC
-  LIMIT 1;
+    ORDER BY ce.event_date DESC, ce.event_time DESC NULLS LAST, ce.id DESC
+    LIMIT 1;
+  END IF;
 
   IF v_explicit_status_code IS NOT NULL
      AND (
        v_automatic_event_date IS NULL
        OR (v_explicit_event_date, COALESCE(v_explicit_event_time, '00:00:00'::time), v_explicit_case_event_id)
-          >= (v_automatic_event_date, COALESCE(v_automatic_event_time, '00:00:00'::time), v_automatic_case_event_id)
+          > (v_automatic_event_date, COALESCE(v_automatic_event_time, '00:00:00'::time), v_automatic_case_event_id)
      ) THEN
     RETURN QUERY SELECT v_explicit_status_code, v_explicit_stage_code;
   ELSE
