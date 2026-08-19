@@ -543,10 +543,12 @@ function buildClassificationsByCase(casesToMap: CompactCase[]) {
 export default function CasesPage() {
   const router = useRouter();
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
+  const quickViewFrameRef = useRef<HTMLIFrameElement | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [hasResolvedCurrentUser, setHasResolvedCurrentUser] = useState(false);
   const [cachedInitialState, setCachedInitialState] = useState<CasesPageCache | null>(null);
   const [cases, setCases] = useState<CompactCase[]>([]);
+  const casesRef = useRef<CompactCase[]>([]);
   const docketFiltersTouchedRef = useRef(false);
   const [selectedDocketTypes, setSelectedDocketTypes] = useState<DocketTypeFilter[]>([]);
   const [selectedDocketYears, setSelectedDocketYears] = useState<DocketYearFilter[]>([]);
@@ -568,6 +570,8 @@ export default function CasesPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedCaseKey, setSelectedCaseKey] = useState<string | null>(null);
   const [quickViewCaseId, setQuickViewCaseId] = useState<number | null>(null);
+  const [recentlyUpdatedCaseId, setRecentlyUpdatedCaseId] = useState<number | null>(null);
+  const rowUpdateHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [columnWidths, setColumnWidths] = useState<ColumnWidths>(() => getInitialColumnWidths());
   const [partyNamesByCase, setPartyNamesByCase] = useState<Record<number, CasePartyNames>>({});
@@ -605,10 +609,17 @@ export default function CasesPage() {
   }, [availableSearchColumns, isRoleLoading]);
   const renderedColumnCount = visibleCaseTableColumns.length + (canViewLinkedDockets ? 1 : 0);
 
+  casesRef.current = cases;
+  const linkedDocketCaseIdsKey = cases
+    .map((caseDetail) => caseDetail.id)
+    .filter((id): id is number => id !== null)
+    .join(',');
+
   useEffect(() => {
     if (!canViewLinkedDockets || cases.length === 0) return;
     let mounted = true;
-    void getLinkedDocketsForCases(cases.map((caseDetail) => caseDetail.id).filter((id): id is number => id !== null)).then((result) => {
+    const caseIds = linkedDocketCaseIdsKey.split(',').map(Number).filter(Number.isFinite);
+    void getLinkedDocketsForCases(caseIds).then((result) => {
       if (!mounted || result.error) return;
       setLinkedDocketsByCase(result.data.reduce<Record<number, string>>((links, link) => {
         links[link.id] = (link.pe_case_id === link.id ? link.linked_docket_number : link.pe_docket_number) ?? '—';
@@ -616,7 +627,7 @@ export default function CasesPage() {
       }, {}));
     });
     return () => { mounted = false; };
-  }, [canViewLinkedDockets, cases]);
+  }, [canViewLinkedDockets, linkedDocketCaseIdsKey]);
   const latestCacheableStateRef = useRef({
     searchTerm,
     selectedSearchColumns,
@@ -685,6 +696,59 @@ export default function CasesPage() {
       showColumnFilters: currentCache?.showColumnFilters ?? latestCacheableState.showColumnFilters,
     });
   }, [currentUserId]);
+
+  const refreshCaseRow = useCallback(async (caseId: number) => {
+    const existingCase = casesRef.current.find((caseDetail) => caseDetail.id === caseId);
+    if (!existingCase) return;
+
+    const [participants, labels, quickDetails, approvals, criminalCaseNumbers] = await Promise.all([
+      getDocketParticipantsForCases([caseId]),
+      getDocketCaseLabelsForCases([caseId]),
+      getDocketQuickDetailsForCases([caseId]),
+      getDocketApprovalsForCases([caseId]),
+      canViewCriminalCaseNo
+        ? getCriminalCaseNumbersForCases([caseId])
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+    if (participants.error || labels.error || quickDetails.error || approvals.error || criminalCaseNumbers.error) return;
+
+    const refreshedCase = mergeApprovalsIntoCases(
+      mergeQuickDetailsIntoCases(
+        mergeLabelsIntoCases(
+          mergeCriminalCaseNumbersIntoCases(
+            mergeParticipantsIntoCases([existingCase], participants.data),
+            criminalCaseNumbers.data,
+          ),
+          labels.data,
+        ),
+        quickDetails.data,
+      ),
+      approvals.data,
+    )[0];
+    const nextCases = casesRef.current.map((caseDetail) => caseDetail.id === caseId ? refreshedCase : caseDetail);
+    casesRef.current = nextCases;
+    setCases(nextCases);
+    cacheCasesPageState(nextCases, { hasAllCases: true });
+    setRecentlyUpdatedCaseId(caseId);
+    if (rowUpdateHighlightTimerRef.current) clearTimeout(rowUpdateHighlightTimerRef.current);
+    rowUpdateHighlightTimerRef.current = setTimeout(() => setRecentlyUpdatedCaseId(null), 1_500);
+  }, [cacheCasesPageState, canViewCriminalCaseNo]);
+
+  useEffect(() => {
+    function handleQuickViewCaseUpdated(event: MessageEvent) {
+      if (event.origin !== window.location.origin || event.source !== quickViewFrameRef.current?.contentWindow) return;
+      const message = event.data as { type?: unknown; caseId?: unknown } | null;
+      if (message?.type !== 'ocp:quick-view-case-updated' || typeof message.caseId !== 'number' || message.caseId !== quickViewCaseId) return;
+      void refreshCaseRow(message.caseId);
+    }
+
+    window.addEventListener('message', handleQuickViewCaseUpdated);
+    return () => {
+      window.removeEventListener('message', handleQuickViewCaseUpdated);
+      if (rowUpdateHighlightTimerRef.current) clearTimeout(rowUpdateHighlightTimerRef.current);
+    };
+  }, [quickViewCaseId, refreshCaseRow]);
 
   const hydrateParticipantsLabelsAndQuickDetails = useCallback(async (shellCases: CompactCase[]) => {
     setIsLoadingAllCases(true);
@@ -1931,7 +1995,7 @@ export default function CasesPage() {
                             <ContextMenuTrigger asChild>
                               <TableRow
                                 aria-selected={isSelected}
-                                className={`cursor-pointer ${isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'h-12 hover:bg-muted/50'}`}
+                                className={`cursor-pointer transition-colors ${recentlyUpdatedCaseId === caseDetail.id ? 'bg-emerald-50 hover:bg-emerald-50 dark:bg-emerald-950/30' : isSelected ? 'bg-primary/10 hover:bg-primary/15' : 'h-12 hover:bg-muted/50'}`}
                                 tabIndex={caseDetail.id ? 0 : -1}
                                 onClick={() => setSelectedCaseKey(caseKey)}
                                 onDoubleClick={() => {
@@ -2050,6 +2114,7 @@ export default function CasesPage() {
             </Button>
           </div>
           <iframe
+            ref={quickViewFrameRef}
             key={quickViewCaseId}
             title="Case details quick view"
             src={`/cases/${quickViewCaseId}?quickview=1`}

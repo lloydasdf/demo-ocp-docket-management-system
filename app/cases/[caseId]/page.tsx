@@ -1917,6 +1917,13 @@ export default function CaseDetailsPage() {
     setIsLoading(false);
   }, [caseId]);
 
+  const handleCaseChanged = useCallback(async () => {
+    await loadCase();
+    if (isQuickView && window.parent !== window) {
+      window.parent.postMessage({ type: "ocp:quick-view-case-updated", caseId }, window.location.origin);
+    }
+  }, [caseId, isQuickView, loadCase]);
+
   useEffect(() => {
     loadCase();
   }, [loadCase]);
@@ -2299,7 +2306,7 @@ export default function CaseDetailsPage() {
                   onOpenChange={(open) =>
                     setActiveOverviewEditor(open ? activeSectionEditor : null)
                   }
-                  onSaved={loadCase}
+                  onSaved={handleCaseChanged}
                   open
                   refs={refs}
                   section={activeSectionEditor}
@@ -2311,7 +2318,7 @@ export default function CaseDetailsPage() {
                 onOpenChange={(open) =>
                   setActiveOverviewEditor(open ? "places" : null)
                 }
-                onSaved={loadCase}
+                onSaved={handleCaseChanged}
                 open={activeOverviewEditor === "places"}
                 refs={refs}
               /> : null}
@@ -2320,7 +2327,7 @@ export default function CaseDetailsPage() {
                 onOpenChange={(open) =>
                   setActiveOverviewEditor(open ? "violations" : null)
                 }
-                onSaved={loadCase}
+                onSaved={handleCaseChanged}
                 open={activeOverviewEditor === "violations"}
               /> : null}
               {canShowCaseManagementActions ? <ManageNotesDialog
@@ -2328,7 +2335,7 @@ export default function CaseDetailsPage() {
                 onOpenChange={(open) =>
                   setActiveOverviewEditor(open ? "notes" : null)
                 }
-                onSaved={loadCase}
+                onSaved={handleCaseChanged}
                 open={activeOverviewEditor === "notes"}
               /> : null}
               {canShowCaseManagementActions ? <ManageParticipantsDialog
@@ -2338,7 +2345,7 @@ export default function CaseDetailsPage() {
                 onOpenChange={(open) =>
                   setActiveOverviewEditor(open ? "participants" : null)
                 }
-                onSaved={loadCase}
+                onSaved={handleCaseChanged}
                 open={activeOverviewEditor === "participants"}
                 participants={data.participants.filter((participant) => !isVoidedPersonParticipant(participant))}
               /> : null}
@@ -2443,7 +2450,7 @@ export default function CaseDetailsPage() {
                     courts={data.courts}
                     events={data.timeline}
                     motions={data.motions}
-                    onChanged={loadCase}
+                    onChanged={handleCaseChanged}
                     onUpdateStatus={() => openOverviewEditor("status")}
                     canShowCaseManagementActions={canShowCaseManagementActions}
                     canCorrectCourtFilingLinks={canCorrectFilingLinks}
