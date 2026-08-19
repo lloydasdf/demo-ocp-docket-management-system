@@ -1863,6 +1863,23 @@ export function CaseTimeline({
   }, [addForm.eventTypeCode, addForm.petitionUpdatePetitionId, activePetitionsForReview]);
 
   useEffect(() => {
+    if (addForm.eventTypeCode !== "CASE_DECISION_APPROVED" || caseResolutions.length === 0) return;
+    if (caseResolutions.some((resolution) => resolution.id === addForm.caseResolutionId)) return;
+
+    const firstResolution = caseResolutions[0];
+    const approvalActions = firstResolution.charge_actions.length > 0
+      ? firstResolution.charge_actions.map((action) => ({
+        chargeText: action.charge_text,
+        caseViolationId: action.case_violation_id,
+        violationId: action.violation_id,
+        sourceResolutionChargeActionId: action.id,
+        decisionCode: action.action_code,
+      }))
+      : [emptyApprovalAction()];
+    setAddForm((form) => ({ ...form, caseResolutionId: firstResolution.id, approvalActions }));
+  }, [addForm.caseResolutionId, addForm.eventTypeCode, caseResolutions]);
+
+  useEffect(() => {
     if (addForm.eventTypeCode !== "COURT_FILING" || courtFilingDecisions.length === 0) return;
     if (courtFilingDecisions.some((decision) => String(decision.id) === addForm.courtFilingDecisionId)) return;
 
@@ -2115,7 +2132,7 @@ export function CaseTimeline({
               </>
             ) : isAddingDecisionApproved ? (
               <>
-                {caseResolutions.length > 0 ? <div className="space-y-2"><Label htmlFor="add-approval-resolution">Resolution to Approve (optional)</Label><select id="add-approval-resolution" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.caseResolutionId ?? ""} onChange={(e) => { const resolutionId = e.target.value ? Number(e.target.value) : null; const resolution = caseResolutions.find((item) => item.id === resolutionId) ?? null; setAddForm((form) => ({ ...form, caseResolutionId: resolutionId, approvalActions: resolution ? approvalActionsFromResolution(resolution) : [emptyApprovalAction()] })); }}><option value="">Select resolution</option>{caseResolutions.map((resolution) => <option key={resolution.id} value={resolution.id}>{formatRecommendationLabel(resolution.recommendation_code)} • {formatDate(resolution.date_resolved)} • Resolution #{resolution.id}</option>)}</select>{selectedApprovalResolution ? <p className="text-xs text-muted-foreground">Loaded {selectedApprovalResolution.charge_actions.length} recommended action{selectedApprovalResolution.charge_actions.length === 1 ? "" : "s"} from the selected resolution.</p> : null}</div> : null}
+                {caseResolutions.length > 0 ? <div className="space-y-2"><Label htmlFor="add-approval-resolution">Resolution to Approve</Label><select id="add-approval-resolution" className={`border-input w-full rounded-md border bg-transparent px-3 py-2 text-sm ${caseResolutions.length > 1 ? "" : "h-9"}`} size={caseResolutions.length > 1 ? caseResolutions.length : undefined} value={addForm.caseResolutionId ?? ""} onChange={(e) => { const resolutionId = Number(e.target.value); const resolution = caseResolutions.find((item) => item.id === resolutionId) ?? null; setAddForm((form) => ({ ...form, caseResolutionId: resolutionId, approvalActions: resolution ? approvalActionsFromResolution(resolution) : [emptyApprovalAction()] })); }}>{caseResolutions.map((resolution) => <option key={resolution.id} value={resolution.id}>{formatRecommendationLabel(resolution.recommendation_code)} • {formatDate(resolution.date_resolved)} • Resolution #{resolution.id}</option>)}</select>{selectedApprovalResolution ? <p className="text-xs text-muted-foreground">Loaded {selectedApprovalResolution.charge_actions.length} recommended action{selectedApprovalResolution.charge_actions.length === 1 ? "" : "s"} from the selected resolution.</p> : null}</div> : null}
                 <div className="space-y-2"><Label htmlFor="add-approved-by">Approved By</Label><select id="add-approved-by" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.prosecutorId} onChange={(e) => setAddForm((form) => ({ ...form, prosecutorId: e.target.value }))}><option value="">Select approving prosecutor</option>{approvingProsecutors.map((prosecutor) => <option key={prosecutor.id} value={prosecutor.id}>{prosecutor.short_name ?? prosecutor.full_name}</option>)}</select>{approvingProsecutors.length === 0 ? <p className="text-xs text-muted-foreground">No active Chief Prosecutor or Deputy Prosecutor records found.</p> : null}</div>
                 <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-1"><Label htmlFor="add-date-approved">Date Approved</Label><Input id="add-date-approved" type="date" value={addForm.eventDate} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventDate: e.target.value })); }} /></div><div className="space-y-1"><Label htmlFor="add-time-approved">Time Approved</Label><Input id="add-time-approved" type="time" step="1" value={addForm.eventTime} onChange={(e) => { setIsAddDateTimeDirty(true); setAddForm((form) => ({ ...form, eventTime: e.target.value })); }} /></div></div>
                 <ApprovalDecisionEntries actions={addForm.approvalActions} onChange={(approvalActions) => setAddForm((form) => ({ ...form, approvalActions }))} />
