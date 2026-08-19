@@ -1229,6 +1229,7 @@ const ADD_EVENT_TYPE_CODES = new Set([
   "PETITION_FOR_REVIEW_UPDATE",
   "CUSTOM_EVENT",
 ]);
+const BLANK_DEFAULT_TIME_EVENT_CODES = new Set(["CASE_DECISION_APPROVED", "COURT_FILING"]);
 
 function addableEventTypes(eventTypes: CaseEventTypeReference[]) {
   const priority = new Map([
@@ -1331,7 +1332,11 @@ export function CaseTimeline({
       setManilaNow(now);
       if (!isAddDateTimeDirty) {
         const current = getManilaDateTimeInputValues(now);
-        setAddForm((form) => ({ ...form, eventDate: current.date, eventTime: current.time }));
+        setAddForm((form) => ({
+          ...form,
+          eventDate: current.date,
+          eventTime: BLANK_DEFAULT_TIME_EVENT_CODES.has(form.eventTypeCode) ? "" : current.time,
+        }));
       }
     };
 
@@ -2092,7 +2097,7 @@ export function CaseTimeline({
             {isAddingMotionDecisionApproved && addForm.motionDecisionStep === 3 ? null : (
               <div className="space-y-2">
                 <Label htmlFor="add-event-type">Event Type</Label>
-                <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : e.target.value === "COURT_FILING" ? "Court Filing" : e.target.value === "COURT_STATUS_UPDATE" ? "Court Status Update" : e.target.value === "MOTION_RECEIVED" ? "Motion Received" : e.target.value === "MOTION_RESOLVED" ? "Motion Resolved" : e.target.value === "MOTION_DECISION_APPROVED" ? "Motion Decision Approved" : e.target.value === "PETITION_FOR_REVIEW" ? "Petition for Review" : e.target.value === "PETITION_FOR_REVIEW_UPDATE" ? "Petition for Review Update" : form.title }))}>
+                <select id="add-event-type" className="border-input h-9 w-full rounded-md border bg-transparent px-3 text-sm" value={addForm.eventTypeCode} onChange={(e) => setAddForm((form) => ({ ...form, eventTypeCode: e.target.value, eventTime: BLANK_DEFAULT_TIME_EVENT_CODES.has(e.target.value) ? "" : form.eventTime, title: e.target.value === "CASE_ASSIGNMENT" ? "Case Assignment" : e.target.value === "CASE_REASSIGNMENT" ? "Case Reassignment" : e.target.value === "CASE_RESOLVED" ? "Case Resolved" : e.target.value === "CASE_DECISION_APPROVED" ? "Case Decision Approved" : e.target.value === "COURT_FILING" ? "Court Filing" : e.target.value === "COURT_STATUS_UPDATE" ? "Court Status Update" : e.target.value === "MOTION_RECEIVED" ? "Motion Received" : e.target.value === "MOTION_RESOLVED" ? "Motion Resolved" : e.target.value === "MOTION_DECISION_APPROVED" ? "Motion Decision Approved" : e.target.value === "PETITION_FOR_REVIEW" ? "Petition for Review" : e.target.value === "PETITION_FOR_REVIEW_UPDATE" ? "Petition for Review Update" : form.title }))}>
                   {eventTypes.map((eventType) => <option key={eventType.code} value={eventType.code}>{eventType.display_label}</option>)}
                 </select>
               </div>
