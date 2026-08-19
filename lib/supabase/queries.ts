@@ -2689,11 +2689,10 @@ export async function getAvailableCourtFilingDecisions(caseId: number): Promise<
     const [result, linkedFilingsResult] = await Promise.all([
       supabase
         .from("case_resolution_approval_actions" as never)
-        .select("id, approval_id, case_id, charge_text, decision_code, case_resolution_approvals!inner(id, case_resolution_id, date_approved, is_voided, case_resolutions!inner(id, is_voided))" as never)
+        .select("id, approval_id, case_id, charge_text, decision_code, case_resolution_approvals!inner(id, case_resolution_id, date_approved, is_voided)" as never)
         .eq("case_id" as never, caseId)
         .eq("decision_code" as never, "FOR_FILING")
-        .eq("case_resolution_approvals.is_voided" as never, false)
-        .eq("case_resolution_approvals.case_resolutions.is_voided" as never, false) as unknown as Promise<{ data: any[] | null; error: unknown }>,
+        .eq("case_resolution_approvals.is_voided" as never, false) as unknown as Promise<{ data: any[] | null; error: unknown }>,
       supabase
         .from("case_court_filings" as never)
         .select("case_resolution_approval_action_id" as never)
@@ -2705,6 +2704,24 @@ export async function getAvailableCourtFilingDecisions(caseId: number): Promise<
     if (result.error) return { data: [], error: result.error };
     if (linkedFilingsResult.error) return { data: [], error: linkedFilingsResult.error };
 
+    const linkedResolutionIds = Array.from(new Set(
+      (result.data ?? [])
+        .flatMap((row) => row.case_resolution_approvals?.case_resolution_id == null
+          ? []
+          : [Number(row.case_resolution_approvals.case_resolution_id)])
+        .filter(Number.isFinite),
+    ));
+    const activeResolutionIds = new Set<number>();
+    if (linkedResolutionIds.length > 0) {
+      const resolutionsResult = await supabase
+        .from("case_resolutions" as never)
+        .select("id" as never)
+        .in("id" as never, linkedResolutionIds)
+        .eq("is_voided" as never, false) as unknown as { data: Array<{ id: number }> | null; error: unknown };
+      if (resolutionsResult.error) return { data: [], error: resolutionsResult.error };
+      for (const resolution of resolutionsResult.data ?? []) activeResolutionIds.add(Number(resolution.id));
+    }
+
     const linkedApprovalActionIds = new Set(
       (linkedFilingsResult.data ?? [])
         .map((filing) => Number(filing.case_resolution_approval_action_id))
@@ -2712,6 +2729,10 @@ export async function getAvailableCourtFilingDecisions(caseId: number): Promise<
     );
 
     const data = (result.data ?? [])
+      .filter((row) => {
+        const resolutionId = row.case_resolution_approvals?.case_resolution_id;
+        return resolutionId === null || resolutionId === undefined || activeResolutionIds.has(Number(resolutionId));
+      })
       .filter((row) => !linkedApprovalActionIds.has(Number(row.id)))
       .map((row) => ({
         id: Number(row.id),
