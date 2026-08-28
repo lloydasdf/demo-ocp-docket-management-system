@@ -11,6 +11,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { getSupabaseBrowserClient, getSupabaseEnvironmentStatus } from '@/lib/supabase/client';
 
+const demoAccounts = [
+  { role: 'Admin', email: 'admin@ocp.com', password: 'ocpadmin123' },
+  { role: 'Chief', email: 'chief@ocp.com', password: 'ocpchief123' },
+  { role: 'Prosecutor', email: 'prosecutor@ocp.com', password: 'ocpprosecutor123' },
+  { role: 'Developer', email: 'developer@ocp.com', password: 'ocpdeveloper123' },
+] as const;
+
 function getSafeReturnPath() {
   if (typeof window === 'undefined') {
     return '/cases';
@@ -94,6 +101,12 @@ export default function LoginPage() {
     router.refresh();
   }
 
+  function selectDemoAccount(account: (typeof demoAccounts)[number]) {
+    setEmail(account.email);
+    setPassword(account.password);
+    setError(null);
+  }
+
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-10">
       <div className="w-full max-w-md space-y-6">
@@ -135,7 +148,7 @@ export default function LoginPage() {
                   id="email"
                   type="email"
                   autoComplete="email"
-                  placeholder="admin@example.com"
+                  placeholder="admin@ocp.com"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   disabled={isSubmitting || isCheckingSession}
@@ -160,6 +173,31 @@ export default function LoginPage() {
                 {isCheckingSession ? 'Checking session...' : isSubmitting ? 'Signing in...' : 'Sign in'}
               </Button>
             </form>
+
+            <div className="mt-6 border-t pt-6">
+              <div className="mb-3">
+                <h2 className="text-sm font-semibold text-foreground">Demo accounts</h2>
+                <p className="mt-1 text-xs text-muted-foreground">Select an account to fill in the login form.</p>
+              </div>
+
+              <div className="space-y-2">
+                {demoAccounts.map((account) => (
+                  <button
+                    key={account.role}
+                    type="button"
+                    className="flex w-full items-center justify-between gap-3 rounded-md border bg-background px-3 py-2.5 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50"
+                    onClick={() => selectDemoAccount(account)}
+                    disabled={isSubmitting || isCheckingSession}
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium text-foreground">{account.role}</span>
+                      <span className="block truncate font-mono text-xs text-muted-foreground">{account.email}</span>
+                    </span>
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">{account.password}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
