@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 
+import { createDrivePdfPreviewUrl, supportsDrivePdfPreview } from '@/lib/drive-pdf-preview';
 import { findFolder, getDocketRootFolderId, getDriveItemMetadata, getFolderMetadata, isDriveItemInsideFolder, listFolderFiles } from '@/lib/google-drive';
 import { getSupabaseAdminClient } from '@/lib/supabase/admin';
 import { getAuthenticatedSupabase } from '@/lib/supabase/server-user';
@@ -42,6 +43,12 @@ export async function GET(request: Request, context: { params: Promise<{ caseId:
     if (currentMetadata.mimeType !== 'application/vnd.google-apps.folder') return NextResponse.json({ error: { code: 'not_a_folder', message: 'The selected Drive item is not a folder.' } }, { status: 400 });
     const folder = await getFolderMetadata(folderId);
     const files = await listFolderFiles(currentFolderId);
+    const filesWithPreview = files.map((file) => ({
+      ...file,
+      previewUrl: supportsDrivePdfPreview(file)
+        ? createDrivePdfPreviewUrl({ caseId, fileId: file.id, rootFolderId: folderId, parentFolderId: currentFolderId })
+        : null,
+    }));
     const attachmentFiles = files.filter((file) => file.mimeType !== 'application/vnd.google-apps.folder');
     const scannedAt = new Date().toISOString();
     const ids = attachmentFiles.map((file) => file.id);
@@ -66,7 +73,7 @@ export async function GET(request: Request, context: { params: Promise<{ caseId:
       await admin.from('case_attachment_index').update({ file_status: 'MISSING', last_scanned_at: scannedAt }).eq('case_id', caseId).eq('gdrive_parent_folder_id', currentFolderId);
     }
     await admin.from('case_drive_folders' as never).update({ last_scanned_at: scannedAt, status: 'READY', last_error: null } as never).eq('case_id', caseId);
-    return NextResponse.json({ data: { files, scannedAt, folder: { id: folderId, name: folder.name, webViewLink: folder.webViewLink }, currentFolder: { id: currentFolderId, name: currentMetadata.name, webViewLink: currentMetadata.webViewLink } } });
+    return NextResponse.json({ data: { files: filesWithPreview, scannedAt, folder: { id: folderId, name: folder.name, webViewLink: folder.webViewLink }, currentFolder: { id: currentFolderId, name: currentMetadata.name, webViewLink: currentMetadata.webViewLink } } });
   } catch {
     await admin.from('case_drive_folders' as never).update({ status: 'DISCONNECTED', last_error: 'Unable to list Google Drive files.' } as never).eq('case_id', caseId);
     return NextResponse.json({ error: { code: 'drive_unavailable', message: 'Unable to list Drive files.' } }, { status: 502 });
