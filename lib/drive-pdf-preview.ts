@@ -134,7 +134,9 @@ async function googleAccessToken() {
     });
     const body = await response.json().catch(() => ({})) as { access_token?: string; expires_in?: number };
     if (!response.ok || !body.access_token) throw new Error(`Google OAuth request failed (${response.status}).`);
-    const expiresInSeconds = Number.isFinite(body.expires_in) && Number(body.expires_in) > 0 ? Number(body.expires_in) : 3600;
+    const expiresInSeconds = typeof body.expires_in === 'number' && Number.isFinite(body.expires_in) && body.expires_in > 0
+      ? body.expires_in
+      : 3600;
     cachedAccessToken = {
       value: body.access_token,
       expiresAt: Date.now() + expiresInSeconds * 1000,
