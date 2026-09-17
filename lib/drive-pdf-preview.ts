@@ -221,10 +221,11 @@ export async function openDrivePdfPreview({
 
   const hasExtension = /\.[a-z0-9]{1,10}$/i.test(metadata.name);
   const fileName = googleExport && !hasExtension ? `${metadata.name}.pdf` : metadata.name;
+  const forcePdfMimeType = googleExport || metadata.mimeType === PDF_MIME_TYPE || /\.pdf$/i.test(fileName);
   return {
     body: response.body,
     status: response.status,
-    contentType: googleExport ? PDF_MIME_TYPE : response.headers.get('content-type') ?? (fileName.toLowerCase().endsWith('.pdf') ? PDF_MIME_TYPE : 'application/octet-stream'),
+    contentType: forcePdfMimeType ? PDF_MIME_TYPE : response.headers.get('content-type') ?? 'application/octet-stream',
     fileName,
     contentLength: response.headers.get('content-length'),
     contentRange: response.headers.get('content-range'),
