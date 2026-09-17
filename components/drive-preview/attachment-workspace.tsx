@@ -9,6 +9,10 @@ import { AttachmentPreviewPane } from "./attachment-preview-pane";
 import { isExecutable, type PreviewFile } from "./types";
 import type { OnlyOfficeSession } from "./onlyoffice-editor";
 
+function revokeBlobUrl(value: string | null) {
+  if (value?.startsWith("blob:")) URL.revokeObjectURL(value);
+}
+
 export function AttachmentWorkspace({ files, sort, downloadingId, managingFolderId, managingFileId, canShare, onBrowse, onDownload, onShare, onRenameFile, onMoveFile, onTrashFile, onRenameFolder, onTrashFolder, loadBlob, startEdit, checkEditStatus, cancelEditSession, onDocumentSaved, previewPlacement = "responsive", onPreviewChange, onError }: { files: PreviewFile[]; sort: AttachmentSortOption; downloadingId: string | null; managingFolderId?: string | null; managingFileId?: string | null; canShare?: boolean; onBrowse: (file: PreviewFile) => void; onDownload: (file: PreviewFile) => void; onShare: (file: PreviewFile) => void; onRenameFile: (file: PreviewFile) => void; onMoveFile: (file: PreviewFile) => void; onTrashFile: (file: PreviewFile) => void; onRenameFolder: (file: PreviewFile) => void; onTrashFolder: (file: PreviewFile) => void; loadBlob: (file: PreviewFile) => Promise<Blob>; startEdit: (file: PreviewFile) => Promise<OnlyOfficeSession>; checkEditStatus: (sessionId: string) => Promise<{ status: string; last_error?: string | null }>; cancelEditSession: (sessionId: string) => Promise<void>; onDocumentSaved: () => void; previewPlacement?: "responsive" | "modal"; onPreviewChange?: (active: boolean, widthPercent?: number) => void; onError: (message: string) => void }) {
   const [selected, setSelected] = useState<PreviewFile | null>(null); const [blob, setBlob] = useState<Blob | null>(null); const [url, setUrl] = useState<string | null>(null); const [loading, setLoading] = useState(false);
   const [previewMode, setPreviewMode] = useState<"mobile" | "tablet" | "desktop">("mobile");
@@ -22,19 +26,34 @@ export function AttachmentWorkspace({ files, sort, downloadingId, managingFolder
     if (!historyActive.current) { window.history.pushState({ ...window.history.state, attachmentPreview: historyMarker.current }, ""); historyActive.current = true; }
     const handlePopState = () => {
       if (!historyActive.current) return;
-      historyActive.current = false; setSelected(null); setBlob(null); setUrl((old) => { if (old) URL.revokeObjectURL(old); return null; }); onPreviewChange?.(false);
+      historyActive.current = false; setSelected(null); setBlob(null); setUrl((old) => { revokeBlobUrl(old); return null; }); onPreviewChange?.(false);
       requestAnimationFrame(() => window.scrollTo({ top: previewScrollY.current }));
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, [narrowPreviewOpen, onPreviewChange]);
-  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  useEffect(() => () => { revokeBlobUrl(url); }, [url]);
   useEffect(() => () => onPreviewChange?.(false), [onPreviewChange]);
-  useEffect(() => { if (selected && !files.some((file) => file.id === selected.id)) { setSelected(null); setBlob(null); setUrl((old) => { if (old) URL.revokeObjectURL(old); return null; }); onPreviewChange?.(false); } }, [files, selected, onPreviewChange]);
-  async function select(file: PreviewFile) { setSelected(file); setBlob(null); setLoading(true); onPreviewChange?.(true); try { const nextBlob = isExecutable(file) ? new Blob([], { type: file.mimeType || "application/octet-stream" }) : await loadBlob(file); setBlob(nextBlob); setUrl((old) => { if (old) URL.revokeObjectURL(old); return URL.createObjectURL(nextBlob); }); } catch (error) { onError(error instanceof Error ? error.message : "Unable to load preview."); setSelected(null); onPreviewChange?.(false); } finally { setLoading(false); } }
-  function close() { const removeHistoryEntry = historyActive.current && window.history.state?.attachmentPreview === historyMarker.current; historyActive.current = false; setSelected(null); setBlob(null); setUrl((old) => { if (old) URL.revokeObjectURL(old); return null; }); onPreviewChange?.(false); if (removeHistoryEntry) window.history.back(); requestAnimationFrame(() => window.scrollTo({ top: previewScrollY.current })); }
-  async function share() { if (!selected) return; try { if (isExecutable(selected)) throw new Error("Executable files cannot be shared from the preview workspace."); const content = blob ?? await loadBlob(selected); const shareFile = new File([content], selected.name, { type: selected.mimeType || content.type }); if (navigator.share && navigator.canShare?.({ files: [shareFile] })) await navigator.share({ title: selected.name, files: [shareFile] }); else throw new Error("File sharing is not supported by this browser. Download the file to share it manually."); } catch (error) { onError(error instanceof Error ? error.message : "Unable to share file."); } }
-  async function refreshAfterSave() { if (!selected) return; try { const nextBlob = await loadBlob(selected); setBlob(nextBlob); setUrl((old) => { if (old) URL.revokeObjectURL(old); return URL.createObjectURL(nextBlob); }); onDocumentSaved(); } catch (error) { onError(error instanceof Error ? error.message : 'The saved document could not be refreshed.'); } }
+  useEffect(() => { if (selected && !files.some((file) => file.id === selected.id)) { setSelected(null); setBlob(null); setUrl((old) => { revokeBlobUrl(old); return null; }); onPreviewChange?.(false); } }, [files, selected, onPreviewChange]);
+  async function select(file: PreviewFile) {
+    setSelected(file); setBlob(null); onPreviewChange?.(true);
+    if (file.previewUrl) {
+      setLoading(false);
+      setBlob(new Blob([], { type: "application/pdf" }));
+      setUrl((old) => { revokeBlobUrl(old); return file.previewUrl!; });
+      return;
+    }
+    setLoading(true);
+    try {
+      const nextBlob = isExecutable(file) ? new Blob([], { type: file.mimeType || "application/octet-stream" }) : await loadBlob(file);
+      setBlob(nextBlob);
+      setUrl((old) => { revokeBlobUrl(old); return URL.createObjectURL(nextBlob); });
+    } catch (error) { onError(error instanceof Error ? error.message : "Unable to load preview."); setSelected(null); onPreviewChange?.(false); }
+    finally { setLoading(false); }
+  }
+  function close() { const removeHistoryEntry = historyActive.current && window.history.state?.attachmentPreview === historyMarker.current; historyActive.current = false; setSelected(null); setBlob(null); setUrl((old) => { revokeBlobUrl(old); return null; }); onPreviewChange?.(false); if (removeHistoryEntry) window.history.back(); requestAnimationFrame(() => window.scrollTo({ top: previewScrollY.current })); }
+  async function share() { if (!selected) return; try { if (isExecutable(selected)) throw new Error("Executable files cannot be shared from the preview workspace."); const content = selected.previewUrl ? await loadBlob(selected) : blob ?? await loadBlob(selected); const shareFile = new File([content], selected.name, { type: selected.mimeType || content.type }); if (navigator.share && navigator.canShare?.({ files: [shareFile] })) await navigator.share({ title: selected.name, files: [shareFile] }); else throw new Error("File sharing is not supported by this browser. Download the file to share it manually."); } catch (error) { onError(error instanceof Error ? error.message : "Unable to share file."); } }
+  async function refreshAfterSave() { if (!selected) return; try { const nextBlob = await loadBlob(selected); setBlob(nextBlob); setUrl((old) => { revokeBlobUrl(old); return URL.createObjectURL(nextBlob); }); onDocumentSaved(); } catch (error) { onError(error instanceof Error ? error.message : 'The saved document could not be refreshed.'); } }
   const preview = selected ? <AttachmentPreviewPane key={selected.id} file={selected} blob={blob} url={url} loading={loading} narrow={previewMode !== "desktop"} onShare={() => void share()} onDownload={() => onDownload(selected)} onStartEdit={() => startEdit(selected)} checkEditStatus={checkEditStatus} cancelEditSession={cancelEditSession} onSaved={() => void refreshAfterSave()} onError={onError} onClose={close} /> : null;
   const previewLayer = preview && typeof document !== "undefined" ? previewPlacement === "modal"
     ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) close(); }}><div role="dialog" aria-modal="true" aria-label="Attachment preview" className="h-[min(88vh,54rem)] w-[min(92vw,70rem)] animate-in zoom-in-95 rounded-lg bg-background p-3 shadow-2xl duration-200">{preview}</div></div>

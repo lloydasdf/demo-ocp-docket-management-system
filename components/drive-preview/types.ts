@@ -6,6 +6,7 @@ export type PreviewFile = {
   webContentLink: string | null;
   size: string | null;
   modifiedTime: string | null;
+  previewUrl?: string | null;
 };
 
 export function formattedFileSize(value: string | null) {
