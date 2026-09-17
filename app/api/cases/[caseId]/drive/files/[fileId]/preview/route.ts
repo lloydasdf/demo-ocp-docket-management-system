@@ -38,7 +38,7 @@ export async function GET(request: Request, context: { params: Promise<{ caseId:
       'x-content-type-options': 'nosniff',
       'vary': 'Range',
     });
-    if (preview.contentLength) headers.set('content-length', preview.contentLength);
+    if (preview.contentLength && preview.status !== 416) headers.set('content-length', preview.contentLength);
     if (preview.contentRange) headers.set('content-range', preview.contentRange);
 
     return new Response(preview.status === 416 ? null : preview.body, {
